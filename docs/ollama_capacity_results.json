@@ -1,0 +1,86 @@
+﻿[
+    {
+        "model":  "gemma3:4b",
+        "success":  true,
+        "vram_before_mib":  7169,
+        "vram_after_mib":  4859,
+        "vram_delta_mib":  -2310,
+        "tok_per_s":  76.4,
+        "eval_count":  21,
+        "wall_seconds":  7.51,
+        "ollama_ps":  "NAME         ID              SIZE      PROCESSOR    CONTEXT    UNTIL              \r\ngemma3:4b    a2af6cc3eb7f    3.0 GB    100% GPU     8192       4 minutes from now",
+        "answer":  "The capital of France is Paris, with an approximate population of around 2.1 million people."
+    },
+    {
+        "model":  "qwen3-vl:4b-instruct",
+        "success":  true,
+        "vram_before_mib":  4859,
+        "vram_after_mib":  6042,
+        "vram_delta_mib":  1183,
+        "tok_per_s":  80.44,
+        "eval_count":  24,
+        "wall_seconds":  6.67,
+        "ollama_ps":  "NAME                    ID              SIZE      PROCESSOR    CONTEXT    UNTIL              \r\nqwen3-vl:4b-instruct    ee4b975b58c1    4.2 GB    100% GPU     8192       4 minutes from now",
+        "answer":  "Paris is the capital of France and has an approximate population of 2.1 million people within its city limits."
+    },
+    {
+        "model":  "qwen2.5:7b",
+        "success":  true,
+        "vram_before_mib":  6038,
+        "vram_after_mib":  5881,
+        "vram_delta_mib":  -157,
+        "tok_per_s":  62.47,
+        "eval_count":  25,
+        "wall_seconds":  6.22,
+        "ollama_ps":  "NAME          ID              SIZE      PROCESSOR    CONTEXT    UNTIL              \r\nqwen2.5:7b    845dbda0ea48    5.1 GB    100% GPU     8192       4 minutes from now",
+        "answer":  "The capital of France is Paris, which has an approximate population of about 2.2 million in the city proper."
+    },
+    {
+        "model":  "llama3.1:8b",
+        "success":  true,
+        "vram_before_mib":  5881,
+        "vram_after_mib":  6527,
+        "vram_delta_mib":  646,
+        "tok_per_s":  44.27,
+        "eval_count":  35,
+        "wall_seconds":  7.17,
+        "ollama_ps":  "NAME           ID              SIZE      PROCESSOR    CONTEXT    UNTIL              \r\nllama3.1:8b    46e0c10c039e    5.8 GB    100% GPU     8192       4 minutes from now",
+        "answer":  "The capital of France is Paris, with an approximate population of 2.1 million people within the city limits and over 12.2 million in the metropolitan area."
+    },
+    {
+        "model":  "qwen3:8b",
+        "success":  true,
+        "vram_before_mib":  6527,
+        "vram_after_mib":  6895,
+        "vram_delta_mib":  368,
+        "tok_per_s":  42.68,
+        "eval_count":  80,
+        "wall_seconds":  7.99,
+        "ollama_ps":  "NAME        ID              SIZE      PROCESSOR    CONTEXT    UNTIL              \r\nqwen3:8b    500a1f067a9f    6.2 GB    100% GPU     8192       4 minutes from now",
+        "answer":  ""
+    },
+    {
+        "model":  "qwen3-vl:8b-instruct",
+        "success":  true,
+        "vram_before_mib":  6895,
+        "vram_after_mib":  7655,
+        "vram_delta_mib":  760,
+        "tok_per_s":  21.77,
+        "eval_count":  35,
+        "wall_seconds":  11.08,
+        "ollama_ps":  "NAME                    ID              SIZE      PROCESSOR          CONTEXT    UNTIL              \r\nqwen3-vl:8b-instruct    0533d74300e4    6.9 GB    20%/80% CPU/GPU    8192       4 minutes from now",
+        "answer":  "The capital of France is Paris, with an approximate population of 2.1 million people within the city proper and around 12 million in the greater metropolitan area."
+    },
+    {
+        "model":  "gemma3:12b",
+        "success":  true,
+        "vram_before_mib":  7655,
+        "vram_after_mib":  7161,
+        "vram_delta_mib":  -494,
+        "tok_per_s":  7.61,
+        "eval_count":  36,
+        "wall_seconds":  17.86,
+        "ollama_ps":  "NAME          ID              SIZE      PROCESSOR          CONTEXT    UNTIL              \r\ngemma3:12b    f4031aab637d    8.9 GB    41%/59% CPU/GPU    8192       4 minutes from now",
+        "answer":  "Paris is the capital of France and has an approximate population of 2.1 million people within its city limits, and over 12 million in the greater metropolitan area."
+    }
+]

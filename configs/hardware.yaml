@@ -1,0 +1,29 @@
+# Target benchmarking rig (IMPLEMENTATION_PLAN.md #0).
+#
+# This development environment does not match this profile -- see
+# IMPLEMENTATION_STATUS.md. Nothing in bench/ has been run against real
+# hardware matching these numbers; they are the specification the project
+# is meant to be validated on, not a measured baseline.
+
+primary_rig:
+  gpu: "RTX 4060 8GB (or RTX 3070 8GB)"
+  vram_gb: 8
+  host_ram_gb: 16
+  storage: "PCIe 4.0 NVMe"
+  storage_seq_read_gbps: [5, 7]
+  os: linux  # required for cachectl.py's drop_caches path
+  pcie_gen4_x16_realized_gbps: [20, 25]
+
+secondary_rig:
+  gpu: "RTX 3060 12GB"
+  vram_gb: 12
+  host_ram_gb: 32
+  storage: "SATA SSD"
+  storage_seq_read_gbps: [0.4, 0.6]
+  os: windows
+
+development_machine_actual:
+  note: "what this codebase has actually been exercised on -- CPU-only torch, no CUDA, no transformers, Windows. See IMPLEMENTATION_STATUS.md."
+  gpu: none
+  cuda_available: false
+  os: windows
