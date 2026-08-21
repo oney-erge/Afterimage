@@ -1,4 +1,9 @@
-"""Double-buffered async layer streaming (IMPLEMENTATION_PLAN.md Phase 2).
+"""ARCHIVED RESEARCH, not the production path -- see basis.py's module
+docstring for why. The current engine's prefetch is
+runtime/streaming_engine.py's _start_prefetch (thread pool, configurable
+io_prefetch_depth).
+
+Double-buffered async layer streaming (IMPLEMENTATION_PLAN.md Phase 2).
 
 On a CUDA machine this would use a dedicated torch.cuda.Stream to overlap
 PCIe transfer with GPU compute on the default stream. This development

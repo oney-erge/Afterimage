@@ -1,4 +1,7 @@
-"""The Afterimage cache for one linear layer (HYPOTHESIS.md #2-#3).
+"""ARCHIVED RESEARCH, not the production path -- see basis.py's module
+docstring for why, and runtime/streaming_engine.py for the current engine.
+
+The Afterimage cache for one linear layer (HYPOTHESIS.md #2-#3).
 
 Ties together OnlineBasis (which directions have we seen), JLGate (would the
 output change enough to matter if we didn't fetch), and TieredStore (where

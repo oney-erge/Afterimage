@@ -1,4 +1,7 @@
-"""Output-space error gate (HYPOTHESIS.md #3.1).
+"""ARCHIVED RESEARCH, not the production path -- see basis.py's module
+docstring for why, and runtime/streaming_engine.py for the current engine.
+
+Output-space error gate (HYPOTHESIS.md #3.1).
 
 The naive gate -- threshold on ||x_perp|| / ||x|| in *input* space -- is wrong.
 LLM hidden states are dominated by a few massive-activation dimensions that

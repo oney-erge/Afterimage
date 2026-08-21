@@ -98,6 +98,20 @@ def _recombine(exponent: torch.Tensor, sign_mantissa: torch.Tensor,
     return bits.view(torch.bfloat16).reshape(shape)
 
 
+def recombine_exponent_and_sign_mantissa(exponent, sign_mantissa,
+                                         shape: tuple, device: str) -> torch.Tensor:
+    """Public entry point for combining an ALREADY-decoded exponent field
+    with its sign_mantissa field into the final bf16 tensor -- for callers
+    that decoded the exponent by some means other than decompress_layer_gpu
+    (e.g. runtime/cpu_decode.py's CPU Huffman path, docs/PROPOSAL.md H2)
+    and just need the same bit-exact recombination math applied. Accepts
+    numpy arrays or tensors on any device; moves both to `device` first.
+    """
+    exp = torch.as_tensor(exponent, device=device)
+    sm = torch.as_tensor(sign_mantissa, device=device)
+    return _recombine(exp, sm, shape)
+
+
 def _slice_encoded(enc: ChunkedEncoded, c0: int, c1: int) -> ChunkedEncoded:
     """A view of chunks [c0, c1) as a standalone ChunkedEncoded.
 
@@ -181,3 +195,57 @@ def decompress_layer_cpu_reference(layer: CompressedLayer) -> torch.Tensor:
 
     exponent = torch.from_numpy(decode_chunked_cpu_reference(layer.encoded)).to(torch.int32)
     return _recombine(exponent, layer.sign_mantissa, layer.shape)
+
+
+def decompress_rows_gpu(layer: CompressedLayer, row_start: int, row_end: int,
+                        device: str = "cuda") -> torch.Tensor:
+    """Decode ONLY rows [row_start, row_end) of a 2D compressed tensor.
+
+    This is what makes lm_head stop dictating the engine's VRAM floor. A
+    14B's lm_head is [151936, 5120] bf16 = 1.556 GB, and both this engine
+    and AirLLM previously had to materialize all of it to produce logits --
+    so no VRAM budget below ~1.7 GB was expressible, no matter how little
+    else was resident. But logits over a vocabulary are a CONCATENATION
+    over output rows: logits[..., r0:r1] = x @ W[r0:r1].T, with no
+    interaction between row blocks. So the projection can be computed block
+    by block, and only one block's weights ever need to be live.
+
+    Available for free from the same property the GPU decoder was built on:
+    chunks are independently decodable (huffman_chunked.py), so any
+    contiguous element range decodes without reference to the rest. Row
+    boundaries need not align to chunk boundaries -- the covering chunk
+    range is decoded and the exact element range sliced out of it -- though
+    they DO align exactly on this model (5120 cols / 1024 chunk = 5 chunks
+    per row), which costs nothing extra.
+
+    Returns a (row_end - row_start, cols) bf16 tensor, bit-identical to the
+    corresponding slice of decompress_layer_gpu's output.
+    """
+    from .gpu_decode_v2 import decode_gpu_v2
+
+    if len(layer.shape) != 2:
+        raise ValueError("decompress_rows_gpu needs a 2D tensor, got shape %r"
+                         % (layer.shape,))
+    rows, cols = layer.shape
+    row_start = max(0, row_start)
+    row_end = min(rows, row_end)
+    if row_end <= row_start:
+        return torch.empty((0, cols), dtype=torch.bfloat16, device=device)
+
+    enc = layer.encoded
+    cs = enc.chunk_size
+    e0, e1 = row_start * cols, row_end * cols
+
+    # Covering chunk range: floor for the start, ceil for the end.
+    c0 = e0 // cs
+    c1 = min(enc.n_chunks, -(-e1 // cs))
+
+    sub = _slice_encoded(enc, c0, c1)
+    exponent = decode_gpu_v2(sub, device=device)
+
+    base = c0 * cs
+    avail = min(enc.n_symbols, c1 * cs) - base
+    sm = layer.sign_mantissa[base:base + avail].to(device=device)
+    flat = _recombine(exponent[:avail], sm, (avail,))
+    del exponent, sm
+    return flat[e0 - base:e1 - base].reshape(row_end - row_start, cols)

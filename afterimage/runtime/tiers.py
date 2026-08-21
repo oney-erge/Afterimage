@@ -1,4 +1,9 @@
-"""Storage-tier abstraction: VRAM / pinned host RAM / NVMe.
+"""ARCHIVED RESEARCH, not the production path -- see basis.py's module
+docstring for why. The current tier abstraction is
+runtime/vram_planner.py's TierPlan plus streaming_engine.py's per-tensor
+VRAM/RAM/disk execution.
+
+Storage-tier abstraction: VRAM / pinned host RAM / NVMe.
 
 Byte accounting here is the source of truth for the project's primary metric
 (GB transferred per accepted token, IMPLEMENTATION_PLAN.md #3.1). Every read

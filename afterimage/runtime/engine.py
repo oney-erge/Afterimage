@@ -1,4 +1,8 @@
-"""Decode loop: draft + batched offloaded verification + Afterimage cache
+"""ARCHIVED RESEARCH, not the production path -- see basis.py's module
+docstring for why, and runtime/streaming_engine.py for the current engine
+(unrelated despite the similar filename/role).
+
+Decode loop: draft + batched offloaded verification + Afterimage cache
 (IMPLEMENTATION_PLAN.md Phase 3-4), wired together and run against the toy
 LM since no real tokenizer/model is available in this environment (see
 IMPLEMENTATION_STATUS.md).

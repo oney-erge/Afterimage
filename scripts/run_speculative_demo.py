@@ -51,10 +51,14 @@ def main() -> int:
     ap.add_argument("--n-tokens", type=int, default=20)
     ap.add_argument("--k", type=int, default=8)
     ap.add_argument("--vram-cap-gb", type=float, default=None)
+    ap.add_argument("--vram-budget-gb", type=float, default=None,
+                    help="if set, hands residency to the three-tier planner instead of the legacy fixed policy")
+    ap.add_argument("--ram-budget-gb", type=float, default=None)
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
 
     from transformers import AutoTokenizer
+    from afterimage.runtime.config import EngineConfig
     from afterimage.runtime.streaming_engine import StreamingLosslessModel, load_draft_model
 
     tok = AutoTokenizer.from_pretrained(TARGET)
@@ -67,8 +71,9 @@ def main() -> int:
 
     log("--- loading target engine (%s, streamed) ---" % TARGET)
     t0 = time.perf_counter()
-    sm = StreamingLosslessModel(TARGET, STORE, device="cuda",
-                                vram_cap_gb=args.vram_cap_gb, progress=True)
+    cfg = EngineConfig(vram_cap_gb=args.vram_cap_gb, vram_budget_gb=args.vram_budget_gb,
+                       ram_budget_gb=args.ram_budget_gb, progress=True)
+    sm = StreamingLosslessModel(TARGET, STORE, device="cuda", config=cfg)
     log("  engine init: %.1fs" % (time.perf_counter() - t0))
 
     # Must match the device of the probability tensors sample_categorical
@@ -87,6 +92,7 @@ def main() -> int:
     text = tok.decode(seq[0, ids.shape[1]:])
     accept_rate = sm.stats.spec_accepted_tokens / max(1, sm.stats.spec_sweeps * args.k)
     peak_alloc = torch.cuda.max_memory_allocated() / 1e9
+    sm.close()
 
     log("")
     log("=" * 68)

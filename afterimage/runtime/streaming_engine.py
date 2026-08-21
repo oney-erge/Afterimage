@@ -11,19 +11,22 @@ Two-stage design, because a 29.5 GB model cannot be held in this machine's
 19 GB of RAM at any point:
 
   1. `compress_model_to_disk` streams the safetensors shards lazily with
-     safe_open, compresses tensors in parallel across a bounded worker pool
-     (docs/IMPROVEMENT_PLAN.md lever 4), and writes them into one flat
-     `weights.bin` (lever 1) instead of per-tensor `.npz` files.
+     safe_open, compresses tensors in parallel across a bounded worker pool,
+     and writes them into one flat `weights.bin` instead of per-tensor
+     `.npz` files, with a schema version and a per-blob CRC32 so a truncated
+     or corrupted store is caught explicitly rather than silently served.
   2. `StreamingLosslessModel` builds the network on the meta device (no
-     storage at all), then materializes exactly one decoder layer's weights
-     at a time on the GPU, runs it, and frees it -- prefetching the next
-     layer's bytes off disk in the background while the current one computes
-     (lever 3), and row-gathering the embedding table instead of fully
-     materializing it when the model does not tie it to lm_head (lever 2).
+     storage at all), then decides -- via EngineConfig and
+     vram_planner.plan_tiers -- which tensors live permanently in VRAM,
+     which live in pinned host RAM and get memcpy'd to GPU every token, and
+     which are read + decoded from disk every token. Disk-tier layers are
+     prefetched some configurable number ahead while the current layer
+     decodes and computes, and an untied model's embedding table is
+     row-gathered rather than ever fully materialized.
 
-`generate_speculative` (lever 5) is a separate decoding mode built on top of
-the same weight-streaming machinery; see its docstring for why it is
-validated differently from `generate_greedy`.
+`generate_speculative` is a separate decoding mode built on top of the same
+weight-streaming machinery; see its docstring for why it is validated
+differently from `generate_greedy`.
 
 Quantization is opt-in (see config.EngineConfig). The default is strictly
 lossless, because AirLLM does not quantize either -- quantizing by default
@@ -31,6 +34,7 @@ would make the head-to-head measure two different things.
 """
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import json
 import multiprocessing as mp
@@ -43,6 +47,16 @@ import torch
 
 from .binstore import BinaryWeightReader, BinaryWeightWriter, blobref_to_dict
 from .compressed_store import CompressedLayer, compress_layer, decompress_layer_gpu
+from .config import EngineConfig
+
+# Bumped whenever the manifest/weights.bin layout changes in a way that
+# makes an old store unreadable by new code (or vice versa) -- e.g. the
+# .npz -> binstore switch would have been version 1 -> 2 had this existed
+# at the time. A store built before this field existed has no
+# "schema_version" key at all, which StreamingLosslessModel treats as
+# version 1 and refuses, rather than failing deep inside tensor decoding
+# with a confusing KeyError on "blobs".
+CURRENT_SCHEMA_VERSION = 2
 
 
 @dataclasses.dataclass
@@ -76,7 +90,7 @@ def _compress_one_tensor(task: tuple) -> dict:
     BlobRefs: offsets depend on write order into the single shared
     weights.bin, which only the main process (the sole writer) can assign.
     """
-    shard_path, key, chunk_size, quantize, row_gather = task
+    shard_path, key, chunk_size, quantize, max_bits, row_gather = task
     from safetensors import safe_open
 
     with safe_open(shard_path, framework="pt", device="cpu") as f:
@@ -87,7 +101,7 @@ def _compress_one_tensor(task: tuple) -> dict:
         # Stored raw (no entropy coding) and row-addressable: the whole
         # point is to skip ever materializing this tensor in full, so
         # compressing it would only add decode cost to a path designed to
-        # avoid touching most of it at all (lever 2).
+        # avoid touching most of it at all.
         assert W.dtype == torch.bfloat16 and W.dim() == 2, (
             "row-gather storage assumes a 2D bf16 embedding table, got "
             "%s %s for %s" % (W.dtype, tuple(W.shape), key))
@@ -104,7 +118,7 @@ def _compress_one_tensor(task: tuple) -> dict:
         if quantize == "q8":
             from ..probe.approximations import quantize_grouped
             W = quantize_grouped(W, bits=8, group_size=64).to(torch.bfloat16)
-        layer = compress_layer(W, chunk_size=chunk_size)
+        layer = compress_layer(W, chunk_size=chunk_size, max_bits=max_bits)
         return {
             "key": key, "kind": "compressed", "shape": list(W.shape),
             "max_bits": int(layer.encoded.max_bits),
@@ -131,20 +145,21 @@ def _compress_one_tensor(task: tuple) -> dict:
     }
 
 
-def compress_model_to_disk(model_id: str, out_dir, chunk_size: int = 1024,
-                           quantize=None, progress_every: int = 50,
-                           max_workers: int | None = None) -> dict:
+def compress_model_to_disk(model_id: str, out_dir, config: EngineConfig | None = None,
+                           progress_every: int = 50,
+                           max_workers: int | None = None,
+                           control=None) -> dict:
     """Offline pass: safetensors -> one compressed weights.bin + manifest.
 
-    Parallel across tensors (lever 4), except embed_tokens/lm_head-sized
-    ones, which run serially in the main process. Those two are ~9x bigger
-    than every other tensor in a 14B-class model, and compress_layer's
-    working set for a tensor that size is roughly 4x its bf16 bytes (the
-    exponent/sign/mantissa fields are unpacked to int32 before being
-    repacked) -- two of them running concurrently in a worker pool could
-    exceed this machine's 19 GB RAM ceiling. There are only ever one or two
-    such tensors per model, so serializing just them costs seconds, not the
-    minutes parallelism saves on the other ~440.
+    Parallel across tensors, except embed_tokens/lm_head-sized ones, which
+    run serially in the main process. Those two are ~9x bigger than every
+    other tensor in a 14B-class model, and compress_layer's working set for
+    a tensor that size is roughly 4x its bf16 bytes (the exponent/sign/
+    mantissa fields are unpacked to int32 before being repacked) -- two of
+    them running concurrently in a worker pool could exceed this machine's
+    19 GB RAM ceiling. There are only ever one or two such tensors per
+    model, so serializing just them costs seconds, not the minutes
+    parallelism saves on the other ~440.
 
     CALLER REQUIREMENT: the worker pool uses the "spawn" start method (see
     the note above the Pool call for why fork is unsafe here), which
@@ -152,13 +167,13 @@ def compress_model_to_disk(model_id: str, out_dir, chunk_size: int = 1024,
     that calls this function directly (not through pytest, which is already
     spawn-safe) MUST put its top-level driver code behind
     `if __name__ == "__main__":` -- otherwise each worker re-executes the
-    whole script, which recursively re-invokes this function. This bit
-    scripts/validate_streaming.py and scripts/compress_14b.py the first
-    time this was wired up; both now carry the guard.
+    whole script, which recursively re-invokes this function.
     """
     from huggingface_hub import snapshot_download
     from safetensors import safe_open
     from transformers import AutoConfig
+
+    cfg = config or EngineConfig()
 
     out_dir = pathlib.Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -168,8 +183,8 @@ def compress_model_to_disk(model_id: str, out_dir, chunk_size: int = 1024,
     if not shards:
         raise FileNotFoundError("no .safetensors in " + str(snap))
 
-    cfg = AutoConfig.from_pretrained(model_id)
-    tied = bool(getattr(cfg, "tie_word_embeddings", False))
+    hf_cfg = AutoConfig.from_pretrained(model_id)
+    tied = bool(getattr(hf_cfg, "tie_word_embeddings", False))
     # Row-gather only helps when embed_tokens is NOT also serving as
     # lm_head: lm_head needs the full output-projection matrix regardless,
     # so a tied model gains nothing from skipping embed_tokens's
@@ -181,8 +196,8 @@ def compress_model_to_disk(model_id: str, out_dir, chunk_size: int = 1024,
     for shard in shards:
         with safe_open(str(shard), framework="pt", device="cpu") as f:
             for key in f.keys():
-                all_tasks.append((str(shard), key, chunk_size, quantize,
-                                  key == row_gather_key))
+                all_tasks.append((str(shard), key, cfg.chunk_size, cfg.quantize,
+                                  cfg.max_bits, key == row_gather_key))
 
     big_tasks = [t for t in all_tasks if t[1].endswith(_BIG_TENSOR_SUFFIXES)]
     small_tasks = [t for t in all_tasks if not t[1].endswith(_BIG_TENSOR_SUFFIXES)]
@@ -190,8 +205,12 @@ def compress_model_to_disk(model_id: str, out_dir, chunk_size: int = 1024,
     if max_workers is None:
         max_workers = min(8, mp.cpu_count() or 4)
 
-    manifest = {"model_id": model_id, "quantize": quantize,
-                "chunk_size": chunk_size, "tied": tied, "tensors": {}}
+    from .control import JobControl
+    ctl = control or JobControl()
+
+    manifest = {"schema_version": CURRENT_SCHEMA_VERSION, "model_id": model_id,
+                "quantize": cfg.quantize, "chunk_size": cfg.chunk_size,
+                "tied": tied, "tensors": {}}
     total_orig = 0
     total_comp = 0
     n = 0
@@ -199,6 +218,7 @@ def compress_model_to_disk(model_id: str, out_dir, chunk_size: int = 1024,
 
     def _write_result(res: dict, writer: BinaryWeightWriter) -> None:
         nonlocal total_orig, total_comp, n
+        ctl.checkpoint()  # pause/cancel boundary: one tensor at a time
         blobs = {name: blobref_to_dict(writer.write(arr))
                  for name, arr in res["arrays"].items()}
         entry = {"orig_bytes": res["orig_bytes"], "comp_bytes": res["comp_bytes"],
@@ -216,8 +236,10 @@ def compress_model_to_disk(model_id: str, out_dir, chunk_size: int = 1024,
         total_orig += res["orig_bytes"]
         total_comp += res["comp_bytes"]
         n += 1
+        ratio = total_orig / max(total_comp, 1)
+        ctl.report(phase="compress", n=n, n_total=n_total,
+                  orig_gb=total_orig / 1e9, comp_gb=total_comp / 1e9, ratio=ratio)
         if n % progress_every == 0:
-            ratio = total_orig / max(total_comp, 1)
             print("  [%d/%d] %.2f GB -> %.2f GB (%.3fx)"
                   % (n, n_total, total_orig / 1e9, total_comp / 1e9, ratio), flush=True)
 
@@ -247,10 +269,9 @@ def compress_model_to_disk(model_id: str, out_dir, chunk_size: int = 1024,
             # into scattered random access across a 20 GB file instead of
             # mostly-sequential reads. Measured cost on the real 14B store:
             # imap_unordered produced a store that streamed at roughly half
-            # the old .npz format's throughput (io_seconds alone exceeded
-            # the OLD format's combined io+decode time) -- exactly what
-            # random access over sequential access predicts, and enough to
-            # erase this lever's entire gain and then some.
+            # the old .npz format's throughput -- exactly what random
+            # access over sequential access predicts, and enough to erase
+            # this lever's entire gain and then some.
             ctx = mp.get_context("spawn")
             with ctx.Pool(processes=max_workers) as pool:
                 for res in pool.imap(_compress_one_tensor, small_tasks, chunksize=1):
@@ -264,57 +285,70 @@ def compress_model_to_disk(model_id: str, out_dir, chunk_size: int = 1024,
 
 
 class StreamingLosslessModel:
-    """Layer-at-a-time execution from the compressed store."""
+    """Layer-at-a-time execution from the compressed store, with per-tensor
+    residency decided by EngineConfig + vram_planner rather than hardcoded.
+    """
 
     def __init__(self, model_id: str, store_dir, device: str = "cuda",
-                 vram_cap_gb=None, empty_cache_every: int = 0,
-                 progress: bool = False, prefetch: bool = True):
-        """vram_cap_gb: hard ceiling on this process's GPU memory.
+                 config: EngineConfig | None = None, control=None):
+        """config: an EngineConfig. Its defaults reproduce this engine's
+        original fixed policy exactly (embed_tokens/lm_head/norms
+        permanently VRAM-resident, every decoder-layer weight streamed from
+        disk every token, io_prefetch_depth=1) -- setting vram_budget_gb
+        hands residency to vram_planner.plan_tiers instead, and additionally
+        setting ram_budget_gb adds a pinned-host-RAM tier that decoder-layer
+        weights can land in instead of disk.
 
-        Layer streaming only needs one layer resident at a time, so peak
-        LIVE memory is small -- but PyTorch's caching allocator never
-        returns freed blocks to the driver, so observed VRAM climbs to the
-        high-water mark and keeps growing until it looks like the model
-        barely fits (measured: 7.8 GB of 8 GB on a 14B, against ~3.9 GB
-        actually live). Capping makes the allocator reuse its own cache
-        instead of requesting more, and turns a silent creep toward OOM into
-        an immediate, legible error.
+        vram_cap_gb (on the config) is a hard ceiling on this process's GPU
+        memory, independent of the residency PLANNING above: PyTorch's
+        caching allocator never returns freed blocks to the driver, so
+        observed VRAM climbs to the high-water mark and keeps growing until
+        it looks like the model barely fits. Capping makes the allocator
+        reuse its own cache instead of requesting more, and turns a silent
+        creep toward OOM into an immediate, legible error.
 
-        empty_cache_every: release cached blocks back to the driver every N
-        layer frees. 0 disables. Non-zero costs a synchronize per call, so
-        it is a memory/throughput tradeoff, not a free win.
-
-        prefetch: overlap the NEXT layer's disk I/O with the CURRENT
-        layer's GPU compute (lever 3), using a background thread with its
-        own file handle so it never races the main thread's reads. Decode
-        (the GPU Huffman kernel) still runs synchronously when a layer is
-        loaded -- this overlaps I/O with compute, not decode with compute --
-        so treat it as a partial implementation of "double-buffer
-        everything," not the full three-way overlap.
+        control: an optional runtime.control.JobControl for pause/resume/
+        cancel and structured progress -- what the FastAPI server's job
+        endpoints drive. Defaults to a private, un-driven JobControl (never
+        paused/cancelled unless something explicitly calls it), so plain
+        scripted use is unaffected.
         """
         from transformers import AutoConfig, AutoModelForCausalLM
+        from .control import JobControl
 
+        self.config = config or EngineConfig()
+        self.control = control or JobControl()
         self.store = pathlib.Path(store_dir)
         self.manifest = json.loads((self.store / "manifest.json").read_text())
+        self._check_store_integrity()
+
         self.device = device
         self.stats = StreamStats()
 
-        self.vram_cap_gb = vram_cap_gb
-        self.empty_cache_every = empty_cache_every
-        self.progress = progress
-        self.prefetch = prefetch
+        self.progress = self.config.progress
+        self.empty_cache_every = self.config.empty_cache_every
+        self.io_prefetch_depth = self.config.io_prefetch_depth
+        self.prefetch = self.io_prefetch_depth > 0
+        self.ram_tier_format = self.config.ram_tier_format
         self._frees = 0
         self._tok_i = 0
         self._tok_total = 0
         self._gen_t0 = 0.0
+        self._kv_cache = None
 
         self._reader = BinaryWeightReader(self.store / "weights.bin")
-        self._prefetch_reader = (BinaryWeightReader(self.store / "weights.bin")
-                                 if prefetch else None)
+        n_prefetch_readers = max(1, self.io_prefetch_depth)
+        self._prefetch_readers = (
+            [BinaryWeightReader(self.store / "weights.bin") for _ in range(n_prefetch_readers)]
+            if self.prefetch else [])
         self._prefetch_cache: dict[int, dict] = {}
         self._prefetch_threads: dict[int, threading.Thread] = {}
         self._prefetch_lock = threading.Lock()
 
+        self._tier = self._compute_tier_assignment(self.config)
+        self._ram_cache: dict[str, torch.Tensor] = {}
+
+        vram_cap_gb = self.config.vram_cap_gb
         if vram_cap_gb is not None and torch.cuda.is_available():
             total = torch.cuda.get_device_properties(0).total_memory
             frac = min(1.0, (vram_cap_gb * 1e9) / total)
@@ -322,9 +356,9 @@ class StreamingLosslessModel:
             print("VRAM capped to %.2f GB (%.1f%% of %.2f GB device)"
                   % (vram_cap_gb, frac * 100, total / 1e9), flush=True)
 
-        cfg = AutoConfig.from_pretrained(model_id)
+        hf_cfg = AutoConfig.from_pretrained(model_id)
         with torch.device("meta"):
-            self.model = AutoModelForCausalLM.from_config(cfg, dtype=torch.bfloat16)
+            self.model = AutoModelForCausalLM.from_config(hf_cfg, dtype=torch.bfloat16)
         self.model.eval()
 
         self.layers = self.model.model.layers
@@ -332,13 +366,170 @@ class StreamingLosslessModel:
 
         self._materialize_resident()
         self._install_hooks()
+        self._install_streamed_module_hooks()
+        self._install_chunked_lm_head()
         if self.prefetch:
-            self._start_prefetch(0)
+            for ahead in range(1, self.io_prefetch_depth + 1):
+                self._start_prefetch(ahead - 1)
 
     def close(self) -> None:
+        """Join any still-in-flight background prefetch threads before
+        closing the file handles they read through.
+
+        Without this, a prefetch started for a layer that generation never
+        actually reaches -- e.g. draft_self_logits truncates
+        model.model.layers to a prefix, so the one-layer-ahead prefetch it
+        fires can point past the truncated range and sit unconsumed until a
+        later full forward pass reaches it -- can still be mid-read() when
+        close() runs, racing the file handle out from under it
+        ("I/O operation on closed file" in a background thread). Harmless
+        to the caller (results already returned are unaffected either way)
+        but a real race, caught by tests/test_streaming_engine_gpu.py's
+        self-draft tests, which close() shortly after touching only a few
+        layers.
+        """
+        with self._prefetch_lock:
+            pending = list(self._prefetch_threads.values())
+        for th in pending:
+            th.join()
         self._reader.close()
-        if self._prefetch_reader is not None:
-            self._prefetch_reader.close()
+        for r in self._prefetch_readers:
+            r.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()
+
+    def _check_store_integrity(self) -> None:
+        """Two cheap, always-on checks that catch the two most common ways
+        a store goes bad, without paying the cost of hashing the whole
+        (multi-GB) file on every startup -- see binstore.verify_store for
+        the expensive, explicit, opt-in full check.
+        """
+        version = self.manifest.get("schema_version")
+        if version != CURRENT_SCHEMA_VERSION:
+            raise RuntimeError(
+                "store at %s has schema_version=%r, this code expects %d. "
+                "Old .npz-based stores predate this field entirely and are "
+                "not readable by this engine -- re-run compress_model_to_disk."
+                % (self.store, version, CURRENT_SCHEMA_VERSION))
+
+        weights_path = self.store / "weights.bin"
+        if not weights_path.exists():
+            raise RuntimeError("no weights.bin found at %s" % self.store)
+        expected_min_size = 0
+        for meta in self.manifest["tensors"].values():
+            for ref in meta.get("blobs", {}).values():
+                expected_min_size = max(expected_min_size, ref["offset"] + ref["nbytes"])
+        actual_size = weights_path.stat().st_size
+        if actual_size < expected_min_size:
+            raise RuntimeError(
+                "weights.bin at %s is truncated: manifest references bytes "
+                "up to offset %d but the file is only %d bytes -- the store "
+                "is incomplete or was corrupted; recompress it. (Run "
+                "binstore.verify_store() for a full checksum pass.)"
+                % (weights_path, expected_min_size, actual_size))
+
+    # -- residency planning ------------------------------------------------
+
+    CHUNKED_HEAD_KEY = "lm_head.weight"
+
+    def _chunked_head_rows(self, cfg: EngineConfig) -> int:
+        """Rows of lm_head to compute per block, or 0 if chunking is off or
+        does not apply.
+
+        Does not apply to a TIED model: there lm_head aliases
+        embed_tokens.weight and has no manifest entry of its own, so there
+        is nothing separate to stream in blocks. Does not apply to a
+        raw-stored (uncompressed) head either -- decompress_rows_gpu
+        decodes chunk ranges, which only exist for entropy-coded tensors.
+        """
+        if cfg.lm_head_slice_rows <= 0:
+            return 0
+        meta = self.manifest["tensors"].get(self.CHUNKED_HEAD_KEY)
+        if not meta or not meta.get("compressed") or len(meta["shape"]) != 2:
+            return 0
+        return cfg.lm_head_slice_rows
+
+    def _stream_only_overrides(self, cfg: EngineConfig) -> dict:
+        """{key: peak bytes live at once} for tensors the engine computes in
+        blocks and never holds whole -- what lets vram_planner stop
+        reserving headroom for a tensor that is never fully materialized."""
+        step = self._chunked_head_rows(cfg)
+        if not step:
+            return {}
+        rows, cols = self.manifest["tensors"][self.CHUNKED_HEAD_KEY]["shape"]
+        return {self.CHUNKED_HEAD_KEY: min(step, rows) * cols * 2}  # bf16
+
+    def _compute_tier_assignment(self, cfg: EngineConfig) -> dict[str, str]:
+        """Every manifest key -> "vram" | "ram" | "disk" | "row_gather".
+
+        Without a vram_budget_gb, this reproduces the engine's original
+        fixed policy exactly: every non-layer tensor (embed_tokens, lm_head,
+        norms) is VRAM-resident, every decoder-layer tensor streams from
+        disk every token. With a budget, vram_planner.plan_tiers ranks ALL
+        tensors -- including decoder-layer weights, which the fixed policy
+        never considered for residency at all -- by bus-traffic-avoided per
+        byte, and fills VRAM then RAM greedily.
+        """
+        tiers: dict[str, str] = {}
+        for key, meta in self.manifest["tensors"].items():
+            if meta.get("row_gather"):
+                tiers[key] = "row_gather"
+
+        # A chunked head is computed in row blocks and must never be
+        # materialized whole -- otherwise the 1.556 GB it exists to avoid
+        # gets held anyway and the feature silently saves nothing. This
+        # applies under BOTH residency policies: the legacy fixed policy
+        # below would otherwise mark it "vram" simply for not being a
+        # decoder layer. Caught by a test that asserted the weight stays on
+        # the meta device.
+        chunked_head = (self.CHUNKED_HEAD_KEY
+                        if self._chunked_head_rows(cfg) else None)
+        if chunked_head:
+            tiers[chunked_head] = "disk"
+
+        if not cfg.uses_tiered_residency:
+            for key in self.manifest["tensors"]:
+                if key in tiers:
+                    continue
+                tiers[key] = "disk" if key.startswith("model.layers.") else "vram"
+            return tiers
+
+        from .vram_planner import plan_from_manifest
+        stream_only = self._stream_only_overrides(cfg)
+        draft_layer_indices = None
+        draft_uses = 1
+        if cfg.draft_mode == "self" and cfg.pin_draft_layers:
+            # Self-drafting touches layers [0, draft_exit_layer) once per
+            # proposed token PLUS once during verification -- (spec_k + 1)
+            # times per sweep, not once -- so the planner must rank them
+            # accordingly or self-drafting just re-streams them repeatedly.
+            # See vram_planner's "Self-speculation breaks..." docstring
+            # section and PROPOSAL_ADAPTIVE.md mechanism C. spec_k (not a
+            # live bandit mean) is the estimate at plan time -- this runs
+            # once at model construction, before any sweep has happened.
+            draft_layer_indices = range(cfg.draft_exit_layer)
+            draft_uses = cfg.spec_k + 1
+        plan = plan_from_manifest(self.manifest, vram_budget_gb=cfg.vram_budget_gb,
+                                  ram_budget_gb=cfg.ram_budget_gb or 0.0,
+                                  decode_slice_elems=cfg.decode_slice_elems,
+                                  draft_layer_indices=draft_layer_indices,
+                                  draft_uses=draft_uses,
+                                  stream_only=stream_only)
+        if not plan.feasible:
+            raise RuntimeError("VRAM budget is infeasible: " + plan.reason)
+        for key in plan.vram_keys:
+            if key != chunked_head:
+                tiers[key] = "vram"
+        for key in plan.ram_keys:
+            if key != chunked_head:
+                tiers[key] = "ram"
+        for key in plan.disk_keys:
+            tiers[key] = "disk"
+        return tiers
 
     # -- store access ----------------------------------------------------
 
@@ -366,6 +557,18 @@ class StreamingLosslessModel:
             return out.to(self.device)
 
         t1 = time.perf_counter()
+        layer = self._compressed_layer(key, arrays)
+        out = decompress_layer_gpu(layer, device=self.device,
+                                   max_slice_elems=self.config.decode_slice_elems)
+        self.stats.decode_seconds += time.perf_counter() - t1
+        return out
+
+    def _compressed_layer(self, key: str, arrays: dict) -> CompressedLayer:
+        """Rebuild the CompressedLayer view over already-read arrays.
+        Shared by whole-tensor decode (_decode_tensor) and block decode
+        (the chunked lm_head projection), so both read the identical
+        metadata and cannot drift apart."""
+        meta = self.manifest["tensors"][key]
         from .huffman_chunked import ChunkedEncoded
         enc = ChunkedEncoded(
             packed=arrays["packed"],
@@ -378,43 +581,76 @@ class StreamingLosslessModel:
             n_symbols=int(meta["n_symbols"]),
             shape=tuple(meta["shape"]),
         )
-        layer = CompressedLayer(
+        return CompressedLayer(
             sign_mantissa=torch.from_numpy(arrays["sign_mantissa"]),
             encoded=enc,
             shape=tuple(meta["shape"]),
         )
-        out = decompress_layer_gpu(layer, device=self.device)
-        self.stats.decode_seconds += time.perf_counter() - t1
-        return out
 
     def _load_tensor(self, key: str) -> torch.Tensor:
         """Synchronous read-then-decode -- the path used whenever a
         prefetch did not already do the read (resident materialization at
-        startup, and any layer tensor the background thread has not
-        finished reading yet)."""
+        startup, and any disk-tier layer tensor the background thread has
+        not finished reading yet)."""
         arrays, io_s = self._read_tensor_arrays(key)
         self.stats.bytes_read += self.manifest["tensors"][key]["comp_bytes"]
         self.stats.io_seconds += io_s
         return self._decode_tensor(key, arrays)
 
-    def _assign(self, root, dotted: str, value: torch.Tensor) -> None:
+    # -- per-parameter storage swap ---------------------------------------
+    #
+    # Everything below replaces the module-level to_empty()/to("meta")
+    # pattern with direct, per-parameter storage replacement. That pattern
+    # required a WHOLE module's parameters to be materialized or freed
+    # together, which is fine when every parameter in a layer gets the same
+    # treatment (the original fixed policy: whole layer loaded, whole layer
+    # freed) but breaks the moment two sibling parameters in the same layer
+    # need DIFFERENT treatment -- one permanently VRAM-resident, another
+    # freed every token -- which tiered residency now requires.
+
+    def _navigate(self, root, dotted: str):
         target = root
         parts = dotted.split(".")
         for p in parts[:-1]:
             target = getattr(target, p)
-        getattr(target, parts[-1]).data.copy_(value)
+        return target, parts[-1]
+
+    def _set_param(self, root, dotted: str, tensor: torch.Tensor) -> None:
+        """Replace a (possibly meta) parameter/buffer with a real tensor by
+        direct assignment -- no existing real storage required first."""
+        target, leaf = self._navigate(root, dotted)
+        if leaf in target._parameters:
+            target._parameters[leaf] = torch.nn.Parameter(tensor, requires_grad=False)
+        elif leaf in target._buffers:
+            target._buffers[leaf] = tensor
+        else:
+            raise AttributeError("%r has neither parameter nor buffer %r" % (target, leaf))
+
+    def _to_meta_param(self, root, dotted: str) -> None:
+        """The free-side counterpart to _set_param: replace a real
+        parameter/buffer with an empty meta-device placeholder."""
+        target, leaf = self._navigate(root, dotted)
+        if leaf in target._parameters:
+            cur = target._parameters[leaf]
+            target._parameters[leaf] = torch.nn.Parameter(
+                torch.empty_like(cur, device="meta"), requires_grad=False)
+        elif leaf in target._buffers:
+            cur = target._buffers[leaf]
+            target._buffers[leaf] = torch.empty_like(cur, device="meta")
+        else:
+            raise AttributeError("%r has neither parameter nor buffer %r" % (target, leaf))
 
     # -- residency -------------------------------------------------------
 
     def _install_embed_row_gather(self, key: str) -> None:
         """For untied models, embed_tokens.weight is stored raw and
-        row-addressable rather than fully materialized (lever 2): a token
-        embedding lookup only ever needs one row per input token, not all
-        151936 of them, so pulling the whole 1.56 GB table into VRAM for
-        that is pure waste. lm_head still needs its full matrix to produce
-        logits over the whole vocabulary and stays resident as before --
-        this only applies where the two are NOT tied together, since a tied
-        model has to materialize the full table anyway to serve as lm_head.
+        row-addressable rather than fully materialized: a token embedding
+        lookup only ever needs one row per input token, not all 151936 of
+        them, so pulling the whole 1.56 GB table into VRAM for that is pure
+        waste. lm_head still needs its full matrix to produce logits over
+        the whole vocabulary and is tiered normally -- this only applies
+        where the two are NOT tied together, since a tied model has to
+        materialize the full table anyway to serve as lm_head.
         """
         meta = self.manifest["tensors"][key]
         ref = meta["blobs"]["raw"]
@@ -441,30 +677,31 @@ class StreamingLosslessModel:
         self.model.model.embed_tokens.forward = forward
 
     def _materialize_resident(self) -> None:
-        """Materialize everything that is not a decoder layer, then re-tie
-        weights the checkpoint does not store separately.
+        """Materialize every VRAM- or RAM-tier tensor (which, under the
+        default config, is exactly "everything that is not a decoder
+        layer" -- see _compute_tier_assignment), then re-tie weights the
+        checkpoint does not store separately.
 
         Weight tying is the subtle part. Qwen2.5 (and many others) set
         tie_word_embeddings=True, so the safetensors contains NO
-        lm_head.weight -- it is meant to alias embed_tokens.weight. Calling
-        to_empty() on each module independently allocates a FRESH tensor per
-        parameter, silently breaking that aliasing, and since there is no
-        lm_head.weight in the store there is then nothing to load into it:
-        lm_head runs on uninitialized memory. The model still produces
-        logits, so nothing crashes -- it just returns confident nonsense
-        (measured: max abs logit diff 22.1, argmax token 100628 vs the
-        correct 12095). Re-tying after materialization is what fixes it, and
-        any parameter left with no source now raises instead of quietly
-        running on garbage.
+        lm_head.weight -- it is meant to alias embed_tokens.weight. Since
+        there is no lm_head.weight in the store, materializing it as an
+        independent tensor would leave it with nothing to load: it would
+        run on whatever _set_param happened to construct, which is
+        uninitialized memory unless explicitly re-tied afterward. The
+        model still produces logits in that state, so nothing crashes -- it
+        just returns confident nonsense (measured, before this was fixed:
+        max abs logit diff 22.1, argmax token 100628 vs the correct 12095).
+        Re-tying after materialization is what fixes it, and any parameter
+        left with no source now raises instead of quietly running on
+        garbage.
         """
         embed_key = "model.embed_tokens.weight"
-        row_gather = bool(self.manifest["tensors"].get(embed_key, {}).get("row_gather"))
+        row_gather = self._tier.get(embed_key) == "row_gather"
         embed_mod = self.model.model.embed_tokens if row_gather else None
 
         missing = []
         for name, mod in self.model.named_modules():
-            if name.startswith("model.layers."):
-                continue
             if row_gather and mod is embed_mod:
                 continue  # handled by _install_embed_row_gather instead
             params = list(mod.named_parameters(recurse=False))
@@ -476,19 +713,61 @@ class StreamingLosslessModel:
             nonpersistent = getattr(mod, "_non_persistent_buffers_set", set())
             buffers = [(bn, b) for bn, b in mod.named_buffers(recurse=False)
                        if bn not in nonpersistent]
-            if not params and not buffers:
-                continue
-            mod.to_empty(device=self.device)
             for pname, _ in params + buffers:
                 key = (name + "." + pname) if name else pname
-                if key in self.manifest["tensors"]:
-                    getattr(mod, pname).data.copy_(self._load_tensor(key))
-                else:
+                if key not in self.manifest["tensors"]:
                     missing.append(key)
+                    continue
+                tier = self._tier.get(key, "disk")
+                if tier in ("disk", "row_gather"):
+                    continue  # left on meta; loaded per-token / row-gathered
+                if tier == "vram":
+                    self._set_param(self.model, key, self._load_tensor(key))
+                elif tier == "ram":
+                    if self.ram_tier_format == "compressed":
+                        # H1: cache the COMPRESSED bytes (fits ~1.45x more
+                        # tensors in ram_budget_gb) instead of a decoded
+                        # pinned tensor -- the tradeoff is a real GPU decode
+                        # on every token instead of a memcpy. See
+                        # EngineConfig.ram_tier_format and
+                        # docs/PROPOSAL.md H1.
+                        arrays, _ = self._read_tensor_arrays(key)
+                        self._ram_cache[key] = arrays
+                        self._set_param(self.model, key, self._decode_tensor(key, arrays))
+                    else:
+                        # "decoded" needs the tensor's GPU footprint live
+                        # TWICE at once, briefly: once as the transient
+                        # decode target, again as the final resident copy
+                        # (_set_param below). Across many RAM-tier tensors
+                        # in one sequential materialize loop, PyTorch's
+                        # caching allocator can accumulate unreturned
+                        # transient blocks faster than they're needed again,
+                        # and this was measured to genuinely OOM a real 14B
+                        # at ram_budget_gb as low as 1.5 (reproduced twice;
+                        # "compressed" format, which never needs two live
+                        # copies, did not) -- emptying the cache after each
+                        # transient tensor is freed keeps peak usage bounded
+                        # by one tensor's footprint instead of letting it
+                        # grow with how many RAM-tier tensors preceded it.
+                        gpu_tensor = self._load_tensor(key)
+                        cached = gpu_tensor.to("cpu").pin_memory()
+                        self._ram_cache[key] = cached
+                        del gpu_tensor
+                        torch.cuda.empty_cache()
+                        # Give it a real (if disposable) GPU home for the
+                        # very first forward pass too, so _load_layer's
+                        # per-token refresh logic doesn't need a special
+                        # "not loaded yet" branch for non-layer RAM-tier
+                        # tensors -- there are none of those today (RAM
+                        # tier only ever holds decoder-layer weights in
+                        # practice), but this keeps the invariant "every
+                        # real tensor is either meta or already correctly
+                        # populated" true unconditionally.
+                        self._set_param(self.model, key, cached.to(self.device))
 
-        # Rebuild modules whose state is computed, not loaded. to_empty()
-        # left their non-persistent buffers as uninitialized memory; a fresh
-        # instance recomputes them from config on the target device.
+        # Rebuild modules whose state is computed, not loaded. Their
+        # non-persistent buffers were left on the meta device above; a
+        # fresh instance recomputes them from config on the target device.
         m = self.model.model
         if getattr(m, "rotary_emb", None) is not None:
             try:
@@ -533,7 +812,11 @@ class StreamingLosslessModel:
         pct = 100.0 * done / total
         filled = int(pct / 4)
         bar = "#" * filled + "-" * (25 - filled)
-        if layer_idx % 5 == 0 or layer_idx == self.n_layers - 1:
+        self.control.report(phase="generate", pct=pct, token=self._tok_i + 1,
+                            tokens_total=self._tok_total, layer=layer_idx + 1,
+                            layers_total=self.n_layers, gb_read=self.stats.bytes_read / 1e9,
+                            elapsed_s=elapsed, eta_s=eta)
+        if self.progress and (layer_idx % 5 == 0 or layer_idx == self.n_layers - 1):
             print("  [%s] %5.1f%%  tok %d/%d  layer %2d/%d  %.1f GB  "
                   "%.0fs elapsed  ETA %.0fs"
                   % (bar, pct, self._tok_i + 1, self._tok_total,
@@ -541,11 +824,16 @@ class StreamingLosslessModel:
                      self.stats.bytes_read / 1e9, elapsed, eta), flush=True)
 
     def _read_layer_tensor_arrays(self, idx: int, reader: BinaryWeightReader) -> dict:
+        """Reads only this layer's DISK-tier tensors -- vram/ram-tier ones
+        are never re-read from disk after _materialize_resident, so
+        prefetching them would be pure waste."""
         layer = self.layers[idx]
         result = {}
         for pname, _ in layer.named_parameters():
             key = "model.layers.%d.%s" % (idx, pname)
             if key not in self.manifest["tensors"]:
+                continue
+            if self._tier.get(key, "disk") != "disk":
                 continue
             meta = self.manifest["tensors"][key]
             t0 = time.perf_counter()
@@ -554,29 +842,37 @@ class StreamingLosslessModel:
         return result
 
     def _start_prefetch(self, idx: int) -> None:
-        """Kick off a background read of layer idx's bytes. Uses a SEPARATE
-        BinaryWeightReader (its own file handle) from the main thread's
-        reader -- seek()+read() on one shared handle is not thread-safe, and
-        giving the background thread its own fd sidesteps that race
-        entirely rather than adding locking around every read.
+        """Kick off a background read of layer idx's disk-tier bytes.
 
-        The Thread object itself is kept in _prefetch_threads so _load_layer
-        can JOIN it instead of racing it: an earlier version only tracked
-        "pending" as a set membership flag, and _load_layer fell back to an
-        entirely separate synchronous read (its own reader, same file) the
-        instant the cache wasn't ready yet -- meaning two readers ended up
-        pulling the SAME bytes off the SAME disk at the SAME time whenever
-        prefetch didn't win the race. Measured on the real 14B store, that
-        made streaming SLOWER with prefetch on than off (76.9s vs 51.3s for
-        2 tokens) -- contention, not overlap. Joining the in-flight thread
-        instead means the worst case degrades to "wait for the one read
-        already happening," not "start a second one that competes with it."
+        Uses one of a small POOL of BinaryWeightReaders (io_prefetch_depth
+        of them, each its own file handle) rather than a single shared
+        reader -- concurrent seek()+read() on one handle is not
+        thread-safe, and giving each in-flight prefetch its own fd
+        sidesteps that race entirely instead of adding locking around
+        every read. A depth-1 pool (the default) reproduces the original
+        single-layer-ahead design; deeper pools let more NVMe queue depth
+        be in flight at once, which the literature is unambiguous matters
+        for NVMe throughput.
+
+        The Thread object itself is kept in _prefetch_threads so
+        _load_layer can JOIN it instead of racing it: an earlier version
+        only tracked "pending" as a set membership flag, and _load_layer
+        fell back to an entirely separate synchronous read the instant the
+        cache wasn't ready yet -- meaning two readers ended up pulling the
+        SAME bytes off the SAME disk at the SAME time whenever prefetch
+        didn't win the race. Measured on the real 14B store, that made
+        streaming SLOWER with prefetch on than off. Joining the in-flight
+        thread instead means the worst case degrades to "wait for the one
+        read already happening," not "start a second one that competes
+        with it."
         """
-        if idx >= self.n_layers:
+        if idx >= self.n_layers or not self._prefetch_readers:
             return
 
+        reader = self._prefetch_readers[idx % len(self._prefetch_readers)]
+
         def worker():
-            result = self._read_layer_tensor_arrays(idx, self._prefetch_reader)
+            result = self._read_layer_tensor_arrays(idx, reader)
             with self._prefetch_lock:
                 self._prefetch_cache[idx] = result
 
@@ -588,9 +884,7 @@ class StreamingLosslessModel:
         th.start()
 
     def _load_layer(self, idx: int) -> None:
-        layer = self.layers[idx]
-        layer.to_empty(device=self.device)
-
+        self.control.checkpoint()  # pause/cancel boundary: one layer at a time
         cached = None
         if self.prefetch:
             with self._prefetch_lock:
@@ -599,37 +893,50 @@ class StreamingLosslessModel:
                 th.join()
             with self._prefetch_lock:
                 cached = self._prefetch_cache.pop(idx, None)
-            # Fire idx+1's read NOW, before decoding idx's bytes, not after
-            # this whole method returns. Per-layer GPU compute measured at
-            # ~19 ms (1.5s / 80 layer-loads on the real 14B) -- starting the
-            # next prefetch only after compute leaves it almost nothing to
-            # hide behind, which is why the first version of this overlap
-            # barely beat no-prefetch at all (50.9s vs 51.3s for 2 tokens).
-            # Decode is the actually-sizable stage (measured ~19-53s per
-            # 2-token run): overlapping the NEXT read with THIS layer's
-            # decode-plus-compute gives the background thread a window an
-            # order of magnitude larger to hide the read inside.
-            self._start_prefetch(idx + 1)
+            # Fire the next `io_prefetch_depth` layers' reads NOW, before
+            # decoding idx's own bytes, not after this whole method
+            # returns. Per-layer GPU compute is a few tens of ms -- far too
+            # short a window to hide a multi-hundred-ms read behind.
+            # Overlapping the next read(s) with THIS layer's decode-plus-
+            # compute instead gives the background threads a window an
+            # order of magnitude larger to hide inside.
+            for ahead in range(1, self.io_prefetch_depth + 1):
+                self._start_prefetch(idx + ahead)
 
+        layer = self.layers[idx]
         for pname, _ in layer.named_parameters():
             key = "model.layers.%d.%s" % (idx, pname)
             if key not in self.manifest["tensors"]:
                 continue
-            if cached is not None and key in cached:
+            tier = self._tier.get(key, "disk")
+            if tier == "vram":
+                continue  # materialized once in _materialize_resident, permanent
+            elif tier == "ram":
+                if self.ram_tier_format == "compressed":
+                    out = self._decode_tensor(key, self._ram_cache[key])
+                else:
+                    out = self._ram_cache[key].to(self.device, non_blocking=True)
+            elif cached is not None and key in cached:
                 arrays, io_s = cached[key]
                 self.stats.io_seconds += io_s
                 self.stats.bytes_read += self.manifest["tensors"][key]["comp_bytes"]
                 out = self._decode_tensor(key, arrays)
             else:
                 out = self._load_tensor(key)
-            self._assign(layer, pname, out)
+            self._set_param(layer, pname, out)
 
         self.stats.layer_loads += 1
-        if self.progress:
-            self._report_progress(idx)
+        self._report_progress(idx)
 
     def _free_layer(self, idx: int) -> None:
-        self.layers[idx].to("meta")
+        layer = self.layers[idx]
+        for pname, _ in layer.named_parameters():
+            key = "model.layers.%d.%s" % (idx, pname)
+            if key not in self.manifest["tensors"]:
+                continue
+            if self._tier.get(key, "disk") == "vram":
+                continue  # permanent; never freed
+            self._to_meta_param(layer, pname)
         self._frees += 1
         if self.empty_cache_every and self._frees % self.empty_cache_every == 0:
             torch.cuda.empty_cache()
@@ -666,10 +973,113 @@ class StreamingLosslessModel:
             layer.register_forward_pre_hook(make_pre(i), with_kwargs=True)
             layer.register_forward_hook(make_post(i), with_kwargs=True)
 
+    def _streamed_module_params(self) -> dict:
+        """Non-decoder-layer modules that own disk-tier parameters, as
+        {module_name: [param_name, ...]}.
+
+        In practice this is lm_head on an untied model: at 1.56 GB on a
+        14B it is the single largest tensor in the network and, kept
+        resident, it IS essentially the whole VRAM difference against
+        AirLLM (which streams it like anything else). Decoder layers are
+        excluded because _install_hooks already streams those.
+        """
+        embed_key = "model.embed_tokens.weight"
+        embed_mod = (self.model.model.embed_tokens
+                     if self._tier.get(embed_key) == "row_gather" else None)
+        # A chunked lm_head is driven by its own replaced forward (see
+        # _install_chunked_lm_head), which loads and frees per row block.
+        # Letting the whole-tensor hooks below ALSO fire for it would
+        # materialize the full 1.556 GB the chunking exists to avoid.
+        chunked = ({self.CHUNKED_HEAD_KEY}
+                   if self._chunked_head_rows(self.config) else set())
+
+        out: dict[str, list[str]] = {}
+        for name, mod in self.model.named_modules():
+            if not name or name.startswith("model.layers.") or mod is embed_mod:
+                continue
+            pnames = [
+                pname for pname, _ in mod.named_parameters(recurse=False)
+                if (name + "." + pname) in self.manifest["tensors"]
+                and self._tier.get(name + "." + pname) == "disk"
+                and (name + "." + pname) not in chunked
+            ]
+            if pnames:
+                out[name] = pnames
+        return out
+
+    def _install_streamed_module_hooks(self) -> None:
+        """Stream non-layer modules (lm_head) the same way decoder layers
+        are streamed, instead of requiring them to be permanently resident.
+
+        Without this, a plan that assigns lm_head to the disk tier is not
+        merely slow -- it is broken: _materialize_resident deliberately
+        leaves disk-tier tensors on the meta device, and nothing else would
+        ever load lm_head, so the forward pass would fail on a meta tensor.
+        That made the lowest VRAM budgets unreachable in practice and left
+        an apples-to-oranges gap in the AirLLM comparison (2.66 GB against
+        AirLLM's ~1.57 GB), because AirLLM streams this tensor and we did
+        not. Making it streamable is what allows a VRAM-MATCHED comparison,
+        where both systems hold the same peak and only speed differs.
+
+        The cost is honest and expected: lm_head's compressed bytes now
+        cross the bus every token, so bytes-read/token rises. That tradeoff
+        is the point of exposing it as a budget rather than hardcoding it.
+        """
+        for mod_name, pnames in self._streamed_module_params().items():
+            module = self.model.get_submodule(mod_name)
+
+            def make_pre(mn, pns):
+                def pre(module, args, kwargs):
+                    self.control.checkpoint()
+                    for pn in pns:
+                        self._set_param(module, pn, self._load_tensor(mn + "." + pn))
+                    return None
+                return pre
+
+            def make_post(mn, pns):
+                def post(module, args, kwargs, output):
+                    torch.cuda.synchronize()
+                    for pn in pns:
+                        self._to_meta_param(module, pn)
+                    if self.empty_cache_every:
+                        torch.cuda.empty_cache()
+                    return output
+                return post
+
+            module.register_forward_pre_hook(make_pre(mod_name, pnames), with_kwargs=True)
+            module.register_forward_hook(make_post(mod_name, pnames), with_kwargs=True)
+
     @torch.no_grad()
-    def forward_logits(self, input_ids: torch.Tensor) -> torch.Tensor:
+    def forward_logits(self, input_ids: torch.Tensor, use_cache: bool = False) -> torch.Tensor:
         """One full forward pass. transformers drives the stack; the hooks
         stream each layer's weights in and out around it.
+
+        compute_seconds is wall time MINUS whatever io_seconds/decode_seconds
+        grew by during this call, not the raw wall time of the whole forward
+        pass. The hooks that do I/O and decode run INSIDE this call (as
+        pre/post hooks around each layer), so a naive wall-time measurement
+        here would count that work twice -- once correctly in io_seconds/
+        decode_seconds, and again, misleadingly, as if it were pure compute.
+        That made compute_seconds print as roughly equal to total wall time
+        regardless of how little of it was actually GPU compute.
+
+        use_cache=True accumulates a KV cache in self._kv_cache across
+        calls: input_ids should then contain ONLY the tokens generated
+        since the previous call, not the whole growing sequence, and
+        self-attention only recomputes over those new positions. This is
+        the standard KV-cache equivalence, but bf16 matmul reduction order
+        is not guaranteed bit-identical across different input shapes in
+        general, so it was verified empirically (bit-exact against the
+        no-cache path, tests/test_streaming_engine_gpu.py) before being
+        trusted in an engine whose entire premise is bit-exactness, rather
+        than assumed correct because the underlying math says it should be.
+
+        generate_greedy uses this; generate_speculative does not, because
+        its variable-length chain-and-partial-accept pattern needs cache
+        TRIMMING on partial rejection, not just append, which is real
+        additional correctness risk this codebase has not taken on yet --
+        each speculative sweep still recomputes from the full accepted
+        prefix, same as before.
 
         Deliberately reused by generate_speculative for chain verification:
         a causal LM computes logits at every position of an arbitrary-length
@@ -677,28 +1087,172 @@ class StreamingLosslessModel:
         is just calling this once on [seq, draft_tokens] and slicing the
         result -- no separate batched-verification path is needed.
         """
+        io0, decode0 = self.stats.io_seconds, self.stats.decode_seconds
         t0 = time.perf_counter()
-        out = self.model(input_ids=input_ids, use_cache=False)
-        self.stats.compute_seconds += time.perf_counter() - t0
+        if use_cache:
+            out = self.model(input_ids=input_ids, use_cache=True,
+                             past_key_values=self._kv_cache)
+            self._kv_cache = out.past_key_values
+        else:
+            out = self.model(input_ids=input_ids, use_cache=False)
+        torch.cuda.synchronize()
+        wall = time.perf_counter() - t0
+        io_delta = self.stats.io_seconds - io0
+        decode_delta = self.stats.decode_seconds - decode0
+        self.stats.compute_seconds += max(0.0, wall - io_delta - decode_delta)
         return out.logits
 
+    def _install_chunked_lm_head(self) -> None:
+        """Compute logits in row blocks instead of materializing lm_head.
+
+        This is what removes the engine's VRAM floor. Peak VRAM for a
+        streaming engine is bounded below by the largest tensor it must
+        hold at once, and on a 14B that is lm_head at 1.556 GB -- so no
+        budget under ~1.7 GB was expressible, which is also exactly where
+        AirLLM sits. Both systems were pinned to the same floor by the same
+        tensor.
+
+        But logits are a concatenation over output rows, with no
+        interaction between row blocks:
+
+            logits[..., a:b] = x @ W[a:b].T
+
+        so the projection can be computed a block at a time with only one
+        block's weights live. At lm_head_slice_rows=8192 that is ~84 MB
+        instead of 1.556 GB.
+
+        The compressed bytes are still read once per token (same disk
+        traffic as before -- this trades no I/O, only peak memory) and
+        decoded in blocks via compressed_store.decompress_rows_gpu, which
+        is possible for free because chunks were already independently
+        decodable. Bit-exactness is unaffected and asserted by tests: the
+        same weights are used in the same matmul, just in pieces.
+        """
+        step = self._chunked_head_rows(self.config)
+        if not step:
+            return
+        from .compressed_store import decompress_rows_gpu
+
+        key = self.CHUNKED_HEAD_KEY
+        meta = self.manifest["tensors"][key]
+        rows = int(meta["shape"][0])
+        comp_bytes = int(meta["comp_bytes"])
+
+        def forward(x: torch.Tensor) -> torch.Tensor:
+            self.control.checkpoint()
+            arrays, io_s = self._read_tensor_arrays(key)
+            self.stats.io_seconds += io_s
+            self.stats.bytes_read += comp_bytes
+            layer = self._compressed_layer(key, arrays)
+
+            parts = []
+            for r0 in range(0, rows, step):
+                t1 = time.perf_counter()
+                W = decompress_rows_gpu(layer, r0, min(r0 + step, rows),
+                                        device=self.device)
+                self.stats.decode_seconds += time.perf_counter() - t1
+                parts.append(torch.nn.functional.linear(x, W))
+                del W
+            return torch.cat(parts, dim=-1)
+
+        self.model.lm_head.forward = forward
+
+    @contextlib.contextmanager
+    def _truncated_to(self, n_layers: int):
+        """Temporarily swap self.model.model.layers for a prefix of itself.
+
+        Slicing an nn.ModuleList returns a NEW ModuleList holding the SAME
+        layer module objects, not copies -- so each layer's forward pre/post
+        hooks (registered once in _install_hooks, attached to the module
+        objects, not to the list container) stay attached and keep
+        streaming/freeing weights exactly as normal for whichever layers are
+        in the slice. This is what lets draft_self_logits reuse forward_logits
+        (and therefore the library's own decoder forward -- rotary embeddings,
+        causal mask, cache handling) UNCHANGED instead of hand-rolling a
+        shortened forward pass, which is exactly the mistake that produced
+        wrong logits (a silently-omitted causal mask) the one time this
+        codebase tried it -- see _install_hooks's docstring.
+        """
+        full = self.model.model.layers
+        self.model.model.layers = full[:n_layers]
+        try:
+            yield
+        finally:
+            self.model.model.layers = full
+
     @torch.no_grad()
-    def generate_greedy(self, input_ids: torch.Tensor, max_new_tokens: int) -> torch.Tensor:
+    def draft_self_logits(self, input_ids: torch.Tensor, exit_layer: int) -> torch.Tensor:
+        """Early-exit forward for self-speculative drafting
+        (docs/PROPOSAL_ADAPTIVE.md mechanism A): embeddings -> layers
+        [0, exit_layer) -> model.norm -> lm_head, reusing the model's
+        existing final norm and output head as the exit head. No new
+        parameters, nothing trained -- the draft is literally the target
+        model, run shallow, which is why it should agree with the target
+        more often than an unrelated small model does (LayerSkip,
+        arXiv:2404.16710).
+
+        use_cache is deliberately NOT threaded through here: the draft's
+        k sequential passes over layers [0, exit_layer) would each write KV
+        entries for those layers, and rejected draft tokens must not leave
+        cache entries the verification pass could see. v1 accepts the
+        recompute cost of use_cache=False rather than take on that
+        correctness risk -- see EngineConfig.draft_mode's docstring.
+        """
+        if not (1 <= exit_layer < self.n_layers):
+            raise ValueError(
+                "exit_layer must be in [1, %d) for this %d-layer model, got %d"
+                % (self.n_layers, self.n_layers, exit_layer))
+        with self._truncated_to(exit_layer):
+            return self.forward_logits(input_ids, use_cache=False)
+
+    @torch.no_grad()
+    def generate_greedy(self, input_ids: torch.Tensor, max_new_tokens: int,
+                        use_cache: bool = True, on_token=None,
+                        stop_token_ids=()) -> torch.Tensor:
+        """use_cache=True (the default): only the newly generated token is
+        fed to forward_logits on every step after the first, with earlier
+        positions served from a growing KV cache instead of being
+        recomputed every step -- turns causal self-attention's O(seq_len^2)
+        total cost back to O(seq_len). On THIS engine specifically, most
+        wall time is I/O-bound weight streaming rather than attention
+        compute (measured ~95%+ at short sequence lengths), so the win is
+        small for short generations and grows with response length, where
+        attention's quadratic term would otherwise eventually dominate even
+        an I/O-bound system. use_cache=False reproduces the original
+        full-recompute-every-step behaviour exactly, for comparison.
+
+        on_token: optional callable(token_id: int) invoked right after each
+        new token is generated -- this is what lets the FastAPI server
+        stream tokens over SSE without duplicating this loop's logic in the
+        server layer.
+
+        stop_token_ids: generation stops early (before max_new_tokens) the
+        first time a generated token's id is in this collection.
+        """
         seq = input_ids
         self._tok_total = max_new_tokens
         self._gen_t0 = time.perf_counter()
+        self._kv_cache = None
+        step_input = input_ids
         for t in range(max_new_tokens):
             self._tok_i = t
-            logits = self.forward_logits(seq)
+            self.control.checkpoint()
+            logits = self.forward_logits(step_input, use_cache=use_cache)
             nxt = logits[:, -1, :].argmax(dim=-1, keepdim=True)
             seq = torch.cat([seq, nxt], dim=1)
+            step_input = nxt if use_cache else seq
+            tok_id = int(nxt.item())
+            if on_token is not None:
+                on_token(tok_id)
+            if tok_id in stop_token_ids:
+                break
         return seq
 
     @torch.no_grad()
     def generate_speculative(self, input_ids: torch.Tensor, max_new_tokens: int,
                              draft_model, k: int = 8, temperature: float = 1.0,
                              generator: torch.Generator | None = None) -> torch.Tensor:
-        """Draft/verify speculative decoding (lever 5).
+        """Draft/verify speculative decoding.
 
         draft_model is a small, FULLY resident HF model sharing this
         model's tokenizer/vocabulary (see load_draft_model). It proposes k
@@ -768,6 +1322,113 @@ class StreamingLosslessModel:
             self.stats.spec_accepted_tokens += n_from_draft
 
         return seq[:, :input_ids.shape[1] + max_new_tokens]
+
+    @torch.no_grad()
+    def generate_adaptive(self, input_ids: torch.Tensor, max_new_tokens: int,
+                          draft_model=None, temperature: float = 1.0,
+                          generator: torch.Generator | None = None):
+        """generate_speculative, but with the two things
+        docs/PROPOSAL_ADAPTIVE.md proposes making adaptive:
+
+          - EngineConfig.draft_mode="self": draft with THIS model's own
+            first draft_exit_layer layers (draft_self_logits) instead of a
+            separate resident draft_model -- mechanism A.
+          - EngineConfig.spec_k_policy != "fixed": a SpecPolicy
+            (runtime/spec_policy.py) chooses the draft chain length k before
+            every sweep from the previous sweep's acceptance, instead of a
+            constant -- mechanism B.
+
+        Both default off (draft_mode="none" refuses to run this method;
+        spec_k_policy="fixed" reduces to generate_speculative's constant-k
+        behaviour). Correctness is UNCHANGED from generate_speculative: this
+        calls the identical speculative_sample_step, so the exact-target-
+        distribution guarantee holds regardless of k, policy, or draft
+        source -- see runtime/verify.py and runtime/spec_policy.py's module
+        docstrings. At temperature<=0 specifically, verify.temperature_probs
+        makes this provably reproduce generate_greedy's argmax sequence
+        token-for-token, for ANY draft_mode/k/policy -- see its docstring
+        and docs/ADAPTIVE_TEST_PLAN.md §3.
+
+        Returns (sequence, policy) -- the policy is returned (not just its
+        k) so a caller can inspect state_dict() / log() without needing a
+        second entry point.
+        """
+        from .spec_policy import SweepRecord, ThresholdPolicy, build_policy
+        from .verify import sample_categorical, speculative_sample_step, temperature_probs
+
+        cfg = self.config
+        if cfg.draft_mode == "none":
+            raise ValueError(
+                "generate_adaptive requires EngineConfig.draft_mode='model' "
+                "or 'self' -- 'none' is generate_greedy/generate_speculative's "
+                "regime, not this method's")
+        if cfg.draft_mode == "model" and draft_model is None:
+            raise ValueError("draft_mode='model' requires a draft_model argument")
+
+        policy = build_policy(cfg.spec_k_policy, cfg.spec_k)
+        if cfg.spec_policy_state:
+            policy.load(cfg.spec_policy_state)
+
+        seq = input_ids
+        self._tok_total = max_new_tokens
+        self._gen_t0 = time.perf_counter()
+        n_generated = 0
+
+        while n_generated < max_new_tokens:
+            sweep_t0 = time.perf_counter()
+            k_request = min(policy.choose_k(), max_new_tokens - n_generated)
+
+            draft_seq = seq
+            draft_tokens: list[int] = []
+            draft_probs: list[torch.Tensor] = []
+            for _ in range(k_request):
+                if cfg.draft_mode == "self":
+                    dlogits = self.draft_self_logits(draft_seq, cfg.draft_exit_layer)[:, -1, :]
+                else:
+                    dlogits = draft_model(input_ids=draft_seq).logits[:, -1, :]
+                probs = temperature_probs(dlogits[0], temperature)
+                if isinstance(policy, ThresholdPolicy):
+                    # Stop drafting the moment the draft's own confidence
+                    # for the token about to be proposed would fall below
+                    # threshold, rather than always drafting k_max and
+                    # trimming afterward -- saves the (wasted, since
+                    # verification recomputes everything regardless) cost of
+                    # drafting past the point the policy expects rejection.
+                    if (len(draft_tokens) >= policy.k_min
+                            and float(probs.max()) < policy.confidence_threshold):
+                        break
+                tok = sample_categorical(probs, generator)
+                draft_tokens.append(tok)
+                draft_probs.append(probs)
+                draft_seq = torch.cat(
+                    [draft_seq, torch.tensor([[tok]], device=draft_seq.device)], dim=1)
+
+            step_k = len(draft_tokens)
+            chain = torch.cat(
+                [seq, torch.tensor([draft_tokens], device=seq.device)], dim=1)
+            target_logits = self.forward_logits(chain)
+            base = seq.shape[1] - 1
+            target_probs = [
+                temperature_probs(target_logits[0, base + i, :], temperature)
+                for i in range(step_k)
+            ]
+            bonus_probs = temperature_probs(target_logits[0, base + step_k, :], temperature)
+
+            accepted, n_from_draft = speculative_sample_step(
+                draft_probs, target_probs, draft_tokens, bonus_probs, generator)
+
+            seq = torch.cat([seq, torch.tensor([accepted], device=seq.device)], dim=1)
+            n_generated += len(accepted)
+            self._tok_i = min(n_generated, max_new_tokens)
+            self.stats.spec_sweeps += 1
+            self.stats.spec_accepted_tokens += n_from_draft
+
+            policy.update(SweepRecord(step_k, n_from_draft, time.perf_counter() - sweep_t0))
+
+        if cfg.spec_policy_state:
+            policy.save(cfg.spec_policy_state)
+
+        return seq[:, :input_ids.shape[1] + max_new_tokens], policy
 
 
 def load_draft_model(model_id: str = "Qwen/Qwen3-0.6B", device: str = "cuda"):

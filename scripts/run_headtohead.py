@@ -46,18 +46,19 @@ def drop_caches() -> bool:
 
 
 def run_ours(n_tokens: int, vram_cap_gb=None, empty_cache_every: int = 0,
-            prefetch: bool = True) -> dict:
+            io_prefetch_depth: int = 1, vram_budget_gb=None, ram_budget_gb=None) -> dict:
     from transformers import AutoTokenizer
+    from afterimage.runtime.config import EngineConfig
     from afterimage.runtime.streaming_engine import StreamingLosslessModel
 
     tok = AutoTokenizer.from_pretrained(MODEL)
     ids = tok(PROMPT, return_tensors="pt").input_ids.cuda()
 
     t0 = time.perf_counter()
-    sm = StreamingLosslessModel(MODEL, STORE, device="cuda",
-                                vram_cap_gb=vram_cap_gb,
-                                empty_cache_every=empty_cache_every,
-                                progress=True, prefetch=prefetch)
+    cfg = EngineConfig(vram_cap_gb=vram_cap_gb, empty_cache_every=empty_cache_every,
+                       progress=True, io_prefetch_depth=io_prefetch_depth,
+                       vram_budget_gb=vram_budget_gb, ram_budget_gb=ram_budget_gb)
+    sm = StreamingLosslessModel(MODEL, STORE, device="cuda", config=cfg)
     load_s = time.perf_counter() - t0
     log("  engine init (resident weights): %.1fs" % load_s)
 
@@ -71,7 +72,7 @@ def run_ours(n_tokens: int, vram_cap_gb=None, empty_cache_every: int = 0,
     peak_alloc = torch.cuda.max_memory_allocated() / 1e9
     peak_resv = torch.cuda.max_memory_reserved() / 1e9
     log("  peak VRAM: %.2f GB live / %.2f GB reserved" % (peak_alloc, peak_resv))
-    return {
+    result = {
         "system": "afterimage-lossless",
         "peak_vram_live_gb": peak_alloc,
         "peak_vram_reserved_gb": peak_resv,
@@ -86,9 +87,15 @@ def run_ours(n_tokens: int, vram_cap_gb=None, empty_cache_every: int = 0,
         "compute_s": sm.stats.compute_seconds,
         "layer_loads": sm.stats.layer_loads,
         "prefetch": sm.prefetch,
+        "io_prefetch_depth": sm.io_prefetch_depth,
+        "vram_tier_count": sum(1 for t in sm._tier.values() if t == "vram"),
+        "ram_tier_count": sum(1 for t in sm._tier.values() if t == "ram"),
+        "disk_tier_count": sum(1 for t in sm._tier.values() if t == "disk"),
         "text": text,
         "token_ids": seq[0, ids.shape[1]:].tolist(),
     }
+    sm.close()
+    return result
 
 
 def run_airllm(n_tokens: int) -> dict:
@@ -130,8 +137,12 @@ def main() -> int:
                     help="hard cap on GPU memory for this process")
     ap.add_argument("--empty-cache-every", type=int, default=0,
                     help="release cached GPU blocks every N layer frees")
-    ap.add_argument("--no-prefetch", action="store_true",
-                    help="disable lever 3 (I/O prefetch overlap), for A/B comparison")
+    ap.add_argument("--io-prefetch-depth", type=int, default=1,
+                    help="0 disables I/O prefetch overlap; >1 prefetches further ahead")
+    ap.add_argument("--vram-budget-gb", type=float, default=None,
+                    help="hand residency to the three-tier planner instead of the legacy fixed policy")
+    ap.add_argument("--ram-budget-gb", type=float, default=None,
+                    help="pinned-host-RAM tier size; requires --vram-budget-gb")
     args = ap.parse_args()
 
     man = json.loads((pathlib.Path(STORE) / "manifest.json").read_text())
@@ -150,7 +161,8 @@ def main() -> int:
     if not args.skip_ours:
         log("--- AFTERIMAGE (lossless compressed streaming) ---")
         try:
-            r = run_ours(args.n_tokens, args.vram_cap_gb, args.empty_cache_every)
+            r = run_ours(args.n_tokens, args.vram_cap_gb, args.empty_cache_every,
+                        args.io_prefetch_depth, args.vram_budget_gb, args.ram_budget_gb)
             results.append(r)
             log("  %.1f s/token   %.4f tok/s   %.2f GB read/token"
                 % (r["s_per_tok"], r["tok_per_s"], r["gb_per_token"]))

@@ -1,4 +1,8 @@
-"""Bit-plane residual ladder (HYPOTHESIS.md #3.7, #6).
+"""ARCHIVED RESEARCH, not the production path -- see basis.py's module
+docstring for why. The current lossless codec is
+runtime/huffman_chunked.py + runtime/compressed_store.py.
+
+Bit-plane residual ladder (HYPOTHESIS.md #3.7, #6).
 
 A weight matrix is stored as a coarse base plane plus a sequence of residual
 correction planes, each roughly halving/quartering the remaining

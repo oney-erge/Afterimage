@@ -1,6 +1,7 @@
 import sys, pathlib, time
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 import torch
+from afterimage.runtime.config import EngineConfig
 from afterimage.runtime.streaming_engine import compress_model_to_disk, StreamingLosslessModel
 
 MODEL = "Qwen/Qwen2.5-1.5B-Instruct"
@@ -10,7 +11,7 @@ STORE = "/root/afterimage/store_1.5b"
 def main() -> int:
     print("=== compressing model to disk ===", flush=True)
     t0 = time.perf_counter()
-    man = compress_model_to_disk(MODEL, STORE, chunk_size=1024, quantize=None)
+    man = compress_model_to_disk(MODEL, STORE, config=EngineConfig(chunk_size=1024))
     print("compress time: %.1fs" % (time.perf_counter() - t0))
     print("orig %.3f GB -> comp %.3f GB  (%.3fx)" % (
         man["total_orig_bytes"]/1e9, man["total_comp_bytes"]/1e9, man["ratio"]))

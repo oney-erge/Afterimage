@@ -1,8 +1,10 @@
+import json
+
 import numpy as np
 import pytest
 
 from afterimage.runtime.binstore import (
-    BinaryWeightReader, BinaryWeightWriter, blobref_to_dict,
+    BinaryWeightReader, BinaryWeightWriter, blobref_to_dict, verify_store,
 )
 
 
@@ -82,6 +84,88 @@ def test_read_row_matches_full_read_bit_exact(tmp_path):
         for i in range(vocab):
             row = r.read_row(ref.offset, i, row_nbytes, "int16")
             assert np.array_equal(row, full[i]), f"row {i} mismatch"
+
+
+def test_verified_read_of_intact_data_succeeds(tmp_path):
+    path = tmp_path / "w.bin"
+    arr = np.random.randn(200).astype(np.float32)
+    with BinaryWeightWriter(path) as w:
+        ref = blobref_to_dict(w.write(arr))
+    with BinaryWeightReader(path) as r:
+        got = r.read(ref, verify=True)
+        assert np.array_equal(got, arr)
+
+
+def test_verified_read_of_corrupted_data_raises(tmp_path):
+    """The entire point of P0-2: a corrupted weights.bin must be DETECTED,
+    not silently served as if it were the correct weight."""
+    path = tmp_path / "w.bin"
+    arr = np.random.randint(0, 256, size=500, dtype=np.uint8)
+    with BinaryWeightWriter(path) as w:
+        ref = blobref_to_dict(w.write(arr))
+
+    # flip a byte in the middle of the blob, simulating disk corruption
+    with open(path, "r+b") as f:
+        f.seek(ref["offset"] + 250)
+        f.write(bytes([arr[250] ^ 0xFF]))
+
+    with BinaryWeightReader(path) as r:
+        with pytest.raises(ValueError, match="checksum mismatch"):
+            r.read(ref, verify=True)
+
+
+def test_unverified_read_does_not_raise_on_corrupted_data(tmp_path):
+    """verify=False (the default) must stay silent about corruption -- it
+    exists specifically so the hot per-token read path never pays CRC32
+    cost by default; verify_store() is where that cost belongs."""
+    path = tmp_path / "w.bin"
+    arr = np.random.randint(0, 256, size=100, dtype=np.uint8)
+    with BinaryWeightWriter(path) as w:
+        ref = blobref_to_dict(w.write(arr))
+    with open(path, "r+b") as f:
+        f.seek(ref["offset"])
+        f.write(bytes([arr[0] ^ 0xFF]))
+    with BinaryWeightReader(path) as r:
+        got = r.read(ref)  # no verify -- must not raise
+        assert not np.array_equal(got, arr)  # but the corruption is real
+
+
+def test_verify_store_passes_on_an_intact_store(tmp_path):
+    store = tmp_path / "store"
+    store.mkdir()
+    with BinaryWeightWriter(store / "weights.bin") as w:
+        ref_a = blobref_to_dict(w.write(np.arange(50, dtype=np.int32)))
+        ref_b = blobref_to_dict(w.write(np.arange(30, dtype=np.float32)))
+    manifest = {"tensors": {
+        "a": {"blobs": {"raw": ref_a}},
+        "b": {"blobs": {"raw": ref_b}},
+    }}
+    (store / "manifest.json").write_text(json.dumps(manifest))
+
+    ok, bad = verify_store(store)
+    assert ok
+    assert bad == []
+
+
+def test_verify_store_flags_corrupted_tensors_by_key(tmp_path):
+    store = tmp_path / "store"
+    store.mkdir()
+    with BinaryWeightWriter(store / "weights.bin") as w:
+        ref_a = blobref_to_dict(w.write(np.arange(50, dtype=np.int32)))
+        ref_b = blobref_to_dict(w.write(np.arange(30, dtype=np.float32)))
+    manifest = {"tensors": {
+        "a": {"blobs": {"raw": ref_a}},
+        "b": {"blobs": {"raw": ref_b}},
+    }}
+    (store / "manifest.json").write_text(json.dumps(manifest))
+
+    with open(store / "weights.bin", "r+b") as f:
+        f.seek(ref_b["offset"])
+        f.write(b"\xff" * 4)
+
+    ok, bad = verify_store(store)
+    assert not ok
+    assert bad == ["b"]
 
 
 def test_read_row_does_not_touch_neighbouring_rows(tmp_path):

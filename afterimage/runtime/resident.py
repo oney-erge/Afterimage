@@ -1,4 +1,8 @@
-"""Residency planner (IMPLEMENTATION_PLAN.md Phase 3.1).
+"""ARCHIVED RESEARCH, not the production path -- see basis.py's module
+docstring for why. The current residency planner is
+runtime/vram_planner.py (three-tier VRAM/RAM/disk, value-density knapsack).
+
+Residency planner (IMPLEMENTATION_PLAN.md Phase 3.1).
 
 Start static: fill the VRAM budget with whole layers, highest priority first,
 until the budget is exhausted, then stream the rest. The plan explicitly

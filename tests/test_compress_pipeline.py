@@ -14,6 +14,7 @@ from safetensors.torch import save_file
 
 from afterimage.runtime.binstore import BinaryWeightReader
 from afterimage.runtime.compressed_store import CompressedLayer, decompress_layer_cpu_reference
+from afterimage.runtime.config import EngineConfig
 from afterimage.runtime.huffman_chunked import ChunkedEncoded
 from afterimage.runtime.streaming_engine import compress_model_to_disk
 
@@ -82,7 +83,7 @@ def test_untied_model_row_gathers_embedding_and_round_trips_bit_exact(
     _patch_hf(monkeypatch, snap, tied=False)
 
     out_dir = tmp_path / "store"
-    manifest = compress_model_to_disk("fake/untied", out_dir, chunk_size=64,
+    manifest = compress_model_to_disk("fake/untied", out_dir, config=EngineConfig(chunk_size=64),
                                       max_workers=max_workers)
 
     embed_meta = manifest["tensors"]["model.embed_tokens.weight"]
@@ -108,7 +109,8 @@ def test_tied_model_does_not_row_gather_embedding(tmp_path, monkeypatch):
     _patch_hf(monkeypatch, snap, tied=True)
 
     out_dir = tmp_path / "store"
-    manifest = compress_model_to_disk("fake/tied", out_dir, chunk_size=64, max_workers=2)
+    manifest = compress_model_to_disk("fake/tied", out_dir, config=EngineConfig(chunk_size=64),
+                                      max_workers=2)
 
     embed_meta = manifest["tensors"]["model.embed_tokens.weight"]
     assert "row_gather" not in embed_meta or embed_meta["row_gather"] is False
@@ -136,8 +138,9 @@ def test_parallel_and_serial_compression_reconstruct_identical_weights(tmp_path,
 
     out_serial = tmp_path / "store_serial"
     out_parallel = tmp_path / "store_parallel"
-    man_serial = compress_model_to_disk("fake/x", out_serial, chunk_size=64, max_workers=1)
-    man_parallel = compress_model_to_disk("fake/x", out_parallel, chunk_size=64, max_workers=4)
+    cfg = EngineConfig(chunk_size=64)
+    man_serial = compress_model_to_disk("fake/x", out_serial, config=cfg, max_workers=1)
+    man_parallel = compress_model_to_disk("fake/x", out_parallel, config=cfg, max_workers=4)
 
     assert set(man_serial["tensors"]) == set(man_parallel["tensors"])
     for key in weights:
@@ -155,7 +158,8 @@ def test_manifest_totals_match_written_file_size(tmp_path, monkeypatch):
     _patch_hf(monkeypatch, snap, tied=False)
 
     out_dir = tmp_path / "store"
-    manifest = compress_model_to_disk("fake/y", out_dir, chunk_size=64, max_workers=2)
+    manifest = compress_model_to_disk("fake/y", out_dir, config=EngineConfig(chunk_size=64),
+                                      max_workers=2)
 
     max_end = 0
     for meta in manifest["tensors"].values():
@@ -163,3 +167,25 @@ def test_manifest_totals_match_written_file_size(tmp_path, monkeypatch):
             max_end = max(max_end, ref["offset"] + ref["nbytes"])
     assert max_end == (out_dir / "weights.bin").stat().st_size
     assert manifest["total_orig_bytes"] > manifest["total_comp_bytes"]
+
+
+def test_manifest_carries_schema_version_and_blob_checksums(tmp_path, monkeypatch):
+    """P0-3 (manifest versioning) and P0-2 (integrity checksums): both must
+    actually land in every store compress_model_to_disk produces, not just
+    exist as machinery nobody calls."""
+    from afterimage.runtime.streaming_engine import CURRENT_SCHEMA_VERSION
+
+    snap = tmp_path / "snap"
+    snap.mkdir()
+    weights = _fake_weights(seed=4)
+    save_file(weights, str(snap / "model.safetensors"))
+    _patch_hf(monkeypatch, snap, tied=False)
+
+    out_dir = tmp_path / "store"
+    manifest = compress_model_to_disk("fake/z", out_dir, config=EngineConfig(chunk_size=64),
+                                      max_workers=2)
+
+    assert manifest["schema_version"] == CURRENT_SCHEMA_VERSION
+    for meta in manifest["tensors"].values():
+        for ref in meta["blobs"].values():
+            assert "crc32" in ref and ref["crc32"] != 0 or ref["nbytes"] == 0

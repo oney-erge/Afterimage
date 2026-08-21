@@ -1,4 +1,9 @@
-"""Substitute draft model (IMPLEMENTATION_PLAN.md Phase 3.2, LITERATURE.md
+"""ARCHIVED RESEARCH, not the production path -- see basis.py's module
+docstring for why. The current engine's speculative decoding
+(runtime/streaming_engine.py generate_speculative + runtime/verify.py) uses
+a real small resident model as the draft, not this low-rank substitute.
+
+Substitute draft model (IMPLEMENTATION_PLAN.md Phase 3.2, LITERATURE.md
 #7).
 
 SubSpec's key idea: instead of a separate small model, build the draft FROM

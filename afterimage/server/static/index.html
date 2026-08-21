@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Afterimage</title>
+<style>
+  :root {
+    --bg: #0f1512; --surface: #161d19; --surface-2: #1e2621; --border: #2a332d;
+    --text: #e6ede9; --muted: #8fa098; --accent: #4fd1a5; --accent-dim: #1f4436;
+    --danger: #e37b7b; --warn: #d9a65c;
+    --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--sans); }
+  header { padding: 20px 28px; border-bottom: 1px solid var(--border); display: flex; align-items: baseline; gap: 12px; }
+  header h1 { font-size: 18px; margin: 0; font-weight: 600; letter-spacing: -.01em; }
+  header .sub { color: var(--muted); font-size: 13px; }
+  main { max-width: 1080px; margin: 0 auto; padding: 24px 28px 60px; display: grid; gap: 20px; grid-template-columns: 1fr 1fr; }
+  @media (max-width: 800px) { main { grid-template-columns: 1fr; } }
+  section { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 18px 20px; }
+  section.full { grid-column: 1 / -1; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 14px; font-weight: 600; }
+  .row { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; font-size: 14px; border-bottom: 1px solid var(--border); }
+  .row:last-child { border-bottom: none; }
+  .row .k { color: var(--muted); }
+  .row .v { font-family: var(--mono); font-size: 13px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 4px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+  td.n { font-family: var(--mono); }
+  input, select, textarea, button { font-family: inherit; font-size: 13px; background: var(--surface-2); color: var(--text); border: 1px solid var(--border); border-radius: 5px; padding: 7px 9px; }
+  input, select { width: 100%; }
+  textarea { width: 100%; min-height: 70px; resize: vertical; }
+  label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 4px; }
+  button { cursor: pointer; background: var(--accent-dim); border-color: var(--accent); color: var(--accent); font-weight: 600; padding: 8px 14px; }
+  button:hover { background: var(--accent); color: #06110c; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  button.ghost { background: transparent; border-color: var(--border); color: var(--muted); }
+  .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
+  .bar { height: 8px; background: var(--surface-2); border-radius: 4px; overflow: hidden; margin-top: 10px; }
+  .bar > div { height: 100%; background: var(--accent); width: 0%; transition: width .3s; }
+  .status-line { font-size: 12px; color: var(--muted); margin-top: 8px; font-family: var(--mono); }
+  .pill { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 999px; font-weight: 600; }
+  .pill.running { background: #23392f; color: var(--accent); }
+  .pill.paused { background: #3a331d; color: var(--warn); }
+  .pill.done { background: #1e2f26; color: var(--accent); }
+  .pill.error, .pill.cancelled { background: #3a1f1f; color: var(--danger); }
+  .job-controls { display: flex; gap: 8px; margin-top: 10px; }
+  #chat-log { font-family: var(--mono); font-size: 13px; white-space: pre-wrap; background: var(--surface-2); border-radius: 6px; padding: 12px; min-height: 120px; max-height: 320px; overflow-y: auto; }
+  .plan-result { font-family: var(--mono); font-size: 12px; margin-top: 10px; color: var(--muted); }
+  .plan-result .feasible-yes { color: var(--accent); }
+  .plan-result .feasible-no { color: var(--danger); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Afterimage</h1>
+  <span class="sub">lossless streaming inference — control panel</span>
+</header>
+
+<main>
+
+  <section>
+    <h2>Hardware</h2>
+    <div id="hw-body"><div class="row"><span class="k">loading…</span></div></div>
+  </section>
+
+  <section>
+    <h2>Compressed models</h2>
+    <table id="models-table">
+      <thead><tr><th>model</th><th>compressed</th><th>ratio</th></tr></thead>
+      <tbody><tr><td colspan="3" class="k">loading…</td></tr></tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>Compress a model</h2>
+    <label>HuggingFace model id</label>
+    <input id="compress-model" placeholder="Qwen/Qwen3-14B">
+    <div class="job-controls">
+      <button id="compress-start">Compress</button>
+    </div>
+    <div id="compress-progress" style="display:none">
+      <div class="bar"><div id="compress-bar-fill"></div></div>
+      <div class="status-line" id="compress-status"></div>
+      <div class="job-controls">
+        <button class="ghost" id="compress-pause">Pause</button>
+        <button class="ghost" id="compress-resume">Resume</button>
+        <button class="ghost" id="compress-cancel">Cancel</button>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>VRAM / RAM budget planner</h2>
+    <label>Model id (must already be compressed)</label>
+    <input id="plan-model" placeholder="Qwen/Qwen3-14B">
+    <div class="form-grid">
+      <div><label>VRAM budget (GB)</label><input id="plan-vram" type="number" step="0.5" value="6"></div>
+      <div><label>RAM budget (GB)</label><input id="plan-ram" type="number" step="0.5" value="0"></div>
+    </div>
+    <div class="job-controls"><button id="plan-run">Check feasibility</button></div>
+    <div class="plan-result" id="plan-result"></div>
+  </section>
+
+  <section class="full">
+    <h2>Try it</h2>
+    <div class="form-grid">
+      <div><label>Model id</label><input id="chat-model" placeholder="Qwen/Qwen3-14B"></div>
+      <div><label>Max new tokens</label><input id="chat-maxtok" type="number" value="64"></div>
+    </div>
+    <label>Prompt</label>
+    <textarea id="chat-prompt" placeholder="The capital of France is"></textarea>
+    <div class="job-controls">
+      <button id="chat-send">Generate</button>
+    </div>
+    <label style="margin-top:14px">Output</label>
+    <div id="chat-log"></div>
+  </section>
+
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+
+async function api(path, opts) {
+  const res = await fetch(path, opts);
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`${res.status}: ${body}`);
+  }
+  return res.json();
+}
+
+async function loadHardware() {
+  const hw = await api('/api/hardware');
+  const gpu = hw.gpu || {};
+  $('hw-body').innerHTML = `
+    <div class="row"><span class="k">GPU vendor</span><span class="v">${gpu.vendor}</span></div>
+    ${gpu.name ? `<div class="row"><span class="k">GPU</span><span class="v">${gpu.name}</span></div>` : ''}
+    ${gpu.vram_gb ? `<div class="row"><span class="k">VRAM total</span><span class="v">${gpu.vram_gb} GB</span></div>` : ''}
+    ${hw.vram_free_gb != null ? `<div class="row"><span class="k">VRAM free now</span><span class="v">${hw.vram_free_gb.toFixed(2)} GB</span></div>` : ''}
+    <div class="row"><span class="k">System RAM</span><span class="v">${hw.ram_gb ?? '?'} GB</span></div>
+    <div class="row"><span class="k">CUDA available</span><span class="v">${hw.cuda_available}</span></div>
+  `;
+}
+
+async function loadModels() {
+  const { models } = await api('/api/models');
+  const tbody = document.querySelector('#models-table tbody');
+  if (!models.length) {
+    tbody.innerHTML = '<tr><td colspan="3" class="k">none yet — compress one below</td></tr>';
+    return;
+  }
+  tbody.innerHTML = models.map(m => `
+    <tr>
+      <td>${m.model_id}</td>
+      <td class="n">${m.comp_gb.toFixed(2)} GB</td>
+      <td class="n">${m.ratio.toFixed(3)}x</td>
+    </tr>`).join('');
+}
+
+let compressJobId = null;
+
+$('compress-start').addEventListener('click', async () => {
+  const model_id = $('compress-model').value.trim();
+  if (!model_id) return;
+  $('compress-start').disabled = true;
+  const { job_id } = await api('/api/compress', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model_id }),
+  });
+  compressJobId = job_id;
+  $('compress-progress').style.display = 'block';
+  watchJob(job_id);
+});
+
+function watchJob(jobId) {
+  const ws = new WebSocket(`ws://${location.host}/ws/jobs/${jobId}`);
+  ws.onmessage = (ev) => {
+    const msg = JSON.parse(ev.data);
+    const p = msg.progress || {};
+    const pct = p.pct != null ? p.pct : (p.n_total ? 100 * p.n / p.n_total : 0);
+    $('compress-bar-fill').style.width = `${pct || 0}%`;
+    $('compress-status').innerHTML =
+      `<span class="pill ${msg.status}">${msg.status}</span> ` +
+      (p.n_total ? `${p.n}/${p.n_total} tensors, ${(p.comp_gb||0).toFixed(2)} GB, ${(p.ratio||0).toFixed(3)}x` : '');
+    if (msg.status === 'error') $('compress-status').innerHTML += ` — ${msg.error}`;
+    if (['done', 'error', 'cancelled'].includes(msg.status)) {
+      $('compress-start').disabled = false;
+      if (msg.status === 'done') loadModels();
+    }
+  };
+}
+
+$('compress-pause').addEventListener('click', () => compressJobId && api(`/api/jobs/${compressJobId}/pause`, { method: 'POST' }));
+$('compress-resume').addEventListener('click', () => compressJobId && api(`/api/jobs/${compressJobId}/resume`, { method: 'POST' }));
+$('compress-cancel').addEventListener('click', () => compressJobId && api(`/api/jobs/${compressJobId}/cancel`, { method: 'POST' }));
+
+$('plan-run').addEventListener('click', async () => {
+  const model_id = $('plan-model').value.trim();
+  const vram_budget_gb = parseFloat($('plan-vram').value);
+  const ram_budget_gb = parseFloat($('plan-ram').value) || 0;
+  $('plan-result').textContent = 'checking…';
+  try {
+    const p = await api('/api/plan', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model_id, vram_budget_gb, ram_budget_gb }),
+    });
+    if (p.feasible) {
+      $('plan-result').innerHTML = `<span class="feasible-yes">feasible</span> — ` +
+        `vram ${p.vram_gb.toFixed(2)} GB (${p.vram_tensors} tensors), ` +
+        `ram ${p.ram_gb.toFixed(2)} GB (${p.ram_tensors} tensors), ` +
+        `${p.disk_gb_per_token.toFixed(2)} GB/token streamed (${p.disk_tensors} tensors)`;
+    } else {
+      $('plan-result').innerHTML = `<span class="feasible-no">not feasible</span> — ${p.reason}`;
+    }
+  } catch (e) {
+    $('plan-result').innerHTML = `<span class="feasible-no">${e.message}</span>`;
+  }
+});
+
+$('chat-send').addEventListener('click', async () => {
+  const model = $('chat-model').value.trim();
+  const prompt = $('chat-prompt').value;
+  const max_tokens = parseInt($('chat-maxtok').value, 10) || 64;
+  if (!model || !prompt) return;
+  $('chat-send').disabled = true;
+  $('chat-log').textContent = '';
+
+  const res = await fetch('/v1/chat/completions', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model, messages: [{ role: 'user', content: prompt }], max_tokens, stream: true }),
+  });
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    const lines = buf.split('\n\n');
+    buf = lines.pop();
+    for (const line of lines) {
+      if (!line.startsWith('data: ')) continue;
+      const data = line.slice(6);
+      if (data === '[DONE]') continue;
+      const chunk = JSON.parse(data);
+      const delta = chunk.choices?.[0]?.delta?.content;
+      if (delta) $('chat-log').textContent += delta;
+    }
+  }
+  $('chat-send').disabled = false;
+});
+
+loadHardware();
+loadModels();
+</script>
+
+</body>
+</html>

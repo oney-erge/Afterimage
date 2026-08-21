@@ -1,4 +1,11 @@
-"""Online orthonormal basis for the Afterimage cache.
+"""ARCHIVED RESEARCH, not the production path. Phase 0 (docs/PHASE0_RESULTS.md)
+measured this subspace-cache idea against real hardware and got a NO-GO:
+functional error 250-450x above threshold. The current engine is
+runtime/streaming_engine.py (lossless compressed weight streaming) -- see
+README.md and docs/MASTER_PLAN.md. Kept, not deleted: the code is correct
+and tested (67 passing tests), and the negative result has standalone value.
+
+Online orthonormal basis for the Afterimage cache.
 
 HYPOTHESIS.md #3, #9.5: maintains U such that span(U) covers the activation
 directions seen so far for one linear layer. Extended incrementally on every

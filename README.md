@@ -1,198 +1,161 @@
 # Afterimage
 
-**Run a 27B model on an 8 GB GPU by caching what the weights *did*, not the weights.**
+**Run models larger than your GPU's VRAM, bit-exact — with a memory/speed
+dial AirLLM doesn't have.**
 
-> Status: **tested against a real model on real GPU hardware — result: NO-GO.**
-> Phase 0 ran on 2026-08-17 against Qwen2.5-1.5B-Instruct on an RTX 3080 via
-> CUDA: functional error at rank 256 (2.9% of a real layer's width) was
-> 25-45%, against a success threshold of <0.1% — roughly 250-450x too high.
-> End-to-end closed-loop error with several layers truncated was 60-96% even
-> at rank 128. **Full data: [docs/PHASE0_RESULTS.md](docs/PHASE0_RESULTS.md).**
-> The mechanism itself (exact reproduction from a learned subspace,
-> output-space gating without fetching weights, fetch-once batched
-> verification, the speculative-sampling exact-distribution guarantee) is
-> implemented correctly and passes 67 tests — several real bugs were caught
-> along the way, including during the real-model run — but the workload it
-> was built for does not have enough exploitable structure. Per the plan
-> written *before* this measurement, a failed gate means stop, not scale up
-> and recheck: **the recommended path forward is the fallback** (residency +
-> speculation, no cache) — see
-> [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md).
+Afterimage entropy-codes bf16 model weights (lossless, ~1.45x — the
+information-theoretic ceiling for bf16 is ~1.51x) and streams them
+layer-by-layer from a compressed on-disk store, the same algorithm AirLLM
+uses. It adds three things on top: spending spare VRAM on residency,
+speculative decoding, and an optional non-lossless mode that shrinks the
+VRAM floor by 45%.
+
+> Status: a working engine, measured against AirLLM on real hardware,
+> including where it does **not** win. See
+> [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md) for the full picture — this
+> README is the short version.
 
 ---
 
-## The problem
+## Measured, not projected
 
-A 27B model at Q4 is about 16 GB. A consumer GPU has 8 GB. The weights do not fit,
-so they have to be streamed from somewhere slower every time you want a token.
+Qwen3-14B (29.5 GB bf16), RTX 3080 Laptop (8 GB VRAM), WSL2/CUDA, cold page
+cache, identical prompt, **both systems on the same peak-VRAM counter**:
 
-## The one-paragraph idea
+| Configuration | VRAM | s/token | Lossless | vs AirLLM |
+|---|---|---|---|---|
+| **AirLLM** (reference) | 1.57 GB | 27.4 | yes | 1.00x |
+| Afterimage, compression only | 1.68 GB | 28.0 | yes | 0.98x — **parity** |
+| Afterimage, + residency | 3.89 GB | 15.2 | yes | 1.80x |
+| Afterimage, + speculative decoding | 3.78 GB | **2.2** | yes | **12.5x** |
+| Afterimage, chunked head (opt-in, lossy) | **0.86 GB** | 26.4 | no | −45% VRAM, parity speed |
+| Afterimage, chunked head + speculation (lossy) | 2.05 GB | 3.3 | no | 8.3x |
 
-Every existing system reads the model from disk, uses it, and then **throws away
-everything it just learned.** Next token, it reads the same bytes again. Across a
-500-token reply the same 8.5 GB gets read about 33 times — 280 GB of traffic to
-move 8.5 GB of information.
-
-Afterimage keeps a cheat sheet instead. And there is a mathematical reason a small
-cheat sheet can work: **a model's layers are linear machines.** For a linear
-machine, if every question you ask is a blend of a few hundred basic questions,
-then memorising the answers to those basic questions lets you answer *infinitely
-many* blended questions exactly. That is a theorem, not a compression heuristic.
-
-> **You are not running a 27B model. You are running the 27B model's restriction
-> to your conversation.**
+**The honest headline: at matched VRAM, lossless, we are not faster than
+AirLLM — we're at parity.** Our real advantage is a dial AirLLM doesn't
+have: spend more VRAM for up to 12.5x, or use 45% *less* VRAM at the same
+speed if bit-exactness can be relaxed. Full derivation, method-by-method,
+and the run-to-run noise band: **[docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md)**.
 
 ---
 
-## How it works
+## How speculative decoding gets 12.5x, in plain terms
 
-```mermaid
-flowchart TD
-    X["an activation arrives<br/>at a layer"] --> P["split it: the part we have<br/>seen before + a genuinely new part"]
-    P --> EST["estimate how much the new part<br/>would change the OUTPUT<br/>(tiny resident sketch, ~0.3 MB)"]
-    EST --> Q{"big enough to matter?"}
-    Q -->|"no — HIT"| M["answer from the cheat sheet<br/>already in VRAM"]
-    M --> Y["output — ZERO disk reads"]
-    Q -->|"yes — MISS"| F["fetch the layer from NVMe"]
-    F --> E["compute the exact answer"]
-    E --> ADD["add the new direction to the<br/>cheat sheet — FREE, because the<br/>weights are in VRAM right now"]
-    ADD --> Y
-    Y -.->|"hit rate rises as the session runs"| X
+Normally, producing **one word** means reading the **entire 20 GB model**
+off disk. That's the whole cost — one trip to the library for one word.
+
+Speculative decoding: a small, fast model (Qwen3-0.6B, resident in 1.3 GB
+of VRAM) guesses the next several words cheaply. The big model then reads
+itself **once** and checks *all* of those guesses in that single pass —
+same one trip, but now it can confirm many words instead of one.
+
+The check is exact: each guess is accepted with probability
+`min(1, target_prob / draft_prob)`; the moment one is rejected, the correct
+word is sampled from what's left over. This is provably the same output
+distribution the big model would have produced alone — **the small model's
+guesses can only change speed, never correctness.** A bad guess costs one
+wasted word; it can never produce a wrong one.
+
+That's the whole mechanism. No new compression, no approximation of the
+big model's math — just fewer full-model reads per word actually spoken.
+
+---
+
+## Install & run
+
+```bash
+./install.sh          # Linux / WSL2 — detects GPU, sets up venv or launches server
+```
+```powershell
+.\install.ps1          # Windows (native CUDA)
 ```
 
-Three properties nothing else in the literature has:
-
-| | |
-|---|---|
-| **The cache fills itself for free** | The only time you need the weights is a miss — which is exactly the moment they are already loaded. Extending the cheat sheet costs one extra matrix multiply and **zero additional I/O**. No calibration pass, no training. |
-| **It gets faster the longer you talk** | Miss rate falls monotonically as the basis learns your session. Quantization, sparsity and speculation all cost the same forever. |
-| **Being wrong self-corrects** | An unfamiliar input is a miss; a miss computes the exact answer and enlarges the cache. Compare offline-calibrated methods, which silently degrade on inputs they were not calibrated for. |
-
----
-
-## How this differs from what exists
-
-```mermaid
-flowchart TD
-    subgraph OLD["Everyone else"]
-        direction LR
-        S1["read 8.5 GB"] --> D1["discard"] --> S2["read the SAME 8.5 GB"] --> D2["discard"] --> S3["... x33 per reply"]
-    end
-    subgraph NEW["Afterimage"]
-        direction LR
-        N1["read 8.5 GB"] --> K1["keep a summary"] --> N2["mostly answer from<br/>the summary"] --> K2["read only what is<br/>genuinely new"]
-    end
+Or by hand:
+```bash
+pip install -e ".[gpu,server]"
+afterimage doctor
+afterimage compress Qwen/Qwen3-14B         # one-time, ~6 min on 16 cores
+afterimage run Qwen/Qwen3-14B "The capital of France is"
+afterimage serve                            # FastAPI + web UI on :8420
 ```
 
-Speculative decoding (SpecExec, SubSpec) amortises one read across ~15 tokens in a
-single sweep — then discards it. Afterimage keeps the value of that read
-permanently, at roughly a tenth of the size. **They are complementary**, and
-Afterimage is designed to sit on top of a SubSpec-class system rather than replace
-it.
-
-Full survey with diagrams of AirLLM, FlexGen, SpecExec, SubSpec and ATSInfer:
-**[docs/LITERATURE.md](docs/LITERATURE.md)**
-
----
-
-## Honest status
-
-This is a bet, and the evidence currently runs against it.
-
-The idea needs your conversation's activations to be blends of a few hundred basic
-directions. The published measurements are unfavourable:
-
-- **Residual streams measure ~90% effective rank** ([arXiv:2508.16929](https://arxiv.org/pdf/2508.16929)) — and the residual stream is precisely what feeds every linear layer.
-- The most favourable published figure is `r = d/4`, i.e. about **4×**, not the 10–40× the idea wants.
-- A random-matrix analysis finds the *smallest* singular values can be the second-most-important decile — so the innocuous-looking directions are not innocuous.
-- Activation-aware low-rank compression (ASVD, IO-SVD) achieves only 10–30%.
-
-**The one real counterargument:** all of those are *corpus-level* measurements.
-This cache is **per-session**, and within-session effective rank has never been
-published. Measuring it is Phase 0 — two days, forward hooks and numpy, no
-inference engine required. That measurement is worth publishing whatever it says.
-
-**Realistic expectation: 1.5–3× on top of a SubSpec-class system, possibly ~1×.**
-Earlier drafts of this document implied 10×+; that was not supported.
-
----
-
-## Code
-
-A working implementation of the mechanism exists at `afterimage/`. Originally
-built and tested against a synthetic model (no GPU available at the time);
-later brought up on real CUDA hardware (WSL2 + RTX 3080) specifically to run
-Phase 0 for real — see [docs/EXECUTION_PLAN.md](docs/EXECUTION_PLAN.md) Stage
-A for how, and [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) for the
-full component-by-component record, including five real bugs the synthetic
-tests could not have caught:
-
-```
-pip install -e .
-pytest tests/ -v                         # 67/67 passing
-python scripts/run_probe_demo.py         # the rogue-dimension gap, on the toy model
-python scripts/run_engine_demo.py        # draft + cache + verify, end to end, toy model
-python scripts/run_probe_real.py         # Phase 0 for real -- needs CUDA + transformers
+```bash
+docker compose up      # needs the NVIDIA Container Toolkit
 ```
 
-`run_engine_demo.py`'s toy-model output turned out to be an accurate small-scale
-preview: on an unstructured vocabulary the cache hit rate is 0%; forcing a
-low-rank embedding gets the first layer to 90% hits but it collapses to 0% one
-layer later, because GELU and LayerNorm expand rank with depth even from a
-low-rank input. The real-model run confirmed the same shape of problem at
-production scale (§ below).
-
-**[IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md)** is the file to read
-if you're deciding whether to trust a specific claim.
+`afterimage serve` exposes an OpenAI-compatible `/v1/chat/completions`,
+plus native job control (`/api/compress`, `/api/jobs/{id}`, pause/resume/
+cancel, `/api/plan` for budget feasibility) and a minimal web UI at `/`.
 
 ---
 
-## Phase 0 — run for real, result: NO-GO
+## Controlling residency and speed
 
-Ran 2026-08-17 against Qwen2.5-1.5B-Instruct on an RTX 3080 (WSL2/CUDA),
-across 4 real workloads (focused code, multi-turn chat, long-form prose, and
-a deliberately adversarial topic-switching mix) and 6 layers spread across
-depth. **[Full data and reasoning: docs/PHASE0_RESULTS.md](docs/PHASE0_RESULTS.md).**
+```python
+from afterimage.runtime.config import EngineConfig
+from afterimage.runtime.streaming_engine import StreamingLosslessModel, load_draft_model
 
-| Metric | Threshold (Go) | Measured | Verdict |
-|---|---|---|---|
-| Functional error at rank 256 (2.9% of layer width) | < 0.1% | 25–45% | ~250–450x too high |
-| End-to-end closed-loop error, rank 128, 6 layers truncated | near 0 | 60–96% | catastrophic |
-
-The rogue-dimension effect the hypothesis predicted is real and measurable —
-variance-captured hit 82–99% at rank 256 while functional error stayed at
-25–45% for the *same* rank, confirming variance is the wrong criterion. And
-the effective-rank ordering across workloads matched prediction (long-form
-prose lowest, adversarial topic-switching highest, 4x apart). **The mechanism
-is sound. The absolute scale is not there:** even the most favorable workload
-needs ~2.5% of a layer's width just to describe itself, leaving almost no
-budget for the cache to compress further.
-
-Per the plan written *before* this measurement ran (HYPOTHESIS.md §6,
-EXECUTION_PLAN.md §6.1): **a failed gate means stop, not scale up and
-recheck.** The recommended path forward is the fallback below, which was
-never dependent on this cache working.
-
----
-
-## Plan
-
-```mermaid
-flowchart LR
-    P0["Phase 0 — Probe<br/>RUN: 2026-08-17"] --> G{"rank<br/>usable?"}
-    G -->|"NO<br/>(actual result)"| SHIP["ship Phases 2-3 only:<br/>a working 27B-on-8GB runtime<br/>from published methods"]
-    G -.->|yes, not the case| REST["Phases 1-6<br/>about 7 weeks"]
+cfg = EngineConfig(
+    vram_budget_gb=2.0,          # the dial. Refused up front if infeasible, not approximated.
+    ram_budget_gb=8.0,           # pinned host RAM as a second, faster-than-disk tier
+    draft_mode="model",          # "none" | "model" | "self" -- speculative decoding
+    spec_k=8,                    # draft chain length
+    lm_head_slice_rows=0,        # >0 shrinks the VRAM floor ~1.4GB -- NOT lossless, see below
+)
+sm = StreamingLosslessModel("Qwen/Qwen3-14B", store_dir, device="cuda", config=cfg)
+draft = load_draft_model("Qwen/Qwen3-0.6B", device="cuda")
+seq, _policy = sm.generate_adaptive(input_ids, max_new_tokens=64, draft_model=draft)
 ```
 
-The plan was ordered by risk retired per hour, not build order, so the
-Phase 0 measurement would gate everything else before committing to a
-multi-week build. It did: Phase 0 failed, so Phases 2–3 (residency +
-speculation, published methods, no novelty claim) are the product going
-forward — that was always the honest fallback, and it is unaffected by the
-cache's result.
+Every weight is used once per token under plain streaming, so "importance"
+can't rank residency — what differs is **bus traffic avoided per byte of
+VRAM spent** (`compressed_bytes / uncompressed_bytes`). A poorly-compressing
+tensor costs the most in re-streaming, so it's the best candidate to keep
+resident. `vram_planner.py` fills VRAM, then RAM, greedily by this ranking.
 
-Full detail, benchmark methodology, test matrix and the traps that would produce
-false results: **[docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md)**
+`EngineConfig.is_lossless` is `False` whenever `quantize="q8"` or
+`lm_head_slice_rows > 0` is set, and `describe()` says so explicitly. No
+run using either may be reported as bit-exact.
+
+---
+
+## What's built
+
+Lossless bf16 compression at 96% of the Shannon ceiling; GPU Huffman decode
+via a Triton kernel; three-tier VRAM/RAM/disk residency planning; row-gathered
+embeddings; a KV cache verified bit-exact; speculative decoding (small draft
+model and self-drafting, both via `generate_adaptive`); an optional chunked
+`lm_head` that removes the VRAM floor at the cost of bit-exactness; pause/
+resume/cancel job control; an OpenAI-compatible server; Docker + installers
+for NVIDIA, AMD (untested on real hardware), and CPU fallback. 267 tests.
+
+**Tried and correctly killed, not hidden:** self-drafting with an
+*untrained* model (0% acceptance), a live bandit tuning draft length
+(never beat a tuned constant), CPU/GPU split decode (passed its isolated
+throughput gate, then made the engine 0.52x once integrated). Full
+reasoning for each: [docs/RESULTS_LOG.md](docs/RESULTS_LOG.md).
+
+---
+
+## What will never be claimed
+
+- No lossless bf16 ratio above ~1.51x — proven impossible, not a current
+  limitation.
+- No "lossless" label on any run using `quantize="q8"` or
+  `lm_head_slice_rows > 0`.
+- No speed or memory number that wasn't measured on real hardware with a
+  cold cache, on the same counter as whatever it's compared against.
+- No "faster than AirLLM" claim without stating whether VRAM was matched.
+
+---
+
+## Prior research (archived, not deleted)
+
+An earlier phase explored a different idea: caching a linear layer's
+*outputs* for previously-seen activation directions. Real math, 67 tests,
+correctly killed after a real-model measurement came in 250-450x above the
+success threshold. Code kept and marked archived in its own docstrings.
+Full history: [docs/archive/](docs/archive/).
 
 ---
 
@@ -200,18 +163,13 @@ false results: **[docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md)**
 
 | | |
 |---|---|
-| [docs/HYPOTHESIS.md](docs/HYPOTHESIS.md) | the mathematics, the theory, and the honest risk register |
-| [docs/LITERATURE.md](docs/LITERATURE.md) | survey through Aug 2026 with diagrams of each approach |
-| [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) | build order, benchmarks, tests, success thresholds |
-| [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) | what's actually built, tested, and run vs. stubbed or unbuilt |
+| [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md) | **start here** — every method, next to AirLLM, with the honest verdict on each |
+| [docs/RESULTS_LOG.md](docs/RESULTS_LOG.md) | append-only ledger of every measured run, including regressions and corrections |
+| [docs/LITERATURE.md](docs/LITERATURE.md) | research survey — lossless codecs, MoE offloading, adaptive/RL-for-speculation |
+| [docs/archive/](docs/archive/) | superseded planning docs and early results, kept for traceability |
 
 ---
 
 ## Name
 
-"Afterimage" — what persists after the light has passed through. The cache is the
-impression the weights leave behind on the activations that went through them.
-
-Checked as unused in the LLM-inference space (Aug 2026). Rejected: *PocketLLM*
-(4+ existing projects), *CompactFit* (existing memory-management system),
-*Cairn* (3 existing projects).
+"Afterimage" — what persists after the light has passed through.

@@ -29,6 +29,27 @@ def sample_categorical(p: torch.Tensor, generator: torch.Generator | None = None
     return int(torch.multinomial(p, 1, generator=generator).item())
 
 
+def temperature_probs(logits: torch.Tensor, temperature: float) -> torch.Tensor:
+    """softmax(logits / temperature), except temperature <= 0 returns a
+    one-hot distribution at the argmax instead of dividing by zero.
+
+    This is what makes speculative decoding provably reproduce PLAIN GREEDY
+    decoding, not just itself: at temperature 0 both draft and target
+    distributions are one-hot at their own argmax, so
+    speculative_sample_step's accept/reject step collapses to "accept iff
+    the draft's argmax equals the target's argmax, otherwise emit the
+    target's argmax" -- exactly generate_greedy's rule, for ANY draft
+    (any k, any quality). That gives every adaptive/self-draft arm a real
+    correctness assertion (token-identical to generate_greedy) instead of
+    only a distributional one -- see docs/ADAPTIVE_TEST_PLAN.md §3.
+    """
+    if temperature <= 0:
+        probs = torch.zeros_like(logits)
+        probs.scatter_(-1, logits.argmax(dim=-1, keepdim=True), 1.0)
+        return probs
+    return torch.softmax(logits / temperature, dim=-1)
+
+
 def speculative_sample_step(
     draft_probs: list[torch.Tensor],
     target_probs: list[torch.Tensor],

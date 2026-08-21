@@ -1,0 +1,30 @@
+# docker compose up
+#
+# Persists compressed stores and the HuggingFace download cache in the
+# `afterimage-data` volume so the expensive one-time compression pass (and
+# model downloads) survive container rebuilds. Requires the NVIDIA
+# Container Toolkit for GPU passthrough (nvidia-ctk / nvidia-docker2).
+services:
+  afterimage:
+    build:
+      context: .
+      args:
+        VARIANT: cuda
+    image: afterimage:cuda
+    ports:
+      - "8420:8420"
+    volumes:
+      - afterimage-data:/data
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    # Older Docker Engine/Compose without `deploy.resources` GPU support:
+    # comment the `deploy:` block above and uncomment this instead.
+    # runtime: nvidia
+
+volumes:
+  afterimage-data:

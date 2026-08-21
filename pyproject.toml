@@ -1,23 +1,38 @@
 [project]
 name = "afterimage"
-version = "0.1.0"
-description = "Workload-adaptive subspace caching for offloaded LLM inference"
+version = "0.2.0"
+description = "Lossless weight-compressed streaming inference for models larger than your GPU"
 requires-python = ">=3.10"
 dependencies = [
     "torch>=2.2",
     "numpy>=1.24",
+    "transformers>=4.40",
+    "safetensors>=0.4",
+    "huggingface_hub>=0.20",
 ]
 
 [project.optional-dependencies]
-gpu = ["torch>=2.2"]
-models = ["transformers>=4.40", "safetensors>=0.4", "accelerate>=0.30"]
-dev = ["pytest>=8.0", "pytest-benchmark>=4.0"]
+gpu = ["torch>=2.2", "triton>=2.2"]
+server = ["fastapi>=0.110", "uvicorn[standard]>=0.29", "pydantic>=2.0", "websockets>=12.0"]
+bench = ["airllm"]
+# Only needed for EngineConfig(cpu_decode_fraction=...) -- see its docstring
+# and docs/RESULTS_LOG.md before enabling it; currently measured to make
+# wall time flat-to-worse on the real 14B despite a JIT-compiled decoder
+# clearing its own isolated throughput gate.
+cpu_decode = ["numba>=0.58"]
+dev = ["pytest>=8.0", "pytest-benchmark>=4.0", "httpx>=0.27"]
+
+[project.scripts]
+afterimage = "afterimage.cli:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
 [tool.setuptools.packages.find]
 include = ["afterimage*"]
+
+[tool.setuptools.package-data]
+"afterimage.server" = ["static/*"]
 
 [build-system]
 requires = ["setuptools>=68"]
