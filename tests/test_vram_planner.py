@@ -58,6 +58,26 @@ def test_ram_tier_catches_what_vram_could_not_hold():
     assert plan.disk_bytes_per_token == int(30e6)
 
 
+def test_forced_ram_overlay_reserves_host_budget_before_greedy_fill():
+    head = _t("lm_head.weight", 100, 40, layer=False)
+    layer = _t("layer", 100, 90)
+    plan = plan_tiers(
+        [head, layer], vram_budget_gb=0.7, ram_budget_gb=0.1,
+        scratch_bytes=int(500e6), forced_ram_keys={"lm_head.weight"})
+    assert plan.feasible
+    assert plan.ram_keys == ["lm_head.weight"]
+    assert plan.vram_keys == ["layer"]
+
+
+def test_forced_ram_overlay_fails_before_runtime_when_host_budget_is_too_small():
+    head = _t("lm_head.weight", 100, 40, layer=False)
+    plan = plan_tiers(
+        [head], vram_budget_gb=0.7, ram_budget_gb=0.05,
+        scratch_bytes=int(500e6), forced_ram_keys={"lm_head.weight"})
+    assert not plan.feasible
+    assert "forced RAM tensors need" in plan.reason
+
+
 def test_ram_budget_zero_is_legacy_two_tier_behaviour():
     a = _t("a", 100, 90)
     b = _t("b", 100, 60)

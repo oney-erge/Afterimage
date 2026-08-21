@@ -353,4 +353,19 @@ afterimage/server/static/index.html       clickable Experiment Lab
 results/README.md                         result schema and publication rules
 ```
 
-Run `afterimage experiments --json` for the machine-readable H0-H8 registry.
+## 15. H9-H11 — new adjacent-domain methods
+
+H9-H11 extend this plan without changing H0-H8:
+
+- H9 overlays the exact output head from pinned RAM only during its live range;
+- H10 learns a frozen whole-set residency action with CEM in an event-DAG
+  digital twin;
+- H11 trains a six-hidden-unit censored-survival model to stop speculative
+  drafting by expected throughput.
+
+Their literature boundaries, falsifiable gates, commands, and ordering are in
+[NOVEL_METHODS_2026-08-21.md](NOVEL_METHODS_2026-08-21.md). All three are
+implemented but unconfirmed; they remain experimental until held-out paired GPU
+measurements pass those gates.
+
+Run `afterimage experiments --json` for the machine-readable H0-H11 registry.

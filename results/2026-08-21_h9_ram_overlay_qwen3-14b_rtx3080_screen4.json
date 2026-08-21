@@ -1,0 +1,401 @@
+{
+  "cache_regime": "cold page cache before every timed cell",
+  "calibration_artifacts": {},
+  "calibration_case_ids": [
+    "summary-photosynthesis",
+    "logic-glippets"
+  ],
+  "completed_at_unix": 1787344684.630701,
+  "confirmatory_protocol_satisfied": false,
+  "draft_model": "Qwen/Qwen3-0.6B",
+  "elapsed_seconds": 139.67992626200066,
+  "environment": {
+    "cuda": "12.4",
+    "driver": "596.49",
+    "git_commit": "7697208aa2a75d46723dcdf0dfe12d3c1a255ea6",
+    "git_status": "M README.md\n M afterimage/cli.py\n M afterimage/experiments.py\n M afterimage/runtime/compressed_store.py\n M afterimage/runtime/config.py\n M afterimage/runtime/cpu_decode.py\n M afterimage/runtime/gpu_decode.py\n M afterimage/runtime/gpu_decode_v2.py\n M afterimage/runtime/huffman.py\n M afterimage/runtime/huffman_chunked.py\n M afterimage/runtime/spec_policy.py\n M afterimage/runtime/streaming_engine.py\n M afterimage/runtime/vram_planner.py\n M afterimage/server/app.py\n M afterimage/server/static/index.html\n M docs/LITERATURE.md\n M docs/RESEARCH_METHODS.md\n M docs/RESULTS_LOG.md\n M docs/archive/PROPOSAL.md\n M docs/archive/ollama_capacity_results.json\n M docs/archive/phase0_real_results.json\n M docs/archive/shootout.json\n M scripts/run_bounded_suite.py\n M scripts/run_decode_throughput.py\n M scripts/run_decode_throughput_v2.py\n M scripts/run_headtohead.py\n M tests/test_chunked_lm_head_gpu.py\n M tests/test_config.py\n M tests/test_experiment_api.py\n M tests/test_experiments.py\n M tests/test_huffman_chunked.py\n M tests/test_research_cli.py\n M tests/test_spec_policy.py\n M tests/test_streaming_engine_gpu.py\n M tests/test_vram_planner.py\n?? afterimage/runtime/replay_planner.py\n?? docs/NOVEL_METHODS_2026-08-21.md\n?? results/2026-08-21_h9_ram_overlay_qwen3-14b_rtx3080_screen1.json\n?? results/2026-08-21_h9_ram_overlay_qwen3-14b_rtx3080_screen2.json\n?? results/2026-08-21_h9_ram_overlay_qwen3-14b_rtx3080_screen3.json\n?? tests/test_replay_planner.py",
+    "gpu": "NVIDIA GeForce RTX 3080 Laptop GPU",
+    "gpu_total_bytes": 8589410304,
+    "host_memory": "total        used        free      shared  buff/cache   available\nMem:     20656578560  1219026944  3326689280     1187840 16358346752 19437551616\nSwap:     5368709120   128970752  5239738368",
+    "packages": {
+      "accelerate": "1.14.0",
+      "airllm": "3.1.0",
+      "numpy": "2.5.2",
+      "safetensors": "0.8.0",
+      "transformers": "5.12.1"
+    },
+    "platform": "Linux-6.18.33.2-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+    "python": "3.12.3 (main, Jun 19 2026, 12:46:00) [GCC 13.3.0]",
+    "tokenizer_commit": null,
+    "torch": "2.6.0+cu124"
+  },
+  "evaluation_case_ids": [
+    "fact-gold"
+  ],
+  "exploratory": true,
+  "failures": [],
+  "max_new_tokens": 2,
+  "methods": [
+    {
+      "declared_exactness": "reference_execution_equivalent",
+      "metadata": {
+        "initialization_seconds": 1.7580733329996292,
+        "mips_index_build_seconds": 0.0,
+        "mips_index_bytes": 0,
+        "resolved_config": {
+          "block_chunks": 32,
+          "chunk_size": 1024,
+          "critical_path_profile": null,
+          "decode_slice_elems": 1048576,
+          "draft_exit_layer": null,
+          "draft_mode": "none",
+          "empty_cache_every": 0,
+          "execution_policy": "static",
+          "execution_policy_state": null,
+          "expert_codec": "independent",
+          "io_prefetch_depth": 2,
+          "io_prefetch_max_depth": 8,
+          "lm_head_policy": "full",
+          "lm_head_slice_rows": 0,
+          "max_bits": 16,
+          "mips_index_ram_limit_gb": 16.0,
+          "pin_draft_layers": false,
+          "placement_policy": "traffic_density",
+          "prefetch_ki": 0.25,
+          "prefetch_kp": 2.0,
+          "prefetch_policy": "fixed",
+          "prefetch_target_ready": 0.85,
+          "progress": false,
+          "quantize": null,
+          "ram_budget_gb": null,
+          "ram_tier_format": "decoded",
+          "replay_plan_state": null,
+          "representation_policy": "uniform",
+          "spec_k": 8,
+          "spec_k_policy": "fixed",
+          "spec_policy_learn": true,
+          "spec_policy_state": null,
+          "trace_events": false,
+          "trace_output": null,
+          "vram_budget_gb": 1.8,
+          "vram_cap_gb": null
+        }
+      },
+      "method_id": "exact-min",
+      "method_wall_seconds": 68.00335828499738,
+      "rows": [
+        {
+          "answer": "Au",
+          "bytes_read": 37411125832,
+          "cache_drop_error": null,
+          "cache_drop_succeeded": true,
+          "case_id": "fact-gold",
+          "committed_tokens_per_second": 0.030651795938344682,
+          "compute_seconds": 0.0,
+          "config": {
+            "block_chunks": 32,
+            "chunk_size": 1024,
+            "critical_path_profile": null,
+            "decode_slice_elems": 1048576,
+            "draft_exit_layer": null,
+            "draft_mode": "none",
+            "empty_cache_every": 0,
+            "execution_policy": "static",
+            "execution_policy_state": null,
+            "expert_codec": "independent",
+            "io_prefetch_depth": 2,
+            "io_prefetch_max_depth": 8,
+            "lm_head_policy": "full",
+            "lm_head_slice_rows": 0,
+            "max_bits": 16,
+            "mips_index_ram_limit_gb": 16.0,
+            "pin_draft_layers": false,
+            "placement_policy": "traffic_density",
+            "prefetch_ki": 0.25,
+            "prefetch_kp": 2.0,
+            "prefetch_policy": "fixed",
+            "prefetch_target_ready": 0.85,
+            "progress": false,
+            "quantize": null,
+            "ram_budget_gb": null,
+            "ram_tier_format": "decoded",
+            "replay_plan_state": null,
+            "representation_policy": "uniform",
+            "spec_k": 8,
+            "spec_k_policy": "fixed",
+            "spec_policy_learn": true,
+            "spec_policy_state": null,
+            "trace_events": false,
+            "trace_output": null,
+            "vram_budget_gb": 1.8,
+            "vram_cap_gb": null
+          },
+          "config_fingerprint": "cda2af7606c76f96",
+          "decode_seconds": 60.782617349042994,
+          "exactness_contract": "reference_execution_equivalent",
+          "expected_any": [
+            "Au"
+          ],
+          "expected_match": true,
+          "final_prefetch_depth": 2,
+          "gb_read_per_token": 18.705562916,
+          "generation_mode": "greedy",
+          "input_tokens": 33,
+          "io_seconds": 43.80140879996179,
+          "method": "exact-min",
+          "mips_certified": 0,
+          "mips_fallbacks": 0,
+          "mips_rows_evaluated": 0,
+          "mips_rows_pruned": 0,
+          "output_token_ids": [
+            65332,
+            151645
+          ],
+          "output_tokens": 2,
+          "pageable_ram_fallback_keys": [],
+          "peak_vram_gb": 1.68941824,
+          "policy_state": null,
+          "prefetch_hits": 79,
+          "prefetch_misses": 1,
+          "prefetch_wait_seconds": 0.0006956430042919237,
+          "prompt_sha256": "4a1479bcb9d08d15b41b6a857f092c87b2146f88d395e474f9ec2e8b805ff9d8",
+          "seconds_per_token": 32.624515771000006,
+          "semantic_bucket": "factual",
+          "spec_accepted_tokens": 0,
+          "spec_sweeps": 0,
+          "tokens_per_target_sweep": 2.0,
+          "wall_seconds": 65.24903154200001
+        }
+      ],
+      "summary": {
+        "all_cache_drops_succeeded": true,
+        "completed_cases": 1,
+        "expected_match_rate": 1,
+        "expected_matches": 1,
+        "median_cell_seconds_per_token": 32.624515771000006,
+        "peak_vram_gb": 1.68941824,
+        "seconds_per_token": 32.624515771000006,
+        "token_agreement_vs_exact_min": 1,
+        "total_output_tokens": 2,
+        "total_wall_seconds": 65.24903154200001
+      },
+      "title": "Afterimage exact streaming, minimum-memory control"
+    },
+    {
+      "declared_exactness": "reference_execution_equivalent",
+      "metadata": {
+        "initialization_seconds": 6.1378694779996295,
+        "mips_index_build_seconds": 0.0,
+        "mips_index_bytes": 0,
+        "resolved_config": {
+          "block_chunks": 32,
+          "chunk_size": 1024,
+          "critical_path_profile": null,
+          "decode_slice_elems": 1048576,
+          "draft_exit_layer": null,
+          "draft_mode": "none",
+          "empty_cache_every": 0,
+          "execution_policy": "static",
+          "execution_policy_state": null,
+          "expert_codec": "independent",
+          "io_prefetch_depth": 2,
+          "io_prefetch_max_depth": 8,
+          "lm_head_policy": "ram_overlay",
+          "lm_head_slice_rows": 0,
+          "max_bits": 16,
+          "mips_index_ram_limit_gb": 16.0,
+          "pin_draft_layers": false,
+          "placement_policy": "traffic_density",
+          "prefetch_ki": 0.25,
+          "prefetch_kp": 2.0,
+          "prefetch_policy": "fixed",
+          "prefetch_target_ready": 0.85,
+          "progress": false,
+          "quantize": null,
+          "ram_budget_gb": 1.6,
+          "ram_tier_format": "decoded",
+          "replay_plan_state": null,
+          "representation_policy": "uniform",
+          "spec_k": 8,
+          "spec_k_policy": "fixed",
+          "spec_policy_learn": true,
+          "spec_policy_state": null,
+          "trace_events": false,
+          "trace_output": null,
+          "vram_budget_gb": 1.8,
+          "vram_cap_gb": null
+        }
+      },
+      "method_id": "ram-overlay-head",
+      "method_wall_seconds": 71.21989831099927,
+      "rows": [
+        {
+          "answer": "Au",
+          "bytes_read": 35280481098,
+          "cache_drop_error": null,
+          "cache_drop_succeeded": true,
+          "case_id": "fact-gold",
+          "committed_tokens_per_second": 0.03126145011668016,
+          "compute_seconds": 0.0,
+          "config": {
+            "block_chunks": 32,
+            "chunk_size": 1024,
+            "critical_path_profile": null,
+            "decode_slice_elems": 1048576,
+            "draft_exit_layer": null,
+            "draft_mode": "none",
+            "empty_cache_every": 0,
+            "execution_policy": "static",
+            "execution_policy_state": null,
+            "expert_codec": "independent",
+            "io_prefetch_depth": 2,
+            "io_prefetch_max_depth": 8,
+            "lm_head_policy": "ram_overlay",
+            "lm_head_slice_rows": 0,
+            "max_bits": 16,
+            "mips_index_ram_limit_gb": 16.0,
+            "pin_draft_layers": false,
+            "placement_policy": "traffic_density",
+            "prefetch_ki": 0.25,
+            "prefetch_kp": 2.0,
+            "prefetch_policy": "fixed",
+            "prefetch_target_ready": 0.85,
+            "progress": false,
+            "quantize": null,
+            "ram_budget_gb": 1.6,
+            "ram_tier_format": "decoded",
+            "replay_plan_state": null,
+            "representation_policy": "uniform",
+            "spec_k": 8,
+            "spec_k_policy": "fixed",
+            "spec_policy_learn": true,
+            "spec_policy_state": null,
+            "trace_events": false,
+            "trace_output": null,
+            "vram_budget_gb": 1.8,
+            "vram_cap_gb": null
+          },
+          "config_fingerprint": "adf3d8334e4a650c",
+          "decode_seconds": 61.699895804991684,
+          "exactness_contract": "reference_execution_equivalent",
+          "expected_any": [
+            "Au"
+          ],
+          "expected_match": true,
+          "final_prefetch_depth": 2,
+          "gb_read_per_token": 17.640240549,
+          "generation_mode": "greedy",
+          "input_tokens": 33,
+          "io_seconds": 42.43993574401247,
+          "method": "ram-overlay-head",
+          "mips_certified": 0,
+          "mips_fallbacks": 0,
+          "mips_rows_evaluated": 0,
+          "mips_rows_pruned": 0,
+          "output_token_ids": [
+            65332,
+            151645
+          ],
+          "output_tokens": 2,
+          "pageable_ram_fallback_keys": [
+            "lm_head.weight"
+          ],
+          "peak_vram_gb": 1.675764224,
+          "policy_state": null,
+          "prefetch_hits": 79,
+          "prefetch_misses": 1,
+          "prefetch_wait_seconds": 0.0006711619935231283,
+          "prompt_sha256": "4a1479bcb9d08d15b41b6a857f092c87b2146f88d395e474f9ec2e8b805ff9d8",
+          "seconds_per_token": 31.988279375000275,
+          "semantic_bucket": "factual",
+          "spec_accepted_tokens": 0,
+          "spec_sweeps": 0,
+          "tokens_per_target_sweep": 2.0,
+          "wall_seconds": 63.97655875000055
+        }
+      ],
+      "summary": {
+        "all_cache_drops_succeeded": true,
+        "completed_cases": 1,
+        "expected_match_rate": 1,
+        "expected_matches": 1,
+        "median_cell_seconds_per_token": 31.988279375000275,
+        "peak_vram_gb": 1.675764224,
+        "seconds_per_token": 31.988279375000275,
+        "token_agreement_vs_exact_min": 1,
+        "total_output_tokens": 2,
+        "total_wall_seconds": 63.97655875000055
+      },
+      "title": "Afterimage exact pinned-RAM lm_head overlay"
+    }
+  ],
+  "model": "Qwen/Qwen3-14B",
+  "prompt_suite": [
+    {
+      "expected_any": [
+        "Au"
+      ],
+      "id": "fact-gold",
+      "semantic_bucket": "factual",
+      "split": "evaluation",
+      "user_text": "Answer with only the chemical symbol for gold."
+    },
+    {
+      "expected_any": [
+        "102"
+      ],
+      "id": "arithmetic-17x6",
+      "semantic_bucket": "arithmetic",
+      "split": "evaluation",
+      "user_text": "Compute 17 multiplied by 6. Answer with only the integer."
+    },
+    {
+      "expected_any": [
+        "x * x",
+        "x*x",
+        "x ** 2",
+        "x**2"
+      ],
+      "id": "code-square",
+      "semantic_bucket": "code",
+      "split": "evaluation",
+      "user_text": "Fill the blank and output only the missing Python expression: def square(x): return ___"
+    },
+    {
+      "expected_any": [
+        "7319"
+      ],
+      "id": "retrieval-7319",
+      "semantic_bucket": "long_context_retrieval",
+      "split": "evaluation",
+      "user_text": "A maintenance note lists several identifiers. The amber cabinet is 2048, the cobalt cabinet is 5501, and the Orion access code is 7319. A later paragraph discusses inventory counts of 18, 42, and 96; none of those are access codes. What is the Orion access code? Answer with only the four digits."
+    },
+    {
+      "expected_any": [
+        "photosynthesis"
+      ],
+      "id": "summary-photosynthesis",
+      "semantic_bucket": "summarisation",
+      "split": "calibration",
+      "user_text": "Plants use light energy to convert carbon dioxide and water into sugars, releasing oxygen. Name this process with one word."
+    },
+    {
+      "expected_any": [
+        "no"
+      ],
+      "id": "logic-glippets",
+      "semantic_bucket": "logic",
+      "split": "calibration",
+      "user_text": "Every glippet is blue. No blue object is transparent. Can a glippet be transparent? Answer only yes or no."
+    }
+  ],
+  "prompt_suite_version": "bounded-chat-v1",
+  "schema_version": 1,
+  "selected_methods": [
+    "exact-min",
+    "ram-overlay-head"
+  ],
+  "status": "complete",
+  "store": "/root/afterimage/store_14b",
+  "time_budget_minutes": 12.0
+}

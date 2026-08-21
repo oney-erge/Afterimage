@@ -149,6 +149,27 @@ def test_measured_placement_requires_profile_and_real_budget():
     assert cfg.placement_policy == "critical_path"
 
 
+def test_replay_cem_requires_frozen_plan_and_budget():
+    with pytest.raises(ValueError, match="replay_plan_state"):
+        EngineConfig(placement_policy="replay_cem", vram_budget_gb=4.0)
+    with pytest.raises(ValueError, match="vram_budget_gb"):
+        EngineConfig(placement_policy="replay_cem", replay_plan_state="plan.json")
+    cfg = EngineConfig(placement_policy="replay_cem",
+                       replay_plan_state="plan.json", vram_budget_gb=4.0)
+    assert cfg.replay_plan_state == "plan.json"
+
+
+def test_ram_overlay_head_requires_decoded_ram_and_tiered_budget():
+    with pytest.raises(ValueError, match="ram_budget_gb"):
+        EngineConfig(lm_head_policy="ram_overlay")
+    with pytest.raises(ValueError, match="decoded RAM"):
+        EngineConfig(lm_head_policy="ram_overlay", vram_budget_gb=2.0,
+                     ram_budget_gb=2.0, ram_tier_format="compressed")
+    cfg = EngineConfig(lm_head_policy="ram_overlay", vram_budget_gb=2.0,
+                       ram_budget_gb=2.0)
+    assert cfg.exactness_contract == "reference_execution_equivalent"
+
+
 def test_config_round_trip_and_fingerprint_are_strict_and_stable():
     cfg = EngineConfig(prefetch_policy="pi", trace_events=True)
     assert EngineConfig.from_dict(cfg.to_dict()) == cfg

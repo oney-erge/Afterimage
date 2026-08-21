@@ -86,7 +86,7 @@ docker compose up      # needs the NVIDIA Container Toolkit
 `afterimage serve` exposes an OpenAI-compatible `/v1/chat/completions`,
 plus native job control (`/api/compress`, `/api/jobs/{id}`, pause/resume/
 cancel, `/api/plan` for budget feasibility) and a web UI at `/`. Its
-**Experiment Lab** runs the versioned H0-H8 candidates against named controls
+**Experiment Lab** runs the versioned H0-H11 candidates against named controls
 without changing the normal engine defaults.
 
 ---
@@ -175,7 +175,8 @@ Full history: [docs/archive/](docs/archive/).
 | [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md) | **start here** — every method, next to AirLLM, with the honest verdict on each |
 | [docs/RESULTS_LOG.md](docs/RESULTS_LOG.md) | append-only ledger of every measured run, including regressions and corrections |
 | [docs/LITERATURE.md](docs/LITERATURE.md) | research survey — lossless codecs, MoE offloading, adaptive/RL-for-speculation |
-| [docs/RESEARCH_METHODS.md](docs/RESEARCH_METHODS.md) | **H0-H8** — hypotheses, prior-art boundary, configuration, tests, and kill gates |
+| [docs/RESEARCH_METHODS.md](docs/RESEARCH_METHODS.md) | **H0-H11** — hypotheses, prior-art boundary, configuration, tests, and kill gates |
+| [docs/NOVEL_METHODS_2026-08-21.md](docs/NOVEL_METHODS_2026-08-21.md) | **new methods** — RAM overlay, digital-twin CEM, tiny survival network, and bounded tests |
 | [docs/BOUNDED_RESEARCH_REPORT_2026-08-21.md](docs/BOUNDED_RESEARCH_REPORT_2026-08-21.md) | **current evidence** — diverse prompt results, H0-H8 verdicts, comparison, and novelty audit |
 | [docs/archive/](docs/archive/) | superseded planning docs and early results, kept for traceability |
 

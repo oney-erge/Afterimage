@@ -5,7 +5,7 @@ import torch
 
 from afterimage.runtime.spec_policy import (
     AdaEDLPolicy, FixedPolicy, GammaTunePolicy, HazardCostPolicy, SweepRecord,
-    ThresholdPolicy, build_policy,
+    NeuralUtilityPolicy, ThresholdPolicy, build_policy,
 )
 
 
@@ -82,6 +82,7 @@ def test_build_policy_dispatch():
     assert isinstance(build_policy("threshold", 8), ThresholdPolicy)
     assert isinstance(build_policy("adaedl", 8), AdaEDLPolicy)
     assert isinstance(build_policy("hazard_cost", 8), HazardCostPolicy)
+    assert isinstance(build_policy("neural_utility", 8), NeuralUtilityPolicy)
     with pytest.raises(ValueError):
         build_policy("nonsense", 8)
 
@@ -140,3 +141,41 @@ def test_hazard_policy_treats_unseen_tail_as_censored():
     assert sum(policy.reject[2]) == 0
     assert sum(policy.reject[3]) == 0
     assert policy.target_token_s == pytest.approx(1.0)
+
+
+def test_neural_utility_learns_censored_acceptance_without_tail_labels():
+    policy = NeuralUtilityPolicy(k_max=4, minimum_observations=1,
+                                 learning_rate=0.08, training_steps=8)
+    before_high = policy._predict(policy._features(0.95, 0.1, 0))
+    before_low = policy._predict(policy._features(0.10, 2.0, 1))
+    for _ in range(40):
+        policy.update(SweepRecord(
+            k_used=4, n_accepted=1, sweep_seconds=2.0,
+            draft_confidences=(0.95, 0.10, 0.99, 0.99),
+            draft_entropies=(0.1, 2.0, 0.01, 0.01),
+            draft_seconds=0.8, target_seconds=1.2))
+    after_high = policy._predict(policy._features(0.95, 0.1, 0))
+    after_low = policy._predict(policy._features(0.10, 2.0, 1))
+    assert after_high > before_high
+    assert after_low < before_low
+    # Only the accepted first position and first rejection are observable;
+    # the confident-looking tail must not be treated as either label.
+    assert policy.n_observations == 80
+
+
+def test_neural_utility_state_round_trip_and_cost_aware_stop(tmp_path):
+    policy = NeuralUtilityPolicy(k_max=4, minimum_observations=1)
+    policy.n_observations = 10
+    policy.draft_token_s = 2.0
+    policy.target_sweep_s = 1.0
+    diffuse = torch.tensor([0.5, 0.5])
+    assert policy.should_stop([diffuse, diffuse])
+    assert policy.decision_stops == 1
+    assert policy.last_stop_position == 1
+    path = tmp_path / "neural.json"
+    policy.save(path)
+    loaded = NeuralUtilityPolicy(k_max=4, minimum_observations=1)
+    loaded.load(path)
+    assert loaded.n_observations == policy.n_observations
+    assert loaded.target_sweep_s == policy.target_sweep_s
+    assert loaded.decision_stops == 0

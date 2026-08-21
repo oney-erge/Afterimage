@@ -63,6 +63,13 @@ METHODS = {
         "exact-resident", "Afterimage exact streaming + 4 GB residency", "afterimage",
         {"vram_budget_gb": 4.00, "decode_slice_elems": 1 << 22,
          "io_prefetch_depth": 2}, "reference_execution_equivalent", 20.0),
+    "ram-overlay-head": Method(
+        "ram-overlay-head", "Afterimage exact pinned-RAM lm_head overlay",
+        "afterimage",
+        {"vram_budget_gb": 1.80, "ram_budget_gb": 1.60,
+         "decode_slice_elems": 1 << 20, "io_prefetch_depth": 2,
+         "lm_head_policy": "ram_overlay"},
+        "reference_execution_equivalent", 24.0),
     "full-head-control": Method(
         "full-head-control", "Afterimage legacy streaming with resident full head",
         "afterimage", {"io_prefetch_depth": 2},
@@ -92,6 +99,11 @@ METHODS = {
         {"vram_budget_gb": 4.00, "decode_slice_elems": 1 << 22,
          "io_prefetch_depth": 2, "placement_policy": "critical_path"},
         "reference_execution_equivalent", 20.0),
+    "replay-cem": Method(
+        "replay-cem", "Afterimage digital-twin CEM residency", "afterimage",
+        {"vram_budget_gb": 4.00, "decode_slice_elems": 1 << 22,
+         "io_prefetch_depth": 2, "placement_policy": "replay_cem"},
+        "reference_execution_equivalent", 20.0),
     "certified-mips": Method(
         "certified-mips", "Afterimage certified greedy MIPS head", "afterimage",
         {"io_prefetch_depth": 2, "lm_head_policy": "certified_mips"},
@@ -106,6 +118,13 @@ METHODS = {
         {"vram_budget_gb": 2.70, "decode_slice_elems": 1 << 22,
          "io_prefetch_depth": 2, "draft_mode": "model", "spec_k": 8,
          "spec_k_policy": "hazard_cost", "spec_policy_learn": False},
+        "greedy_token_exact_at_temperature_zero", 8.0),
+    "spec-neural": Method(
+        "spec-neural", "Afterimage frozen tiny neural utility stopping",
+        "afterimage",
+        {"vram_budget_gb": 2.70, "decode_slice_elems": 1 << 22,
+         "io_prefetch_depth": 2, "draft_mode": "model", "spec_k": 8,
+         "spec_k_policy": "neural_utility", "spec_policy_learn": False},
         "greedy_token_exact_at_temperature_zero", 8.0),
     "chunked-spec": Method(
         "chunked-spec", "Afterimage chunked head + fixed-k speculation", "afterimage",
@@ -272,14 +291,17 @@ def run_airllm(method: Method, rendered: list[dict], n_tokens: int,
 
 
 def engine_for(method: Method, *, critical_profile: str | None = None,
-               hazard_state: str | None = None, learning: bool | None = None):
+               replay_plan: str | None = None, spec_state: str | None = None,
+               learning: bool | None = None):
     from afterimage.runtime.streaming_engine import StreamingLosslessModel
 
     values = dict(method.overrides)
     if values.get("placement_policy") in {"profiled_knapsack", "critical_path"}:
         values["critical_path_profile"] = critical_profile
-    if method.id == "spec-hazard":
-        values["spec_policy_state"] = hazard_state
+    if values.get("placement_policy") == "replay_cem":
+        values["replay_plan_state"] = replay_plan
+    if method.id in {"spec-hazard", "spec-neural"}:
+        values["spec_policy_state"] = spec_state
         if learning is not None:
             values["spec_policy_learn"] = learning
     cfg = EngineConfig(**values)
@@ -288,10 +310,11 @@ def engine_for(method: Method, *, critical_profile: str | None = None,
 
 def run_afterimage(method: Method, rendered: list[dict], n_tokens: int,
                    deadline: float, draft_model=None, critical_profile: str | None = None,
-                   hazard_state: str | None = None) -> tuple[list[dict], dict]:
+                   replay_plan: str | None = None,
+                   spec_state: str | None = None) -> tuple[list[dict], dict]:
     init_t0 = time.perf_counter()
     engine, cfg = engine_for(method, critical_profile=critical_profile,
-                             hazard_state=hazard_state)
+                             replay_plan=replay_plan, spec_state=spec_state)
     init_s = time.perf_counter() - init_t0
     tokenizer = rendered[0]["tokenizer"]
     rows = []
@@ -330,6 +353,8 @@ def run_afterimage(method: Method, rendered: list[dict], n_tokens: int,
                 "prefetch_hits": stats.prefetch_hits,
                 "prefetch_misses": stats.prefetch_misses,
                 "prefetch_wait_seconds": stats.prefetch_wait_seconds,
+                "pageable_ram_fallback_keys": sorted(
+                    engine._ram_cache_pageable_keys),
                 "final_prefetch_depth": engine._prefetch_controller.choose_depth(),
                 "spec_sweeps": stats.spec_sweeps,
                 "spec_accepted_tokens": stats.spec_accepted_tokens,
@@ -408,20 +433,23 @@ def prepare_critical_profile(tokenizer, temp_dir: pathlib.Path, deadline: float)
     profile_path = temp_dir / "critical_path_profile.json"
     profile.save(profile_path)
     payload = json.loads(profile_path.read_text())
-    return {"path": str(profile_path), "profile": payload,
+    return {"path": str(profile_path), "trace_paths": [
+                str(temp_dir / "critical_legacy_trace.json"),
+                str(temp_dir / "critical_min_trace.json")],
+            "profile": payload,
             "sha256": sha256_json(payload), "calibration_trials": calibration}
 
 
-def prepare_hazard_state(tokenizer, draft_model, temp_dir: pathlib.Path,
-                         deadline: float, n_tokens: int) -> dict:
-    state_path = temp_dir / "hazard_state.json"
-    method = METHODS["spec-hazard"]
-    engine, cfg = engine_for(method, hazard_state=str(state_path), learning=True)
+def prepare_spec_state(tokenizer, draft_model, temp_dir: pathlib.Path,
+                       deadline: float, n_tokens: int, method_id: str) -> dict:
+    state_path = temp_dir / (method_id + "_state.json")
+    method = METHODS[method_id]
+    engine, cfg = engine_for(method, spec_state=str(state_path), learning=True)
     calibration = []
     try:
         for index, case in enumerate(prompt_cases("calibration")):
             if time.perf_counter() >= deadline:
-                raise TimeoutError("time budget expired during hazard calibration")
+                raise TimeoutError("time budget expired during speculation calibration")
             item = calibration_item(tokenizer, case)
             ids = tokenizer(item["prompt"], return_tensors="pt").input_ids.cuda()
             cache = drop_caches()
@@ -576,17 +604,43 @@ def main() -> int:
 
     draft_model = None
     critical = None
-    hazard = None
+    replay = None
+    spec_states = {}
     with tempfile.TemporaryDirectory(prefix="afterimage-bounded-") as temp_name:
         temp_dir = pathlib.Path(temp_name)
-        if any(name in selected for name in ("critical-path", "profiled-knapsack")):
+        if any(name in selected for name in (
+                "critical-path", "profiled-knapsack", "replay-cem")):
             log("\nCALIBRATION: critical-path profile")
             try:
                 critical = prepare_critical_profile(tokenizer, temp_dir, deadline)
                 result["calibration_artifacts"]["critical_path"] = {
-                    key: value for key, value in critical.items() if key != "path"}
+                    key: value for key, value in critical.items()
+                    if key not in ("path", "trace_paths")}
             except Exception as exc:
                 result["failures"].append({"phase": "critical_path_calibration",
+                                           "error": repr(exc),
+                                           "traceback": traceback.format_exc()})
+            checkpoint(partial, result)
+
+        if "replay-cem" in selected and critical is not None:
+            log("\nCALIBRATION: replay-CEM whole-set plan")
+            try:
+                from afterimage.runtime.critical_path import TraceRecorder
+                from afterimage.runtime.replay_planner import optimize_replay_residency
+                manifest = json.loads(
+                    (pathlib.Path(STORE) / "manifest.json").read_text(encoding="utf-8"))
+                traces = [TraceRecorder.load(path) for path in critical["trace_paths"]]
+                replay_plan = optimize_replay_residency(
+                    manifest, traces, vram_budget_gb=4.0,
+                    decode_slice_elems=1 << 22, iterations=8,
+                    population=40, seed=0)
+                replay_path = temp_dir / "replay_cem_plan.json"
+                replay_plan.save(replay_path)
+                replay = {"path": str(replay_path),
+                          "plan": dataclasses.asdict(replay_plan)}
+                result["calibration_artifacts"]["replay_cem"] = replay["plan"]
+            except Exception as exc:
+                result["failures"].append({"phase": "replay_cem_calibration",
                                            "error": repr(exc),
                                            "traceback": traceback.format_exc()})
             checkpoint(partial, result)
@@ -601,20 +655,28 @@ def main() -> int:
                 result["failures"].append({"method": method_id,
                                            "error": "not started: calibration failed"})
                 continue
-            if method_id in {"spec-fixed", "spec-hazard", "chunked-spec"} and draft_model is None:
+            if method_id == "replay-cem" and replay is None:
+                result["failures"].append({"method": method_id,
+                                           "error": "not started: replay plan failed"})
+                continue
+            if method_id in {"spec-fixed", "spec-hazard", "spec-neural",
+                             "chunked-spec"} and draft_model is None:
                 from afterimage.runtime.streaming_engine import load_draft_model
                 log("\nLoading resident draft model %s" % DRAFT_MODEL)
                 draft_model = load_draft_model(DRAFT_MODEL, device="cuda")
-            if method_id == "spec-hazard" and hazard is None:
-                log("\nCALIBRATION: rejection-hazard state (disjoint prompts)")
+            if method_id in {"spec-hazard", "spec-neural"} and method_id not in spec_states:
+                log("\nCALIBRATION: %s state (disjoint prompts)" % method_id)
                 try:
-                    hazard = prepare_hazard_state(
+                    spec_states[method_id] = prepare_spec_state(
                         tokenizer, draft_model, temp_dir, deadline,
-                        n_tokens=max(4, args.max_new_tokens))
-                    result["calibration_artifacts"]["hazard_cost"] = {
-                        key: value for key, value in hazard.items() if key != "path"}
+                        n_tokens=max(16 if method_id == "spec-neural" else 4,
+                                     args.max_new_tokens),
+                        method_id=method_id)
+                    result["calibration_artifacts"][method_id] = {
+                        key: value for key, value in spec_states[method_id].items()
+                        if key != "path"}
                 except Exception as exc:
-                    result["failures"].append({"phase": "hazard_calibration",
+                    result["failures"].append({"phase": "speculation_calibration",
                                                "error": repr(exc),
                                                "traceback": traceback.format_exc()})
                     checkpoint(partial, result)
@@ -633,7 +695,9 @@ def main() -> int:
                         method, rendered, args.max_new_tokens, deadline,
                         draft_model=draft_model,
                         critical_profile=critical["path"] if critical else None,
-                        hazard_state=hazard["path"] if hazard else None)
+                        replay_plan=replay["path"] if replay else None,
+                        spec_state=(spec_states[method_id]["path"]
+                                    if method_id in spec_states else None))
                 entry["rows"] = rows
                 entry["metadata"] = metadata
                 entry["summary"] = aggregate(rows)

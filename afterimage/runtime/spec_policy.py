@@ -23,6 +23,8 @@ import json
 import math
 import pathlib
 
+import numpy as np
+
 
 @dataclasses.dataclass
 class SweepRecord:
@@ -364,6 +366,162 @@ class HazardCostPolicy(SpecPolicy):
             "target_token_s", state.get("target_sweep_s", self.target_token_s))
 
 
+class NeuralUtilityPolicy(SpecPolicy):
+    """Tiny censored-survival network with an explicit throughput objective.
+
+    This borrows the cascade-feedback view from information retrieval: the
+    first rejected token is observed, while positions after it are censored.
+    A six-hidden-unit MLP pools evidence across confidence, entropy and chain
+    position instead of maintaining a sparse bin for every combination.  It
+    does *not* choose tokens or approximate target probabilities.  It only
+    stops drafting when the predicted expected tokens/second would decline;
+    the normal exact verifier remains the authority.
+
+    The model is trained only when ``spec_policy_learn`` lets the caller invoke
+    update, can be frozen on held-out requests, and serializes as ordinary JSON.
+    """
+    name = "neural_utility"
+
+    def __init__(self, k_max: int = 16, k_min: int = 1, hidden: int = 6,
+                 learning_rate: float = 0.04, training_steps: int = 3,
+                 minimum_observations: int = 24, ewma: float = 0.2,
+                 seed: int = 0):
+        self.k_max = k_max
+        self.k_min = k_min
+        self.hidden = hidden
+        self.learning_rate = learning_rate
+        self.training_steps = training_steps
+        self.minimum_observations = minimum_observations
+        self.ewma = ewma
+        rng = np.random.default_rng(seed)
+        self.w1 = rng.normal(0.0, 0.08, size=(5, hidden))
+        self.b1 = np.zeros(hidden, dtype=np.float64)
+        self.w2 = rng.normal(0.0, 0.08, size=hidden)
+        self.b2 = math.log(0.6 / 0.4)
+        self.n_observations = 0
+        self.draft_token_s = 0.001
+        self.target_sweep_s = 1.0
+        self.decision_stops = 0
+        self.decision_continues = 0
+        self.last_stop_position: int | None = None
+
+    def choose_k(self) -> int:
+        return self.k_max
+
+    def _features(self, confidence: float, entropy: float, position: int) -> np.ndarray:
+        pos = min(max(position / max(self.k_max - 1, 1), 0.0), 1.0)
+        ent = max(0.0, float(entropy))
+        ent = ent / (1.0 + ent)
+        conf = min(max(float(confidence), 0.0), 1.0)
+        return np.asarray([conf, ent, pos, conf * pos, 1.0], dtype=np.float64)
+
+    def _predict(self, x: np.ndarray) -> float:
+        hidden = np.tanh(x @ self.w1 + self.b1)
+        logit = float(hidden @ self.w2 + self.b2)
+        if logit >= 0:
+            return 1.0 / (1.0 + math.exp(-logit))
+        exp = math.exp(logit)
+        return exp / (1.0 + exp)
+
+    def _fit_one(self, x: np.ndarray, label: float) -> None:
+        for _ in range(self.training_steps):
+            hidden = np.tanh(x @ self.w1 + self.b1)
+            prediction = self._predict(x)
+            dlogit = prediction - label
+            grad_w2 = hidden * dlogit
+            grad_b2 = dlogit
+            dhidden = self.w2 * dlogit
+            dz = dhidden * (1.0 - hidden * hidden)
+            grad_w1 = np.outer(x, dz)
+            grad_b1 = dz
+            self.w2 -= self.learning_rate * grad_w2
+            self.b2 -= self.learning_rate * grad_b2
+            self.w1 -= self.learning_rate * grad_w1
+            self.b1 -= self.learning_rate * grad_b1
+
+    def _expected_utility(self, draft_probs: list) -> float:
+        survival = 1.0
+        accepted = 0.0
+        for position, prob in enumerate(draft_probs):
+            confidence = float(prob.max())
+            entropy = _prob_entropy(prob)
+            survival *= self._predict(self._features(confidence, entropy, position))
+            accepted += survival
+        expected_tokens = 1.0 + accepted
+        expected_seconds = self.target_sweep_s + len(draft_probs) * self.draft_token_s
+        return expected_tokens / max(expected_seconds, 1e-9)
+
+    def should_stop(self, draft_probs: list) -> bool:
+        if (len(draft_probs) <= self.k_min
+                or self.n_observations < self.minimum_observations):
+            self.decision_continues += 1
+            return False
+        with_current = self._expected_utility(draft_probs)
+        without_current = self._expected_utility(draft_probs[:-1])
+        stop = with_current <= without_current
+        if stop:
+            self.decision_stops += 1
+            self.last_stop_position = len(draft_probs) - 1
+        else:
+            self.decision_continues += 1
+        return stop
+
+    def update(self, record: SweepRecord) -> None:
+        confidences = record.draft_confidences
+        entropies = record.draft_entropies
+        observed = min(record.k_used, len(confidences), len(entropies))
+        for position in range(observed):
+            if position < record.n_accepted:
+                label = 1.0
+            elif position == record.n_accepted and record.n_accepted < record.k_used:
+                label = 0.0
+            else:
+                break  # tail after the first rejection is censored
+            x = self._features(confidences[position], entropies[position], position)
+            self._fit_one(x, label)
+            self.n_observations += 1
+            if label == 0.0:
+                break
+        if record.draft_seconds is not None and record.k_used:
+            sample = record.draft_seconds / record.k_used
+            self.draft_token_s = ((1.0 - self.ewma) * self.draft_token_s
+                                  + self.ewma * sample)
+        if record.target_seconds is not None:
+            self.target_sweep_s = ((1.0 - self.ewma) * self.target_sweep_s
+                                   + self.ewma * record.target_seconds)
+
+    def state_dict(self) -> dict:
+        return {
+            "k_max": self.k_max, "hidden": self.hidden,
+            "w1": self.w1.tolist(), "b1": self.b1.tolist(),
+            "w2": self.w2.tolist(), "b2": self.b2,
+            "n_observations": self.n_observations,
+            "draft_token_s": self.draft_token_s,
+            "target_sweep_s": self.target_sweep_s,
+            "decision_stops": self.decision_stops,
+            "decision_continues": self.decision_continues,
+            "last_stop_position": self.last_stop_position,
+        }
+
+    def load_state_dict(self, state: dict) -> None:
+        if state.get("k_max", self.k_max) != self.k_max:
+            raise ValueError("neural utility state uses a different k_max")
+        if state.get("hidden", self.hidden) != self.hidden:
+            raise ValueError("neural utility state uses a different hidden size")
+        self.w1 = np.asarray(state.get("w1", self.w1), dtype=np.float64)
+        self.b1 = np.asarray(state.get("b1", self.b1), dtype=np.float64)
+        self.w2 = np.asarray(state.get("w2", self.w2), dtype=np.float64)
+        self.b2 = float(state.get("b2", self.b2))
+        self.n_observations = int(state.get("n_observations", 0))
+        self.draft_token_s = float(state.get("draft_token_s", self.draft_token_s))
+        self.target_sweep_s = float(state.get("target_sweep_s", self.target_sweep_s))
+        # Decision counters describe this evaluation, not the calibration
+        # file being loaded. They are intentionally reset on load.
+        self.decision_stops = 0
+        self.decision_continues = 0
+        self.last_stop_position = None
+
+
 def build_policy(policy_name: str, spec_k: int) -> SpecPolicy:
     if policy_name == "fixed":
         return FixedPolicy(spec_k)
@@ -375,4 +533,6 @@ def build_policy(policy_name: str, spec_k: int) -> SpecPolicy:
         return AdaEDLPolicy(k_max=spec_k)
     if policy_name == "hazard_cost":
         return HazardCostPolicy(k_max=spec_k)
+    if policy_name == "neural_utility":
+        return NeuralUtilityPolicy(k_max=spec_k)
     raise ValueError("unknown spec_k_policy %r" % (policy_name,))

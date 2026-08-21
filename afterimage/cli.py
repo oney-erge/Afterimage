@@ -175,6 +175,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                        lm_head_slice_rows=args.lm_head_slice_rows,
                        placement_policy=args.placement_policy,
                        critical_path_profile=args.critical_path_profile,
+                       replay_plan_state=args.replay_plan_state,
                        prefetch_policy=args.prefetch_policy,
                        io_prefetch_max_depth=args.io_prefetch_max_depth,
                        lm_head_policy=args.lm_head_policy,
@@ -230,6 +231,27 @@ def cmd_profile_trace(args: argparse.Namespace) -> int:
         if coverage < 0.90:
             print("Profile is below the runtime's 90% coverage gate", file=sys.stderr)
             return 2
+    return 0
+
+
+def cmd_optimize_residency(args: argparse.Namespace) -> int:
+    """Fit a whole-set CEM residency plan on separate calibration traces."""
+    from afterimage.runtime.critical_path import TraceRecorder
+    from afterimage.runtime.replay_planner import optimize_replay_residency
+
+    manifest = json.loads(pathlib.Path(args.manifest).read_text(encoding="utf-8"))
+    traces = [TraceRecorder.load(path) for path in args.traces]
+    plan = optimize_replay_residency(
+        manifest, traces, vram_budget_gb=args.vram_budget_gb,
+        decode_slice_elems=args.decode_slice_elems,
+        iterations=args.iterations, population=args.population,
+        elite_fraction=args.elite_fraction, seed=args.seed)
+    plan.save(args.out)
+    print("Wrote replay-CEM plan with %d resident tensors to %s" %
+          (len(plan.vram_keys), args.out))
+    print("Calibration replay: %.3fs -> %.3fs (%.3fx), %d evaluations" %
+          (plan.report.baseline_s, plan.report.optimized_s,
+           plan.report.predicted_speedup, plan.report.evaluations))
     return 0
 
 
@@ -317,10 +339,13 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--io-prefetch-max-depth", type=int, default=8)
     r.add_argument("--prefetch-policy", default="fixed", choices=["fixed", "pi", "mpc"])
     r.add_argument("--placement-policy", default="traffic_density",
-                   choices=["traffic_density", "profiled_knapsack", "critical_path"])
+                   choices=["traffic_density", "profiled_knapsack", "critical_path",
+                            "replay_cem"])
     r.add_argument("--critical-path-profile", default=None)
+    r.add_argument("--replay-plan-state", default=None,
+                   help="frozen plan produced by `afterimage optimize-residency`")
     r.add_argument("--lm-head-policy", default="full",
-                   choices=["full", "certified_mips"])
+                   choices=["full", "certified_mips", "ram_overlay"])
     r.add_argument("--trace-output", default=None,
                    help="write an event-DAG trace after generation")
     r.add_argument("--decode-slice-elems", type=int, default=1 << 25,
@@ -357,7 +382,7 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--prompt", default="The capital of France is")
     b.set_defaults(func=cmd_bench)
 
-    e = sub.add_parser("experiments", help="list versioned H0-H8 experiment definitions")
+    e = sub.add_parser("experiments", help="list versioned H0-H11 experiment definitions")
     e.add_argument("--json", action="store_true")
     e.set_defaults(func=cmd_experiments)
 
@@ -368,6 +393,20 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("--manifest", default=None,
                    help="optional store manifest used to enforce 90%% tensor coverage")
     t.set_defaults(func=cmd_profile_trace)
+
+    o = sub.add_parser(
+        "optimize-residency",
+        help="learn a frozen whole-set residency plan from event-DAG traces")
+    o.add_argument("traces", nargs="+")
+    o.add_argument("--manifest", required=True)
+    o.add_argument("--out", required=True)
+    o.add_argument("--vram-budget-gb", type=float, required=True)
+    o.add_argument("--decode-slice-elems", type=int, default=1 << 25)
+    o.add_argument("--iterations", type=int, default=12)
+    o.add_argument("--population", type=int, default=64)
+    o.add_argument("--elite-fraction", type=float, default=0.15)
+    o.add_argument("--seed", type=int, default=0)
+    o.set_defaults(func=cmd_optimize_residency)
 
     return p
 

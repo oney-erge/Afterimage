@@ -93,6 +93,16 @@ PROFILES = {
     "model-based-rl-v1": MethodProfile(
         "model-based-rl-v1", "Shadow model-based profile controller",
         {"execution_policy": "model_based_rl"}),
+    "ram-overlay-head-v1": MethodProfile(
+        "ram-overlay-head-v1", "Liveness-guided RAM overlay for lm_head",
+        {"lm_head_policy": "ram_overlay"}),
+    "replay-cem-v1": MethodProfile(
+        "replay-cem-v1", "Digital-twin CEM residency plan",
+        {"placement_policy": "replay_cem"}),
+    "neural-utility-spec-v1": MethodProfile(
+        "neural-utility-spec-v1", "Tiny neural survival-utility stopping",
+        {"draft_mode": "model", "spec_k_policy": "neural_utility"},
+        exactness_contract="distribution_exact"),
 }
 
 
@@ -160,6 +170,33 @@ HYPOTHESES = {
         "model-based-rl-v1", "contextual-linucb-v1", "trace_simulator",
         "improvement_over_baseline", 0.10, "reference_execution_equivalent",
         ("trace_dataset",), "Kill if simulator MAPE >10% or rank correlation <0.9."),
+    "h9-ram-overlay-head": Hypothesis(
+        "h9-ram-overlay-head", "Liveness-guided RAM output-head overlay",
+        "A decoded pinned-RAM lm_head beats disk/decode streaming at matched "
+        "peak VRAM by exploiting its late, non-overlapping live range.",
+        "ram-overlay-head-v1", "exact-streaming-v1", "generation",
+        "committed_tokens_per_second", 0.10, "reference_execution_equivalent",
+        (), "Kill if gain <10%, peak VRAM rises >5%, or any token differs.",
+        minimum_repeats=5, minimum_new_tokens=16),
+    "h10-replay-cem": Hypothesis(
+        "h10-replay-cem", "Digital-twin whole-set residency search",
+        "Offline CEM search over complete resident sets beats independent "
+        "profiled-knapsack scores by learning bottleneck-switch interactions.",
+        "replay-cem-v1", "profiled-knapsack-v1", "generation",
+        "committed_tokens_per_second", 0.08, "reference_execution_equivalent",
+        ("replay_plan_state", "critical_path_profile"),
+        "Kill if held-out replay error >10% or paired throughput gain <8%.",
+        minimum_repeats=5, minimum_new_tokens=16),
+    "h11-neural-utility-spec": Hypothesis(
+        "h11-neural-utility-spec", "Tiny censored-survival utility controller",
+        "A pooled nonlinear survival model trained on cascade feedback chooses "
+        "draft stopping points better than a tuned fixed chain.",
+        "neural-utility-spec-v1", "tuned-fixed-spec-v1", "generation",
+        "committed_tokens_per_second", 0.08, "distribution_exact",
+        ("draft_model_id", "spec_policy_state"),
+        "Kill if held-out calibration error is poor or the paired lower "
+        "confidence bound is not positive.",
+        minimum_repeats=5, minimum_new_tokens=128),
 }
 
 

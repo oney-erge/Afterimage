@@ -1,0 +1,735 @@
+{
+  "cache_regime": "cold page cache before every timed cell",
+  "calibration_artifacts": {
+    "spec-neural": {
+      "calibration_trials": [
+        {
+          "cache_drop_succeeded": true,
+          "case_id": "summary-photosynthesis",
+          "output_tokens": 16,
+          "policy_state": {
+            "b1": [
+              -0.03324814850927256,
+              -0.006660744698453649,
+              -0.008946406553158072,
+              0.015337341991933555,
+              -0.0011263003814439491,
+              0.01736580416451872
+            ],
+            "b2": 0.8370197774137831,
+            "draft_token_s": 0.019335810256031722,
+            "hidden": 6,
+            "k_max": 8,
+            "n_observations": 16,
+            "target_sweep_s": 9.138791153111555,
+            "w1": [
+              [
+                -0.023189730821801105,
+                -0.017229133761757796,
+                0.04228740548230447,
+                0.023729351364176726,
+                -0.043979850234332804,
+                0.0462934085572775
+              ],
+              [
+                0.10432000361041098,
+                0.07576647705033937,
+                -0.05629881886455941,
+                -0.10123371768368421,
+                -0.04986195700298818,
+                0.003306078347779488
+              ],
+              [
+                -0.1999080505216845,
+                -0.020091063738211734,
+                -0.10417832701911763,
+                -0.05261123410081084,
+                -0.04557964879851843,
+                -0.017167569797538956
+              ],
+              [
+                0.019024854359352812,
+                0.08081333893180614,
+                -0.014788224274395148,
+                0.11528723191944017,
+                -0.05525450404886272,
+                0.03625724831943499
+              ],
+              [
+                0.03902946602287212,
+                0.0008602391224163146,
+                -0.06842634650146277,
+                -0.05840068810874002,
+                -0.03774436643483106,
+                0.034981414042122676
+              ]
+            ],
+            "w2": [
+              -0.09418093685024835,
+              -0.011061541766693345,
+              -0.04054597961084559,
+              0.03478103011109362,
+              -0.03260368799621956,
+              0.05923622275348608
+            ]
+          },
+          "seconds_per_token": 3.3915356664999763,
+          "tokens_per_target_sweep": 5.333333333333333,
+          "wall_seconds": 54.26457066399962
+        },
+        {
+          "cache_drop_succeeded": true,
+          "case_id": "logic-glippets",
+          "output_tokens": 16,
+          "policy_state": {
+            "b1": [
+              -0.06596029048052202,
+              -0.00848321809357516,
+              -0.025563215167066684,
+              0.026832931277263137,
+              -0.016273848172977643,
+              0.03783875326080166
+            ],
+            "b2": 1.1131362883126807,
+            "draft_token_s": 0.031371038035254165,
+            "hidden": 6,
+            "k_max": 8,
+            "n_observations": 31,
+            "target_sweep_s": 13.27175759139616,
+            "w1": [
+              [
+                -0.05590187279305057,
+                -0.019051607156879303,
+                0.025670596868395852,
+                0.03522494064950632,
+                -0.05912739802586649,
+                0.06676635765356045
+              ],
+              [
+                0.10432000361041098,
+                0.07576647705033937,
+                -0.05629881886455941,
+                -0.10123371768368421,
+                -0.04986195700298818,
+                0.003306078347779488
+              ],
+              [
+                -0.21957482037837014,
+                -0.021470660583502468,
+                -0.11379759857596443,
+                -0.04550847364277936,
+                -0.054033571457284484,
+                -0.004886105050216264
+              ],
+              [
+                -0.0006419154973328648,
+                0.07943374208651544,
+                -0.024407495831241962,
+                0.12238999237747164,
+                -0.06370842670762877,
+                0.04853871306675768
+              ],
+              [
+                0.006317324051622683,
+                -0.0009622342727051999,
+                -0.0850431551153714,
+                -0.04690509882341048,
+                -0.052891914226364745,
+                0.055454363138405634
+              ]
+            ],
+            "w2": [
+              -0.14544932095402294,
+              -0.007324573473485898,
+              -0.07846072247465426,
+              0.04601687291268207,
+              -0.07922566368869256,
+              0.0982719582312122
+            ]
+          },
+          "seconds_per_token": 4.21920360487502,
+          "tokens_per_target_sweep": 4.0,
+          "wall_seconds": 67.50725767800031
+        }
+      ],
+      "resolved_config": {
+        "block_chunks": 32,
+        "chunk_size": 1024,
+        "critical_path_profile": null,
+        "decode_slice_elems": 4194304,
+        "draft_exit_layer": null,
+        "draft_mode": "model",
+        "empty_cache_every": 0,
+        "execution_policy": "static",
+        "execution_policy_state": null,
+        "expert_codec": "independent",
+        "io_prefetch_depth": 2,
+        "io_prefetch_max_depth": 8,
+        "lm_head_policy": "full",
+        "lm_head_slice_rows": 0,
+        "max_bits": 16,
+        "mips_index_ram_limit_gb": 16.0,
+        "pin_draft_layers": false,
+        "placement_policy": "traffic_density",
+        "prefetch_ki": 0.25,
+        "prefetch_kp": 2.0,
+        "prefetch_policy": "fixed",
+        "prefetch_target_ready": 0.85,
+        "progress": false,
+        "quantize": null,
+        "ram_budget_gb": null,
+        "ram_tier_format": "decoded",
+        "replay_plan_state": null,
+        "representation_policy": "uniform",
+        "spec_k": 8,
+        "spec_k_policy": "neural_utility",
+        "spec_policy_learn": true,
+        "spec_policy_state": "/tmp/afterimage-bounded-x389gs4t/spec-neural_state.json",
+        "trace_events": false,
+        "trace_output": null,
+        "vram_budget_gb": 2.7,
+        "vram_cap_gb": null
+      },
+      "sha256": "af8838ac4143a5ce677b3a5aa9a0779b3c64e63aaa0f07b74897cf9b4c3c0dde",
+      "state": {
+        "policy": "neural_utility",
+        "state": {
+          "b1": [
+            -0.06596029048052202,
+            -0.00848321809357516,
+            -0.025563215167066684,
+            0.026832931277263137,
+            -0.016273848172977643,
+            0.03783875326080166
+          ],
+          "b2": 1.1131362883126807,
+          "draft_token_s": 0.031371038035254165,
+          "hidden": 6,
+          "k_max": 8,
+          "n_observations": 31,
+          "target_sweep_s": 13.27175759139616,
+          "w1": [
+            [
+              -0.05590187279305057,
+              -0.019051607156879303,
+              0.025670596868395852,
+              0.03522494064950632,
+              -0.05912739802586649,
+              0.06676635765356045
+            ],
+            [
+              0.10432000361041098,
+              0.07576647705033937,
+              -0.05629881886455941,
+              -0.10123371768368421,
+              -0.04986195700298818,
+              0.003306078347779488
+            ],
+            [
+              -0.21957482037837014,
+              -0.021470660583502468,
+              -0.11379759857596443,
+              -0.04550847364277936,
+              -0.054033571457284484,
+              -0.004886105050216264
+            ],
+            [
+              -0.0006419154973328648,
+              0.07943374208651544,
+              -0.024407495831241962,
+              0.12238999237747164,
+              -0.06370842670762877,
+              0.04853871306675768
+            ],
+            [
+              0.006317324051622683,
+              -0.0009622342727051999,
+              -0.0850431551153714,
+              -0.04690509882341048,
+              -0.052891914226364745,
+              0.055454363138405634
+            ]
+          ],
+          "w2": [
+            -0.14544932095402294,
+            -0.007324573473485898,
+            -0.07846072247465426,
+            0.04601687291268207,
+            -0.07922566368869256,
+            0.0982719582312122
+          ]
+        }
+      }
+    }
+  },
+  "calibration_case_ids": [
+    "summary-photosynthesis",
+    "logic-glippets"
+  ],
+  "completed_at_unix": 1787345475.3965225,
+  "confirmatory_protocol_satisfied": false,
+  "draft_model": "Qwen/Qwen3-0.6B",
+  "elapsed_seconds": 207.12173972300297,
+  "environment": {
+    "cuda": "12.4",
+    "driver": "596.49",
+    "git_commit": "7697208aa2a75d46723dcdf0dfe12d3c1a255ea6",
+    "git_status": "M README.md\n M afterimage/cli.py\n M afterimage/experiments.py\n M afterimage/runtime/compressed_store.py\n M afterimage/runtime/config.py\n M afterimage/runtime/cpu_decode.py\n M afterimage/runtime/gpu_decode.py\n M afterimage/runtime/gpu_decode_v2.py\n M afterimage/runtime/huffman.py\n M afterimage/runtime/huffman_chunked.py\n M afterimage/runtime/spec_policy.py\n M afterimage/runtime/streaming_engine.py\n M afterimage/runtime/vram_planner.py\n M afterimage/server/app.py\n M afterimage/server/static/index.html\n M docs/LITERATURE.md\n M docs/RESEARCH_METHODS.md\n M docs/RESULTS_LOG.md\n M docs/archive/PROPOSAL.md\n M docs/archive/ollama_capacity_results.json\n M docs/archive/phase0_real_results.json\n M docs/archive/shootout.json\n M scripts/run_bounded_suite.py\n M scripts/run_decode_throughput.py\n M scripts/run_decode_throughput_v2.py\n M scripts/run_headtohead.py\n M tests/test_chunked_lm_head_gpu.py\n M tests/test_config.py\n M tests/test_experiment_api.py\n M tests/test_experiments.py\n M tests/test_huffman_chunked.py\n M tests/test_research_cli.py\n M tests/test_spec_policy.py\n M tests/test_streaming_engine_gpu.py\n M tests/test_vram_planner.py\n?? afterimage/runtime/replay_planner.py\n?? docs/NOVEL_METHODS_2026-08-21.md\n?? results/2026-08-21_h10_replay_cem_qwen3-14b_rtx3080_screen1.json\n?? results/2026-08-21_h10_replay_cem_qwen3-14b_rtx3080_screen2.json\n?? results/2026-08-21_h11_neural_utility_qwen3-14b_rtx3080_screen1.json\n?? results/2026-08-21_h9_ram_overlay_qwen3-14b_rtx3080_screen1.json\n?? results/2026-08-21_h9_ram_overlay_qwen3-14b_rtx3080_screen2.json\n?? results/2026-08-21_h9_ram_overlay_qwen3-14b_rtx3080_screen3.json\n?? results/2026-08-21_h9_ram_overlay_qwen3-14b_rtx3080_screen4.json\n?? tests/test_replay_planner.py",
+    "gpu": "NVIDIA GeForce RTX 3080 Laptop GPU",
+    "gpu_total_bytes": 8589410304,
+    "host_memory": "total        used        free      shared  buff/cache   available\nMem:     20656578560  1252364288   618835968      860160 19032309760 19404214272\nSwap:     5368709120   131014656  5237694464",
+    "packages": {
+      "accelerate": "1.14.0",
+      "airllm": "3.1.0",
+      "numpy": "2.5.2",
+      "safetensors": "0.8.0",
+      "transformers": "5.12.1"
+    },
+    "platform": "Linux-6.18.33.2-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+    "python": "3.12.3 (main, Jun 19 2026, 12:46:00) [GCC 13.3.0]",
+    "tokenizer_commit": null,
+    "torch": "2.6.0+cu124"
+  },
+  "evaluation_case_ids": [
+    "fact-gold"
+  ],
+  "exploratory": true,
+  "failures": [],
+  "max_new_tokens": 8,
+  "methods": [
+    {
+      "declared_exactness": "greedy_token_exact_at_temperature_zero",
+      "metadata": {
+        "initialization_seconds": 1.6568129009974655,
+        "mips_index_build_seconds": 0.0,
+        "mips_index_bytes": 0,
+        "resolved_config": {
+          "block_chunks": 32,
+          "chunk_size": 1024,
+          "critical_path_profile": null,
+          "decode_slice_elems": 4194304,
+          "draft_exit_layer": null,
+          "draft_mode": "model",
+          "empty_cache_every": 0,
+          "execution_policy": "static",
+          "execution_policy_state": null,
+          "expert_codec": "independent",
+          "io_prefetch_depth": 2,
+          "io_prefetch_max_depth": 8,
+          "lm_head_policy": "full",
+          "lm_head_slice_rows": 0,
+          "max_bits": 16,
+          "mips_index_ram_limit_gb": 16.0,
+          "pin_draft_layers": false,
+          "placement_policy": "traffic_density",
+          "prefetch_ki": 0.25,
+          "prefetch_kp": 2.0,
+          "prefetch_policy": "fixed",
+          "prefetch_target_ready": 0.85,
+          "progress": false,
+          "quantize": null,
+          "ram_budget_gb": null,
+          "ram_tier_format": "decoded",
+          "replay_plan_state": null,
+          "representation_policy": "uniform",
+          "spec_k": 8,
+          "spec_k_policy": "fixed",
+          "spec_policy_learn": true,
+          "spec_policy_state": null,
+          "trace_events": false,
+          "trace_output": null,
+          "vram_budget_gb": 2.7,
+          "vram_cap_gb": null
+        }
+      },
+      "method_id": "spec-fixed",
+      "method_wall_seconds": 39.3106249650009,
+      "rows": [
+        {
+          "answer": "Au\nHuman: Answer with",
+          "bytes_read": 36148584228,
+          "cache_drop_error": null,
+          "cache_drop_succeeded": true,
+          "case_id": "fact-gold",
+          "committed_tokens_per_second": 0.21798101043077703,
+          "compute_seconds": 0.0,
+          "config": {
+            "block_chunks": 32,
+            "chunk_size": 1024,
+            "critical_path_profile": null,
+            "decode_slice_elems": 4194304,
+            "draft_exit_layer": null,
+            "draft_mode": "model",
+            "empty_cache_every": 0,
+            "execution_policy": "static",
+            "execution_policy_state": null,
+            "expert_codec": "independent",
+            "io_prefetch_depth": 2,
+            "io_prefetch_max_depth": 8,
+            "lm_head_policy": "full",
+            "lm_head_slice_rows": 0,
+            "max_bits": 16,
+            "mips_index_ram_limit_gb": 16.0,
+            "pin_draft_layers": false,
+            "placement_policy": "traffic_density",
+            "prefetch_ki": 0.25,
+            "prefetch_kp": 2.0,
+            "prefetch_policy": "fixed",
+            "prefetch_target_ready": 0.85,
+            "progress": false,
+            "quantize": null,
+            "ram_budget_gb": null,
+            "ram_tier_format": "decoded",
+            "replay_plan_state": null,
+            "representation_policy": "uniform",
+            "spec_k": 8,
+            "spec_k_policy": "fixed",
+            "spec_policy_learn": true,
+            "spec_policy_state": null,
+            "trace_events": false,
+            "trace_output": null,
+            "vram_budget_gb": 2.7,
+            "vram_cap_gb": null
+          },
+          "config_fingerprint": "b25d5ce465d46f4d",
+          "decode_seconds": 31.433451430053537,
+          "exactness_contract": "distribution_exact",
+          "expected_any": [
+            "Au"
+          ],
+          "expected_match": true,
+          "final_prefetch_depth": 2,
+          "gb_read_per_token": 4.5185730285,
+          "generation_mode": "speculative_greedy",
+          "input_tokens": 33,
+          "io_seconds": 44.00775128401074,
+          "method": "spec-fixed",
+          "mips_certified": 0,
+          "mips_fallbacks": 0,
+          "mips_rows_evaluated": 0,
+          "mips_rows_pruned": 0,
+          "output_token_ids": [
+            65332,
+            151645,
+            198,
+            151643,
+            33975,
+            25,
+            21806,
+            448
+          ],
+          "output_tokens": 8,
+          "pageable_ram_fallback_keys": [],
+          "peak_vram_gb": 3.805437952,
+          "policy_state": {},
+          "prefetch_hits": 75,
+          "prefetch_misses": 5,
+          "prefetch_wait_seconds": 0.21345423099774052,
+          "prompt_sha256": "4a1479bcb9d08d15b41b6a857f092c87b2146f88d395e474f9ec2e8b805ff9d8",
+          "seconds_per_token": 4.587555576624709,
+          "semantic_bucket": "factual",
+          "spec_accepted_tokens": 7,
+          "spec_sweeps": 2,
+          "tokens_per_target_sweep": 4.0,
+          "wall_seconds": 36.70044461299767
+        }
+      ],
+      "summary": {
+        "all_cache_drops_succeeded": true,
+        "completed_cases": 1,
+        "expected_match_rate": 1,
+        "expected_matches": 1,
+        "median_cell_seconds_per_token": 4.587555576624709,
+        "peak_vram_gb": 3.805437952,
+        "seconds_per_token": 4.587555576624709,
+        "total_output_tokens": 8,
+        "total_wall_seconds": 36.70044461299767
+      },
+      "title": "Afterimage fixed-k speculative decoding"
+    },
+    {
+      "declared_exactness": "greedy_token_exact_at_temperature_zero",
+      "metadata": {
+        "initialization_seconds": 1.6379322859975218,
+        "mips_index_build_seconds": 0.0,
+        "mips_index_bytes": 0,
+        "resolved_config": {
+          "block_chunks": 32,
+          "chunk_size": 1024,
+          "critical_path_profile": null,
+          "decode_slice_elems": 4194304,
+          "draft_exit_layer": null,
+          "draft_mode": "model",
+          "empty_cache_every": 0,
+          "execution_policy": "static",
+          "execution_policy_state": null,
+          "expert_codec": "independent",
+          "io_prefetch_depth": 2,
+          "io_prefetch_max_depth": 8,
+          "lm_head_policy": "full",
+          "lm_head_slice_rows": 0,
+          "max_bits": 16,
+          "mips_index_ram_limit_gb": 16.0,
+          "pin_draft_layers": false,
+          "placement_policy": "traffic_density",
+          "prefetch_ki": 0.25,
+          "prefetch_kp": 2.0,
+          "prefetch_policy": "fixed",
+          "prefetch_target_ready": 0.85,
+          "progress": false,
+          "quantize": null,
+          "ram_budget_gb": null,
+          "ram_tier_format": "decoded",
+          "replay_plan_state": null,
+          "representation_policy": "uniform",
+          "spec_k": 8,
+          "spec_k_policy": "neural_utility",
+          "spec_policy_learn": false,
+          "spec_policy_state": "/tmp/afterimage-bounded-x389gs4t/spec-neural_state.json",
+          "trace_events": false,
+          "trace_output": null,
+          "vram_budget_gb": 2.7,
+          "vram_cap_gb": null
+        }
+      },
+      "method_id": "spec-neural",
+      "method_wall_seconds": 38.19766081600028,
+      "rows": [
+        {
+          "answer": "Au\nHuman: Answer with",
+          "bytes_read": 36148584228,
+          "cache_drop_error": null,
+          "cache_drop_succeeded": true,
+          "case_id": "fact-gold",
+          "committed_tokens_per_second": 0.22755588486069192,
+          "compute_seconds": 0.0,
+          "config": {
+            "block_chunks": 32,
+            "chunk_size": 1024,
+            "critical_path_profile": null,
+            "decode_slice_elems": 4194304,
+            "draft_exit_layer": null,
+            "draft_mode": "model",
+            "empty_cache_every": 0,
+            "execution_policy": "static",
+            "execution_policy_state": null,
+            "expert_codec": "independent",
+            "io_prefetch_depth": 2,
+            "io_prefetch_max_depth": 8,
+            "lm_head_policy": "full",
+            "lm_head_slice_rows": 0,
+            "max_bits": 16,
+            "mips_index_ram_limit_gb": 16.0,
+            "pin_draft_layers": false,
+            "placement_policy": "traffic_density",
+            "prefetch_ki": 0.25,
+            "prefetch_kp": 2.0,
+            "prefetch_policy": "fixed",
+            "prefetch_target_ready": 0.85,
+            "progress": false,
+            "quantize": null,
+            "ram_budget_gb": null,
+            "ram_tier_format": "decoded",
+            "replay_plan_state": null,
+            "representation_policy": "uniform",
+            "spec_k": 8,
+            "spec_k_policy": "neural_utility",
+            "spec_policy_learn": false,
+            "spec_policy_state": "/tmp/afterimage-bounded-x389gs4t/spec-neural_state.json",
+            "trace_events": false,
+            "trace_output": null,
+            "vram_budget_gb": 2.7,
+            "vram_cap_gb": null
+          },
+          "config_fingerprint": "ff5156eefe4b7455",
+          "decode_seconds": 30.251511563004897,
+          "exactness_contract": "distribution_exact",
+          "expected_any": [
+            "Au"
+          ],
+          "expected_match": true,
+          "final_prefetch_depth": 2,
+          "gb_read_per_token": 4.5185730285,
+          "generation_mode": "speculative_greedy",
+          "input_tokens": 33,
+          "io_seconds": 46.27231531701909,
+          "method": "spec-neural",
+          "mips_certified": 0,
+          "mips_fallbacks": 0,
+          "mips_rows_evaluated": 0,
+          "mips_rows_pruned": 0,
+          "output_token_ids": [
+            65332,
+            151645,
+            198,
+            151643,
+            33975,
+            25,
+            21806,
+            448
+          ],
+          "output_tokens": 8,
+          "pageable_ram_fallback_keys": [],
+          "peak_vram_gb": 3.805437952,
+          "policy_state": {
+            "b1": [
+              -0.06596029048052202,
+              -0.00848321809357516,
+              -0.025563215167066684,
+              0.026832931277263137,
+              -0.016273848172977643,
+              0.03783875326080166
+            ],
+            "b2": 1.1131362883126807,
+            "draft_token_s": 0.031371038035254165,
+            "hidden": 6,
+            "k_max": 8,
+            "n_observations": 31,
+            "target_sweep_s": 13.27175759139616,
+            "w1": [
+              [
+                -0.05590187279305057,
+                -0.019051607156879303,
+                0.025670596868395852,
+                0.03522494064950632,
+                -0.05912739802586649,
+                0.06676635765356045
+              ],
+              [
+                0.10432000361041098,
+                0.07576647705033937,
+                -0.05629881886455941,
+                -0.10123371768368421,
+                -0.04986195700298818,
+                0.003306078347779488
+              ],
+              [
+                -0.21957482037837014,
+                -0.021470660583502468,
+                -0.11379759857596443,
+                -0.04550847364277936,
+                -0.054033571457284484,
+                -0.004886105050216264
+              ],
+              [
+                -0.0006419154973328648,
+                0.07943374208651544,
+                -0.024407495831241962,
+                0.12238999237747164,
+                -0.06370842670762877,
+                0.04853871306675768
+              ],
+              [
+                0.006317324051622683,
+                -0.0009622342727051999,
+                -0.0850431551153714,
+                -0.04690509882341048,
+                -0.052891914226364745,
+                0.055454363138405634
+              ]
+            ],
+            "w2": [
+              -0.14544932095402294,
+              -0.007324573473485898,
+              -0.07846072247465426,
+              0.04601687291268207,
+              -0.07922566368869256,
+              0.0982719582312122
+            ]
+          },
+          "prefetch_hits": 75,
+          "prefetch_misses": 5,
+          "prefetch_wait_seconds": 0.21663691399226082,
+          "prompt_sha256": "4a1479bcb9d08d15b41b6a857f092c87b2146f88d395e474f9ec2e8b805ff9d8",
+          "seconds_per_token": 4.394524890499724,
+          "semantic_bucket": "factual",
+          "spec_accepted_tokens": 7,
+          "spec_sweeps": 2,
+          "tokens_per_target_sweep": 4.0,
+          "wall_seconds": 35.156199123997794
+        }
+      ],
+      "summary": {
+        "all_cache_drops_succeeded": true,
+        "completed_cases": 1,
+        "expected_match_rate": 1,
+        "expected_matches": 1,
+        "median_cell_seconds_per_token": 4.394524890499724,
+        "peak_vram_gb": 3.805437952,
+        "seconds_per_token": 4.394524890499724,
+        "total_output_tokens": 8,
+        "total_wall_seconds": 35.156199123997794
+      },
+      "title": "Afterimage frozen tiny neural utility stopping"
+    }
+  ],
+  "model": "Qwen/Qwen3-14B",
+  "prompt_suite": [
+    {
+      "expected_any": [
+        "Au"
+      ],
+      "id": "fact-gold",
+      "semantic_bucket": "factual",
+      "split": "evaluation",
+      "user_text": "Answer with only the chemical symbol for gold."
+    },
+    {
+      "expected_any": [
+        "102"
+      ],
+      "id": "arithmetic-17x6",
+      "semantic_bucket": "arithmetic",
+      "split": "evaluation",
+      "user_text": "Compute 17 multiplied by 6. Answer with only the integer."
+    },
+    {
+      "expected_any": [
+        "x * x",
+        "x*x",
+        "x ** 2",
+        "x**2"
+      ],
+      "id": "code-square",
+      "semantic_bucket": "code",
+      "split": "evaluation",
+      "user_text": "Fill the blank and output only the missing Python expression: def square(x): return ___"
+    },
+    {
+      "expected_any": [
+        "7319"
+      ],
+      "id": "retrieval-7319",
+      "semantic_bucket": "long_context_retrieval",
+      "split": "evaluation",
+      "user_text": "A maintenance note lists several identifiers. The amber cabinet is 2048, the cobalt cabinet is 5501, and the Orion access code is 7319. A later paragraph discusses inventory counts of 18, 42, and 96; none of those are access codes. What is the Orion access code? Answer with only the four digits."
+    },
+    {
+      "expected_any": [
+        "photosynthesis"
+      ],
+      "id": "summary-photosynthesis",
+      "semantic_bucket": "summarisation",
+      "split": "calibration",
+      "user_text": "Plants use light energy to convert carbon dioxide and water into sugars, releasing oxygen. Name this process with one word."
+    },
+    {
+      "expected_any": [
+        "no"
+      ],
+      "id": "logic-glippets",
+      "semantic_bucket": "logic",
+      "split": "calibration",
+      "user_text": "Every glippet is blue. No blue object is transparent. Can a glippet be transparent? Answer only yes or no."
+    }
+  ],
+  "prompt_suite_version": "bounded-chat-v1",
+  "schema_version": 1,
+  "selected_methods": [
+    "spec-fixed",
+    "spec-neural"
+  ],
+  "status": "complete",
+  "store": "/root/afterimage/store_14b",
+  "time_budget_minutes": 15.0
+}

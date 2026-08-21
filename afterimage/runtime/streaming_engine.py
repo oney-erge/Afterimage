@@ -41,6 +41,7 @@ import multiprocessing as mp
 import pathlib
 import threading
 import time
+import warnings
 
 import numpy as np
 import torch
@@ -394,6 +395,7 @@ class StreamingLosslessModel:
 
         self._tier = self._compute_tier_assignment(self.config)
         self._ram_cache: dict[str, torch.Tensor] = {}
+        self._ram_cache_pageable_keys: set[str] = set()
 
         vram_cap_gb = self.config.vram_cap_gb
         if vram_cap_gb is not None and torch.cuda.is_available():
@@ -628,14 +630,30 @@ class StreamingLosslessModel:
                     "at least 90%% measured coverage is required to avoid silently "
                     "falling back to traffic estimates. Missing examples: %s" %
                     (100.0 * coverage, ", ".join(missing[:5])))
-        plan = plan_from_manifest(self.manifest, vram_budget_gb=cfg.vram_budget_gb,
-                                  ram_budget_gb=cfg.ram_budget_gb or 0.0,
-                                  decode_slice_elems=cfg.decode_slice_elems,
-                                  draft_layer_indices=draft_layer_indices,
-                                  draft_uses=draft_uses,
-                                  stream_only=stream_only,
-                                  critical_path_profile=critical_profile,
-                                  placement_policy=cfg.placement_policy)
+        if cfg.placement_policy == "replay_cem":
+            from .replay_planner import ReplayResidencyPlan
+            frozen = ReplayResidencyPlan.load(cfg.replay_plan_state)
+            plan = frozen.to_tier_plan(
+                self.manifest, vram_budget_gb=cfg.vram_budget_gb,
+                ram_budget_gb=cfg.ram_budget_gb or 0.0,
+                decode_slice_elems=cfg.decode_slice_elems,
+                stream_only=stream_only)
+        else:
+            forced_ram = ({self.CHUNKED_HEAD_KEY}
+                          if cfg.lm_head_policy == "ram_overlay" else set())
+            if forced_ram and self.CHUNKED_HEAD_KEY not in self.manifest["tensors"]:
+                raise RuntimeError(
+                    "lm_head_policy='ram_overlay' requires an untied, stored "
+                    "lm_head.weight; this checkpoint has no independent head")
+            plan = plan_from_manifest(
+                self.manifest, vram_budget_gb=cfg.vram_budget_gb,
+                ram_budget_gb=cfg.ram_budget_gb or 0.0,
+                decode_slice_elems=cfg.decode_slice_elems,
+                draft_layer_indices=draft_layer_indices,
+                draft_uses=draft_uses, stream_only=stream_only,
+                critical_path_profile=critical_profile,
+                forced_ram_keys=forced_ram,
+                placement_policy=cfg.placement_policy)
         if not plan.feasible:
             raise RuntimeError("VRAM budget is infeasible: " + plan.reason)
         for key in plan.vram_keys:
@@ -883,37 +901,43 @@ class StreamingLosslessModel:
                         # docs/PROPOSAL.md H1.
                         arrays, _ = self._read_tensor_arrays(key)
                         self._ram_cache[key] = arrays
-                        self._set_param(self.model, key, self._decode_tensor(key, arrays))
                     else:
-                        # "decoded" needs the tensor's GPU footprint live
-                        # TWICE at once, briefly: once as the transient
-                        # decode target, again as the final resident copy
-                        # (_set_param below). Across many RAM-tier tensors
-                        # in one sequential materialize loop, PyTorch's
-                        # caching allocator can accumulate unreturned
-                        # transient blocks faster than they're needed again,
-                        # and this was measured to genuinely OOM a real 14B
-                        # at ram_budget_gb as low as 1.5 (reproduced twice;
-                        # "compressed" format, which never needs two live
-                        # copies, did not) -- emptying the cache after each
-                        # transient tensor is freed keeps peak usage bounded
-                        # by one tensor's footprint instead of letting it
-                        # grow with how many RAM-tier tensors preceded it.
+                        # Decode through one transient GPU tensor, copy it to
+                        # host RAM, and immediately release the GPU storage.
+                        # RAM-tier tensors deliberately remain meta until a
+                        # live-range hook needs them; retaining this startup
+                        # copy would silently turn the RAM tier into VRAM.
+                        # Emptying the allocator cache bounds startup peak by
+                        # one decoded tensor instead of accumulating cached
+                        # transient blocks across the materialization loop.
                         gpu_tensor = self._load_tensor(key)
-                        cached = gpu_tensor.to("cpu").pin_memory()
+                        cpu_tensor = gpu_tensor.to("cpu")
+                        try:
+                            cached = cpu_tensor.pin_memory()
+                        except RuntimeError as exc:
+                            # WSL commonly has a hard 64 MB memlock ceiling.
+                            # Pageable RAM preserves correctness and lifetime
+                            # semantics but can transfer more slowly, so the
+                            # degradation must remain observable.
+                            if "out of memory" not in str(exc).lower():
+                                raise
+                            cached = cpu_tensor
+                            self._ram_cache_pageable_keys.add(key)
+                            warnings.warn(
+                                "pinned RAM unavailable for %s; using pageable "
+                                "host memory (raise the memlock limit for the "
+                                "intended overlay experiment)" % key,
+                                RuntimeWarning, stacklevel=2)
                         self._ram_cache[key] = cached
+                        del cpu_tensor
                         del gpu_tensor
                         torch.cuda.empty_cache()
-                        # Give it a real (if disposable) GPU home for the
-                        # very first forward pass too, so _load_layer's
-                        # per-token refresh logic doesn't need a special
-                        # "not loaded yet" branch for non-layer RAM-tier
-                        # tensors -- there are none of those today (RAM
-                        # tier only ever holds decoder-layer weights in
-                        # practice), but this keeps the invariant "every
-                        # real tensor is either meta or already correctly
-                        # populated" true unconditionally.
-                        self._set_param(self.model, key, cached.to(self.device))
+                    # RAM-tier tensors deliberately stay on meta between
+                    # uses. Decoder-layer hooks materialize them in
+                    # _load_layer; non-layer hooks below do the same around
+                    # their exact live range. Keeping a disposable startup
+                    # GPU copy here made RAM-tier output heads silently act
+                    # VRAM-resident and defeated liveness overlays.
 
         # Rebuild modules whose state is computed, not loaded. Their
         # non-persistent buffers were left on the meta device above; a
@@ -1092,7 +1116,9 @@ class StreamingLosslessModel:
                     out = self._decode_tensor(key, self._ram_cache[key])
                 else:
                     t0 = time.perf_counter()
-                    out = self._ram_cache[key].to(self.device, non_blocking=True)
+                    out = self._ram_cache[key].to(
+                        self.device,
+                        non_blocking=(key not in self._ram_cache_pageable_keys))
                     if self.trace.enabled and torch.cuda.is_available():
                         torch.cuda.synchronize()
                     event_id = self.trace.record(
@@ -1194,7 +1220,7 @@ class StreamingLosslessModel:
             pnames = [
                 pname for pname, _ in mod.named_parameters(recurse=False)
                 if (name + "." + pname) in self.manifest["tensors"]
-                and self._tier.get(name + "." + pname) == "disk"
+                and self._tier.get(name + "." + pname) in ("disk", "ram")
                 and (name + "." + pname) not in chunked
             ]
             if pnames:
@@ -1226,7 +1252,18 @@ class StreamingLosslessModel:
                 def pre(module, args, kwargs):
                     self.control.checkpoint()
                     for pn in pns:
-                        self._set_param(module, pn, self._load_tensor(mn + "." + pn))
+                        key = mn + "." + pn
+                        if self._tier.get(key) == "ram":
+                            cached = self._ram_cache[key]
+                            tensor = (self._decode_tensor(key, cached)
+                                      if self.ram_tier_format == "compressed"
+                                      else cached.to(
+                                          self.device,
+                                          non_blocking=(key not in
+                                                        self._ram_cache_pageable_keys)))
+                        else:
+                            tensor = self._load_tensor(key)
+                        self._set_param(module, pn, tensor)
                     return None
                 return pre
 

@@ -216,7 +216,7 @@ def _resolved_experiment_config(hypothesis_id: str, req: ExperimentRunRequest,
                      if profile.id == hypothesis.candidate_profile
                      else req.control_overrides)
     overrides.update(profile.overrides)
-    if (hypothesis_id == "h2-hazard-cost"
+    if (hypothesis_id in ("h2-hazard-cost", "h11-neural-utility-spec")
             and profile.id == hypothesis.control_profile):
         overrides.pop("spec_policy_state", None)
         overrides.pop("spec_policy_learn", None)
@@ -368,7 +368,8 @@ def start_experiment(hypothesis_id: str, req: ExperimentRunRequest) -> dict:
     for field in hypothesis.required_inputs:
         if field == "draft_model_id":
             present = bool(req.draft_model_id)
-        elif field in ("critical_path_profile", "spec_policy_state"):
+        elif field in ("critical_path_profile", "spec_policy_state",
+                       "replay_plan_state"):
             present = bool(req.config_overrides.get(field))
         else:
             present = field in req.inputs
@@ -376,14 +377,17 @@ def start_experiment(hypothesis_id: str, req: ExperimentRunRequest) -> dict:
             missing.append(field)
     if missing:
         raise HTTPException(400, "experiment requires inputs: %s" % ", ".join(missing))
-    if hypothesis_id == "h2-hazard-cost":
+    if hypothesis_id in ("h2-hazard-cost", "h11-neural-utility-spec"):
         state_path = pathlib.Path(req.config_overrides["spec_policy_state"])
         if not state_path.exists():
-            raise HTTPException(400, "H2 spec_policy_state does not exist: %s" % state_path)
+            raise HTTPException(
+                400, "%s spec_policy_state does not exist: %s" %
+                (hypothesis_id, state_path))
         if req.config_overrides.get("spec_policy_learn") is not False:
             raise HTTPException(
-                400, "H2 held-out evaluation requires config_overrides."
-                "spec_policy_learn=false; calibrate the state on separate prompts first")
+                400, "%s held-out evaluation requires config_overrides."
+                "spec_policy_learn=false; calibrate the state on separate prompts first"
+                % hypothesis_id)
     if hypothesis_id == "h1-critical-path":
         profile_path = pathlib.Path(req.config_overrides["critical_path_profile"])
         if not profile_path.exists():
@@ -392,6 +396,13 @@ def start_experiment(hypothesis_id: str, req: ExperimentRunRequest) -> dict:
             raise HTTPException(
                 400, "H1 evaluation must run with tracing off; collect the profile "
                 "in separate control runs because CUDA trace synchronization is intrusive")
+    if hypothesis_id == "h10-replay-cem":
+        plan_path = pathlib.Path(req.config_overrides["replay_plan_state"])
+        profile_path = pathlib.Path(req.config_overrides["critical_path_profile"])
+        if not plan_path.exists() or not profile_path.exists():
+            raise HTTPException(
+                400, "H10 requires existing replay_plan_state and "
+                "critical_path_profile files")
     if hypothesis.runner == "generation" and not req.model_id:
         raise HTTPException(400, "generation experiments require model_id")
     if hypothesis.runner == "generation" and req.repeats < hypothesis.minimum_repeats:
@@ -439,8 +450,9 @@ def start_experiment(hypothesis_id: str, req: ExperimentRunRequest) -> dict:
                     ids = prompt_ids.to(engine.device)
                     engine.stats.reset()
                     start = time.perf_counter()
+                    policy = None
                     if cfg.draft_mode == "model":
-                        sequence, _policy = engine.generate_adaptive(
+                        sequence, policy = engine.generate_adaptive(
                             ids, req.max_new_tokens, draft_model=draft,
                             temperature=1.0,
                             generator=torch.Generator(device=engine.device).manual_seed(
@@ -461,6 +473,10 @@ def start_experiment(hypothesis_id: str, req: ExperimentRunRequest) -> dict:
                         "prefetch_hits": engine.stats.prefetch_hits,
                         "prefetch_misses": engine.stats.prefetch_misses,
                         "prefetch_wait_seconds": engine.stats.prefetch_wait_seconds,
+                        "pageable_ram_fallback_keys": sorted(
+                            engine._ram_cache_pageable_keys),
+                        "policy_state": (policy.state_dict()
+                                         if policy is not None else None),
                         "mips_certified": engine.stats.mips_certified,
                         "mips_fallbacks": engine.stats.mips_fallbacks,
                         "mips_rows_evaluated": engine.stats.mips_rows_evaluated,

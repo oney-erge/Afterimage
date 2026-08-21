@@ -233,6 +233,7 @@ def plan_tiers(tensors, vram_budget_gb: float, ram_budget_gb: float = 0.0,
                decode_slice_elems: int = None,
                activation_slack_bytes: int = DEFAULT_ACTIVATION_SLACK_BYTES,
                pin_layer_weights: bool = False,
+               forced_ram_keys=(),
                placement_policy: str = "traffic_density") -> TierPlan:
     """Decide what stays in VRAM, what stays in RAM, and what streams from
     disk every token, for the given budgets.
@@ -267,6 +268,16 @@ def plan_tiers(tensors, vram_budget_gb: float, ram_budget_gb: float = 0.0,
         scratch_bytes += activation_slack_bytes
     all_tensors = [t for t in tensors if not t.row_gather]
     row_gather_keys = [t.key for t in tensors if t.row_gather]
+    forced_ram_keys = set(forced_ram_keys)
+    by_key = {t.key: t for t in all_tensors}
+    invalid_forced = forced_ram_keys - set(by_key)
+    if invalid_forced:
+        raise ValueError("forced RAM keys are not placement candidates: %s" %
+                         ", ".join(sorted(invalid_forced)))
+    forced_stream_only = {key for key in forced_ram_keys if by_key[key].stream_only}
+    if forced_stream_only:
+        raise ValueError("stream-only tensors cannot be forced into RAM: %s" %
+                         ", ".join(sorted(forced_stream_only)))
 
     if not all_tensors:
         return TierPlan(int(vram_budget_gb * 1e9), int(ram_budget_gb * 1e9), 0,
@@ -296,7 +307,17 @@ def plan_tiers(tensors, vram_budget_gb: float, ram_budget_gb: float = 0.0,
     # a choice that exists for them. They still count toward per-token disk
     # traffic and toward the headroom reserve (via materialize_bytes).
     stream_only = [t for t in all_tensors if t.stream_only]
-    candidates = [t for t in all_tensors if not t.stream_only]
+    forced_ram = [by_key[key] for key in sorted(forced_ram_keys)]
+    forced_ram_bytes = sum(t.orig_bytes for t in forced_ram)
+    if forced_ram_bytes > ram_budget:
+        return TierPlan(
+            vram_budget, ram_budget, vram_headroom_bytes, [], [],
+            [t.key for t in all_tensors], row_gather_keys, 0, 0,
+            sum(t.comp_bytes for t in all_tensors), False,
+            "forced RAM tensors need %.2f GB, above the %.2f GB RAM budget"
+            % (forced_ram_bytes / 1e9, ram_budget / 1e9))
+    candidates = [t for t in all_tensors
+                  if not t.stream_only and t.key not in forced_ram_keys]
 
     # Highest bus-traffic-avoided per byte first (see module docstring).
     ranked = sorted(candidates,
@@ -305,7 +326,7 @@ def plan_tiers(tensors, vram_budget_gb: float, ram_budget_gb: float = 0.0,
         ranked = ([t for t in ranked if t.is_layer_weight]
                   + [t for t in ranked if not t.is_layer_weight])
 
-    vram_keys, ram_keys, disk_keys = [], [], []
+    vram_keys, ram_keys, disk_keys = [], [t.key for t in forced_ram], []
     vram_used = 0
     remainder = []
     for t in ranked:
@@ -320,7 +341,7 @@ def plan_tiers(tensors, vram_budget_gb: float, ram_budget_gb: float = 0.0,
     # buffer holding an already-decoded result, not a live decode target.
     disk_keys.extend(t.key for t in stream_only)
 
-    ram_used = 0
+    ram_used = forced_ram_bytes
     for t in remainder:
         if ram_used + t.orig_bytes <= ram_budget:
             ram_keys.append(t.key)

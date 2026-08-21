@@ -453,6 +453,50 @@ def test_streamed_lm_head_is_bit_exact_and_never_stays_resident(tmp_path, monkey
     assert torch.equal(logits2, ref_logits)
 
 
+def test_ram_overlay_lm_head_is_exact_and_returns_to_meta(tmp_path, monkeypatch):
+    from afterimage.runtime.config import EngineConfig
+    from afterimage.runtime import vram_planner
+    from afterimage.runtime.streaming_engine import StreamingLosslessModel
+
+    cfg, ref_model = _build_tiny_model(tie=False, seed=43)
+    store_dir = _make_store(tmp_path, monkeypatch, ref_model, cfg,
+                            "fake/ram-overlay-head", "ram_overlay_head")
+    ref_model_gpu = ref_model.to("cuda")
+    ids = torch.randint(0, cfg.vocab_size, (1, 5), device="cuda")
+    with torch.no_grad():
+        ref_logits = ref_model_gpu(input_ids=ids).logits
+
+    manifest = __import__("json").loads((store_dir / "manifest.json").read_text())
+    row_gather = [key for key, meta in manifest["tensors"].items()
+                  if meta.get("row_gather")]
+    other = [key for key in manifest["tensors"]
+             if key != "lm_head.weight" and key not in row_gather]
+
+    def fake_plan(_manifest, vram_budget_gb, ram_budget_gb=0.0, **kw):
+        assert kw["forced_ram_keys"] == {"lm_head.weight"}
+        return vram_planner.TierPlan(
+            vram_budget_bytes=int(vram_budget_gb * 1e9),
+            ram_budget_bytes=int(ram_budget_gb * 1e9), vram_headroom_bytes=0,
+            vram_keys=other, ram_keys=["lm_head.weight"], disk_keys=[],
+            row_gather_keys=row_gather, vram_bytes=0, ram_bytes=0,
+            disk_bytes_per_token=0, feasible=True, reason="")
+
+    monkeypatch.setattr(vram_planner, "plan_from_manifest", fake_plan)
+    sm = StreamingLosslessModel(
+        "fake/ram-overlay-head", store_dir, device="cuda",
+        config=EngineConfig(vram_budget_gb=1.0, ram_budget_gb=1.0,
+                            lm_head_policy="ram_overlay"))
+    assert sm._tier["lm_head.weight"] == "ram"
+    assert "lm_head" in sm._streamed_module_params()
+    with torch.no_grad():
+        logits = sm.forward_logits(ids)
+        logits2 = sm.forward_logits(ids)
+    assert sm.model.lm_head.weight.device.type == "meta"
+    sm.close()
+    assert torch.equal(logits, ref_logits)
+    assert torch.equal(logits2, ref_logits)
+
+
 @pytest.mark.parametrize("slice_elems", [1 << 25, 4096, 64])
 def test_decode_slice_size_never_changes_decoded_values(tmp_path, monkeypatch, slice_elems):
     """decode_slice_elems exists purely to bound transient decode scratch

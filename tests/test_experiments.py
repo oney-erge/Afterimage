@@ -7,6 +7,8 @@ def test_all_hypotheses_and_profiles_are_registered():
         (3, "contextual-bandit"), (4, "feedback-prefetch"),
         (5, "certified-mips"), (6, "representations"),
         (7, "xor-reference"), (8, "model-based-rl"),
+        (9, "ram-overlay-head"), (10, "replay-cem"),
+        (11, "neural-utility-spec"),
     ]}
     assert all(h.candidate_profile in PROFILES and h.control_profile in PROFILES
                for h in HYPOTHESES.values())
