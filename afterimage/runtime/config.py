@@ -16,6 +16,8 @@ vram_budget_gb did not exist as a field at all despite docs referencing it.
 from __future__ import annotations
 
 import dataclasses
+import hashlib
+import json
 
 
 @dataclasses.dataclass
@@ -215,6 +217,40 @@ class EngineConfig:
         to converge from scratch every time. None (default) means no
         persistence: the policy starts fresh and its learning is discarded
         when the call returns.
+
+    spec_policy_learn
+        True (default) updates policy state from each sweep. False loads a
+        previously calibrated state but freezes it for held-out evaluation.
+
+    placement_policy
+        "traffic_density" (default) preserves the existing compression-aware
+        residency ranking. "profiled_knapsack" ranks measured latency saved
+        per resident byte. "critical_path" uses event-DAG slack/criticality in
+        addition to the measured latency. The semi-bandit research primitive
+        remains offline-only until cross-request attribution is available.
+
+    prefetch_policy
+        "fixed" (default) preserves io_prefetch_depth exactly. "pi" and
+        "mpc" use queue/starvation feedback to select a depth in
+        [0, io_prefetch_max_depth]. Both alter scheduling only, never bytes or
+        tensor values.
+
+    execution_policy
+        Request-boundary selection among complete, validated method profiles.
+        "static" is the default. Learned choices are opt-in and never mutate
+        the profiles they select.
+
+    representation_policy / expert_codec
+        Opt-in physical-layout research controls. They are consumed by the
+        representation and exact-reference planners; a runtime must refuse a
+        requested representation when its store lacks the required artifact.
+
+    lm_head_policy
+        "full" preserves the current path. "certified_mips" is greedy-only
+        exact argmax search with a full fallback; it is never used for
+        sampling. The existing lm_head_slice_rows option remains the explicit
+        lossy/chunked path for backward compatibility. Its CPU float64 index
+        is bounded by mips_index_ram_limit_gb (16 GB by default).
     """
 
     quantize: str | None = None
@@ -238,6 +274,23 @@ class EngineConfig:
     spec_k_policy: str = "fixed"
     pin_draft_layers: bool = False
     spec_policy_state: str | None = None
+    spec_policy_learn: bool = True
+
+    placement_policy: str = "traffic_density"
+    critical_path_profile: str | None = None
+    prefetch_policy: str = "fixed"
+    io_prefetch_max_depth: int = 8
+    prefetch_target_ready: float = 0.85
+    prefetch_kp: float = 2.0
+    prefetch_ki: float = 0.25
+    execution_policy: str = "static"
+    execution_policy_state: str | None = None
+    representation_policy: str = "uniform"
+    lm_head_policy: str = "full"
+    mips_index_ram_limit_gb: float = 16.0
+    expert_codec: str = "independent"
+    trace_events: bool = False
+    trace_output: str | None = None
 
     def __post_init__(self) -> None:
         if self.quantize not in (None, "q8"):
@@ -282,9 +335,11 @@ class EngineConfig:
                 % (self.draft_exit_layer,))
         if self.spec_k < 1:
             raise ValueError("spec_k must be >= 1, got %d" % self.spec_k)
-        if self.spec_k_policy not in ("fixed", "gamma", "threshold"):
+        if self.spec_k_policy not in ("fixed", "gamma", "threshold", "adaedl",
+                                      "hazard_cost"):
             raise ValueError(
-                "spec_k_policy must be 'fixed', 'gamma' or 'threshold', got %r"
+                "spec_k_policy must be 'fixed', 'gamma', 'threshold', "
+                "'adaedl' or 'hazard_cost', got %r"
                 % (self.spec_k_policy,))
         if self.pin_draft_layers and self.draft_mode != "self":
             raise ValueError(
@@ -295,6 +350,45 @@ class EngineConfig:
                 "pin_draft_layers requires vram_budget_gb -- there is no "
                 "tiering decision to influence under the legacy fixed-"
                 "residency policy")
+        if self.placement_policy not in (
+                "traffic_density", "profiled_knapsack", "critical_path"):
+            raise ValueError("unknown placement_policy %r" % self.placement_policy)
+        if self.placement_policy != "traffic_density" and not self.critical_path_profile:
+            raise ValueError(
+                "placement_policy=%r requires critical_path_profile with measured "
+                "per-tensor costs" % self.placement_policy)
+        if self.placement_policy != "traffic_density" and self.vram_budget_gb is None:
+            raise ValueError(
+                "placement_policy=%r requires vram_budget_gb -- without a budget "
+                "there is no placement decision to optimize" % self.placement_policy)
+        if self.prefetch_policy not in ("fixed", "pi", "mpc"):
+            raise ValueError("prefetch_policy must be 'fixed', 'pi' or 'mpc', got %r"
+                             % self.prefetch_policy)
+        if self.io_prefetch_max_depth < 0:
+            raise ValueError("io_prefetch_max_depth must be >= 0")
+        if (self.prefetch_policy != "fixed"
+                and self.io_prefetch_max_depth < self.io_prefetch_depth):
+            raise ValueError("io_prefetch_max_depth must be >= io_prefetch_depth")
+        if not (0.0 < self.prefetch_target_ready <= 1.0):
+            raise ValueError("prefetch_target_ready must be in (0, 1]")
+        if self.prefetch_kp < 0 or self.prefetch_ki < 0:
+            raise ValueError("prefetch PI gains must be non-negative")
+        if self.execution_policy not in ("static", "linucb", "thompson", "model_based_rl"):
+            raise ValueError("unknown execution_policy %r" % self.execution_policy)
+        if self.representation_policy not in ("uniform", "per_tensor", "multi_state"):
+            raise ValueError("unknown representation_policy %r" % self.representation_policy)
+        if self.lm_head_policy not in ("full", "certified_mips"):
+            raise ValueError("lm_head_policy must be 'full' or 'certified_mips', got %r"
+                             % self.lm_head_policy)
+        if self.lm_head_policy == "certified_mips" and self.lm_head_slice_rows:
+            raise ValueError("certified_mips and lm_head_slice_rows are mutually exclusive")
+        if self.mips_index_ram_limit_gb <= 0:
+            raise ValueError("mips_index_ram_limit_gb must be positive")
+        if self.expert_codec not in ("independent", "xor_reference"):
+            raise ValueError("expert_codec must be 'independent' or 'xor_reference', got %r"
+                             % self.expert_codec)
+        if self.trace_output and not self.trace_events:
+            raise ValueError("trace_output requires trace_events=True")
 
 
     @property
@@ -308,6 +402,32 @@ class EngineConfig:
     @property
     def uses_tiered_residency(self) -> bool:
         return self.vram_budget_gb is not None
+
+    @property
+    def exactness_contract(self) -> str:
+        """The strongest contract this configuration can honestly claim."""
+        if self.quantize is not None or self.lm_head_slice_rows:
+            return "approximate"
+        if self.lm_head_policy == "certified_mips":
+            return "greedy_token_exact"
+        if self.draft_mode != "none":
+            return "distribution_exact"
+        return "reference_execution_equivalent"
+
+    def to_dict(self) -> dict:
+        return dataclasses.asdict(self)
+
+    @classmethod
+    def from_dict(cls, values: dict) -> "EngineConfig":
+        names = {f.name for f in dataclasses.fields(cls)}
+        unknown = sorted(set(values) - names)
+        if unknown:
+            raise ValueError("unknown EngineConfig fields: %s" % ", ".join(unknown))
+        return cls(**values)
+
+    def fingerprint(self) -> str:
+        payload = json.dumps(self.to_dict(), sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
     def describe(self) -> str:
         if self.is_lossless:

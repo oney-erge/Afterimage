@@ -52,6 +52,11 @@
   .plan-result { font-family: var(--mono); font-size: 12px; margin-top: 10px; color: var(--muted); }
   .plan-result .feasible-yes { color: var(--accent); }
   .plan-result .feasible-no { color: var(--danger); }
+  .experiment-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 10px; margin-top: 14px; }
+  .experiment-card { border: 1px solid var(--border); border-radius: 6px; padding: 12px; background: var(--surface-2); }
+  .experiment-card h3 { margin: 0 0 7px; font-size: 14px; }
+  .experiment-card p { margin: 5px 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
+  .experiment-card .result { margin-top: 8px; font-family: var(--mono); font-size: 11px; white-space: pre-wrap; }
 </style>
 </head>
 <body>
@@ -121,6 +126,28 @@
     <div id="chat-log"></div>
   </section>
 
+  <section class="full">
+    <h2>Experiment Lab — H0–H8</h2>
+    <p class="status-line">Every run is paired against its named control. Existing runtime defaults are unchanged.</p>
+    <div class="form-grid">
+      <div><label>Model id (generation experiments)</label><input id="exp-model" placeholder="Qwen/Qwen3-14B"></div>
+      <div><label>Draft model id (H2)</label><input id="exp-draft" placeholder="Qwen/Qwen3-0.6B"></div>
+      <div><label>Repeats</label><input id="exp-repeats" type="number" value="3" min="1"></div>
+      <div><label>Max new tokens</label><input id="exp-tokens" type="number" value="8" min="1"></div>
+    </div>
+    <label>Prompt</label>
+    <textarea id="exp-prompt">The capital of France is</textarea>
+    <label>Config overrides (JSON; e.g. budgets or critical_path_profile)</label>
+    <textarea id="exp-overrides">{}</textarea>
+    <div class="form-grid">
+      <div><label>Candidate-only overrides (JSON)</label><textarea id="exp-candidate-overrides">{}</textarea></div>
+      <div><label>Control-only overrides (JSON; tune fixed baselines here)</label><textarea id="exp-control-overrides">{}</textarea></div>
+    </div>
+    <label>Specialized inputs (JSON; required fields are shown on each card)</label>
+    <textarea id="exp-inputs">{}</textarea>
+    <div id="experiment-grid" class="experiment-grid"><span class="status-line">loading…</span></div>
+  </section>
+
 </main>
 
 <script>
@@ -161,6 +188,72 @@ async function loadModels() {
       <td class="n">${m.comp_gb.toFixed(2)} GB</td>
       <td class="n">${m.ratio.toFixed(3)}x</td>
     </tr>`).join('');
+}
+
+function parseJsonField(id) {
+  const text = $(id).value.trim();
+  return text ? JSON.parse(text) : {};
+}
+
+async function loadExperiments() {
+  const registry = await api('/api/experiments');
+  $('experiment-grid').innerHTML = registry.hypotheses.map(h => `
+    <div class="experiment-card" id="card-${h.id}">
+      <h3>${h.id}: ${h.title}</h3>
+      <p>${h.statement}</p>
+      <p>Candidate: <code>${h.candidate_profile}</code><br>Control: <code>${h.control_profile}</code></p>
+      <p>Gate: ${h.kill_criterion}</p>
+      <p>Exactness: ${h.exactness_contract}<br>Required: ${h.required_inputs.length ? h.required_inputs.join(', ') : 'none'}</p>
+      <p>Minimum run: ${h.minimum_repeats} repeats × ${h.minimum_new_tokens} tokens</p>
+      <button data-experiment="${h.id}" data-min-repeats="${h.minimum_repeats}" data-min-tokens="${h.minimum_new_tokens}">Run Test</button>
+      <div class="result" id="result-${h.id}"></div>
+    </div>`).join('');
+  document.querySelectorAll('[data-experiment]').forEach(button => {
+    button.addEventListener('click', () => runExperiment(button.dataset.experiment, button));
+  });
+}
+
+async function runExperiment(id, button) {
+  button.disabled = true;
+  const result = $(`result-${id}`);
+  result.textContent = 'starting…';
+  try {
+    const body = {
+      model_id: $('exp-model').value.trim() || null,
+      draft_model_id: $('exp-draft').value.trim() || null,
+      repeats: Math.max(parseInt($('exp-repeats').value, 10) || 3,
+                        parseInt(button.dataset.minRepeats, 10) || 1),
+      max_new_tokens: Math.max(parseInt($('exp-tokens').value, 10) || 8,
+                              parseInt(button.dataset.minTokens, 10) || 1),
+      prompt: $('exp-prompt').value,
+      config_overrides: parseJsonField('exp-overrides'),
+      candidate_overrides: parseJsonField('exp-candidate-overrides'),
+      control_overrides: parseJsonField('exp-control-overrides'),
+      inputs: parseJsonField('exp-inputs'),
+    };
+    const { job_id } = await api(`/api/experiments/${id}/runs`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const ws = new WebSocket(`ws://${location.host}/ws/jobs/${job_id}`);
+    ws.onmessage = async (event) => {
+      const msg = JSON.parse(event.data);
+      result.textContent = `${msg.status} ${JSON.stringify(msg.progress || {})}`;
+      if (['done', 'error', 'cancelled'].includes(msg.status)) {
+        button.disabled = false;
+        if (msg.status === 'error') {
+          result.textContent = `error — ${msg.error}`;
+        } else if (msg.status === 'done') {
+          const job = await api(`/api/jobs/${job_id}`);
+          const run = job.result?.run;
+          result.textContent = run ? `${run.verdict}\n${JSON.stringify(run.summary, null, 2)}` : 'done';
+        }
+      }
+    };
+  } catch (error) {
+    button.disabled = false;
+    result.textContent = error.message;
+  }
 }
 
 let compressJobId = null;
@@ -258,6 +351,7 @@ $('chat-send').addEventListener('click', async () => {
 
 loadHardware();
 loadModels();
+loadExperiments();
 </script>
 
 </body>

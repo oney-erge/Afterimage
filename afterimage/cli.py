@@ -172,7 +172,14 @@ def cmd_run(args: argparse.Namespace) -> int:
                        io_prefetch_depth=args.io_prefetch_depth,
                        decode_slice_elems=args.decode_slice_elems,
                        ram_tier_format=args.ram_tier_format,
-                       lm_head_slice_rows=args.lm_head_slice_rows)
+                       lm_head_slice_rows=args.lm_head_slice_rows,
+                       placement_policy=args.placement_policy,
+                       critical_path_profile=args.critical_path_profile,
+                       prefetch_policy=args.prefetch_policy,
+                       io_prefetch_max_depth=args.io_prefetch_max_depth,
+                       lm_head_policy=args.lm_head_policy,
+                       trace_events=bool(args.trace_output),
+                       trace_output=args.trace_output)
     if not cfg.is_lossless:
         print("WARNING: %s" % cfg.describe(), file=sys.stderr)
     with StreamingLosslessModel(args.model, store_dir, device=device, config=cfg) as sm:
@@ -186,6 +193,43 @@ def cmd_run(args: argparse.Namespace) -> int:
                   % (sm.stats.io_seconds, sm.stats.decode_seconds,
                      sm.stats.compute_seconds, sm.stats.bytes_read / 1e9),
                   file=sys.stderr)
+    return 0
+
+
+# -- research profiles ----------------------------------------------------
+
+def cmd_experiments(args: argparse.Namespace) -> int:
+    from afterimage.experiments import registry_payload
+
+    payload = registry_payload()
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        for hypothesis in payload["hypotheses"]:
+            print("%s  %s" % (hypothesis["id"], hypothesis["title"]))
+            print("  candidate=%s  control=%s  metric=%s" % (
+                hypothesis["candidate_profile"], hypothesis["control_profile"],
+                hypothesis["primary_metric"]))
+    return 0
+
+
+def cmd_profile_trace(args: argparse.Namespace) -> int:
+    from afterimage.runtime.critical_path import CriticalPathProfile, TraceRecorder
+
+    traces = [TraceRecorder.load(path) for path in args.traces]
+    profile = CriticalPathProfile.from_traces(traces)
+    profile.save(args.out)
+    print("Wrote %s tensors from %d traces to %s" % (
+        len(profile.tensors), profile.trace_count, args.out))
+    if args.manifest:
+        manifest = json.loads(pathlib.Path(args.manifest).read_text(encoding="utf-8"))
+        eligible = {key for key, meta in manifest["tensors"].items()
+                    if not meta.get("row_gather")}
+        coverage = len(eligible & set(profile.tensors)) / max(len(eligible), 1)
+        print("Placement-candidate coverage: %.1f%%" % (100.0 * coverage))
+        if coverage < 0.90:
+            print("Profile is below the runtime's 90% coverage gate", file=sys.stderr)
+            return 2
     return 0
 
 
@@ -270,6 +314,15 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--vram-budget-gb", type=float, default=None)
     r.add_argument("--ram-budget-gb", type=float, default=None)
     r.add_argument("--io-prefetch-depth", type=int, default=1)
+    r.add_argument("--io-prefetch-max-depth", type=int, default=8)
+    r.add_argument("--prefetch-policy", default="fixed", choices=["fixed", "pi", "mpc"])
+    r.add_argument("--placement-policy", default="traffic_density",
+                   choices=["traffic_density", "profiled_knapsack", "critical_path"])
+    r.add_argument("--critical-path-profile", default=None)
+    r.add_argument("--lm-head-policy", default="full",
+                   choices=["full", "certified_mips"])
+    r.add_argument("--trace-output", default=None,
+                   help="write an event-DAG trace after generation")
     r.add_argument("--decode-slice-elems", type=int, default=1 << 25,
                    help="weights per bounded decode slice. Smaller values shrink "
                         "transient decode scratch, which is what lowers the floor "
@@ -303,6 +356,18 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--vram-cap-gb", type=float, default=None)
     b.add_argument("--prompt", default="The capital of France is")
     b.set_defaults(func=cmd_bench)
+
+    e = sub.add_parser("experiments", help="list versioned H0-H8 experiment definitions")
+    e.add_argument("--json", action="store_true")
+    e.set_defaults(func=cmd_experiments)
+
+    t = sub.add_parser("profile-trace",
+                       help="build a measured critical-path profile from trace files")
+    t.add_argument("traces", nargs="+")
+    t.add_argument("--out", required=True)
+    t.add_argument("--manifest", default=None,
+                   help="optional store manifest used to enforce 90%% tensor coverage")
+    t.set_defaults(func=cmd_profile_trace)
 
     return p
 

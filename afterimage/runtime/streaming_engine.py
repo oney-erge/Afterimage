@@ -48,6 +48,8 @@ import torch
 from .binstore import BinaryWeightReader, BinaryWeightWriter, blobref_to_dict
 from .compressed_store import CompressedLayer, compress_layer, decompress_layer_gpu
 from .config import EngineConfig
+from .controllers import PrefetchObservation, build_prefetch_controller
+from .critical_path import CriticalPathProfile, TraceRecorder
 
 # Bumped whenever the manifest/weights.bin layout changes in a way that
 # makes an old store unreadable by new code (or vice versa) -- e.g. the
@@ -68,6 +70,14 @@ class StreamStats:
     compute_seconds: float = 0.0
     spec_sweeps: int = 0
     spec_accepted_tokens: int = 0
+    prefetch_hits: int = 0
+    prefetch_misses: int = 0
+    prefetch_wait_seconds: float = 0.0
+    mips_certified: int = 0
+    mips_fallbacks: int = 0
+    mips_rows_evaluated: int = 0
+    mips_rows_pruned: int = 0
+    mips_index_build_seconds: float = 0.0
 
     def reset(self) -> None:
         self.bytes_read = 0
@@ -77,6 +87,15 @@ class StreamStats:
         self.compute_seconds = 0.0
         self.spec_sweeps = 0
         self.spec_accepted_tokens = 0
+        self.prefetch_hits = 0
+        self.prefetch_misses = 0
+        self.prefetch_wait_seconds = 0.0
+        self.mips_certified = 0
+        self.mips_fallbacks = 0
+        self.mips_rows_evaluated = 0
+        self.mips_rows_pruned = 0
+        # mips_index_build_seconds is startup cost, deliberately retained
+        # when callers reset steady-state generation counters.
 
 
 # -- offline compression ---------------------------------------------------
@@ -318,6 +337,21 @@ class StreamingLosslessModel:
 
         self.config = config or EngineConfig()
         self.control = control or JobControl()
+        if self.config.execution_policy != "static":
+            raise RuntimeError(
+                "execution_policy=%r is a request-boundary controller, not an "
+                "in-engine switch; resolve it to a concrete MethodProfile before "
+                "constructing StreamingLosslessModel" % self.config.execution_policy)
+        if self.config.representation_policy != "uniform":
+            raise RuntimeError(
+                "representation_policy=%r requires a materialized and validated "
+                "RepresentationPlan; this v2 compressed store contains only the "
+                "uniform representation" % self.config.representation_policy)
+        if self.config.expert_codec != "independent":
+            raise RuntimeError(
+                "expert_codec=%r requires an XOR-reference-aware expert store; "
+                "the dense v2 store must not silently substitute independent "
+                "tensors" % self.config.expert_codec)
         self.store = pathlib.Path(store_dir)
         self.manifest = json.loads((self.store / "manifest.json").read_text())
         self._check_store_integrity()
@@ -328,16 +362,29 @@ class StreamingLosslessModel:
         self.progress = self.config.progress
         self.empty_cache_every = self.config.empty_cache_every
         self.io_prefetch_depth = self.config.io_prefetch_depth
-        self.prefetch = self.io_prefetch_depth > 0
+        self._prefetch_controller = build_prefetch_controller(
+            self.config.prefetch_policy, initial_depth=self.io_prefetch_depth,
+            max_depth=self.config.io_prefetch_max_depth,
+            target_ready=self.config.prefetch_target_ready,
+            kp=self.config.prefetch_kp, ki=self.config.prefetch_ki)
+        self._prefetch_pool_depth = (self.io_prefetch_depth
+                                     if self.config.prefetch_policy == "fixed"
+                                     else self.config.io_prefetch_max_depth)
+        self.prefetch = self._prefetch_pool_depth > 0
         self.ram_tier_format = self.config.ram_tier_format
         self._frees = 0
         self._tok_i = 0
         self._tok_total = 0
         self._gen_t0 = 0.0
         self._kv_cache = None
+        self._certified_mips_index = None
+        self.trace = TraceRecorder(enabled=self.config.trace_events)
+        self._last_read_event: dict[str, str] = {}
+        self._layer_prepare_events: dict[int, list[str]] = {}
+        self._layer_compute_start: dict[int, float] = {}
 
         self._reader = BinaryWeightReader(self.store / "weights.bin")
-        n_prefetch_readers = max(1, self.io_prefetch_depth)
+        n_prefetch_readers = max(1, self._prefetch_pool_depth)
         self._prefetch_readers = (
             [BinaryWeightReader(self.store / "weights.bin") for _ in range(n_prefetch_readers)]
             if self.prefetch else [])
@@ -365,12 +412,57 @@ class StreamingLosslessModel:
         self.n_layers = len(self.layers)
 
         self._materialize_resident()
+        if (self.config.lm_head_policy == "certified_mips"
+                and self._tier.get(self.CHUNKED_HEAD_KEY) != "vram"):
+            raise RuntimeError(
+                "lm_head_policy='certified_mips' currently requires lm_head.weight "
+                "resident in VRAM; the compressed store has no certified random-row "
+                "index, so silently reading the full head would defeat the method")
+        if self.config.lm_head_policy == "certified_mips":
+            if getattr(self.model.lm_head, "bias", None) is not None:
+                raise RuntimeError(
+                    "certified_mips currently requires a bias-free lm_head; use "
+                    "lm_head_policy='full' for this architecture")
+            from .certified_mips import MIPSIndex
+            weight = self.model.lm_head.weight
+            block_rows = 256
+            blocks = (weight.shape[0] + block_rows - 1) // block_rows
+            estimated_index_bytes = int(
+                weight.numel() * 8 + 3 * blocks * weight.shape[1] * 8)
+            limit_bytes = int(self.config.mips_index_ram_limit_gb * 1e9)
+            if estimated_index_bytes > limit_bytes:
+                raise RuntimeError(
+                    "certified_mips index needs about %.2f GB host RAM, above "
+                    "mips_index_ram_limit_gb=%.2f" %
+                    (estimated_index_bytes / 1e9,
+                     self.config.mips_index_ram_limit_gb))
+            build_t0 = time.perf_counter()
+            self._certified_mips_index = MIPSIndex.build(weight, block_rows=block_rows)
+            self.stats.mips_index_build_seconds = time.perf_counter() - build_t0
         self._install_hooks()
         self._install_streamed_module_hooks()
         self._install_chunked_lm_head()
+        # Research traces represent steady-state generation, not one-time
+        # materialization or index construction. Clear startup spans before
+        # the initial generation prefetch begins.
+        if self.trace.enabled:
+            self._clear_startup_trace()
         if self.prefetch:
-            for ahead in range(1, self.io_prefetch_depth + 1):
+            for ahead in range(1, self._prefetch_controller.choose_depth() + 1):
                 self._start_prefetch(ahead - 1)
+
+    def _clear_startup_trace(self) -> None:
+        """Start the measured DAG without dependencies on discarded events.
+
+        Materializing resident tensors records startup transfers and caches
+        their event IDs in the dependency maps.  Clearing only the recorder
+        left those maps pointing at events no longer present in the trace,
+        which made the first steady-state compute span an invalid DAG.
+        """
+        self.trace.clear()
+        self._last_read_event.clear()
+        self._layer_prepare_events.clear()
+        self._layer_compute_start.clear()
 
     def close(self) -> None:
         """Join any still-in-flight background prefetch threads before
@@ -395,12 +487,19 @@ class StreamingLosslessModel:
         self._reader.close()
         for r in self._prefetch_readers:
             r.close()
+        if self.config.trace_output:
+            self.trace.save(self.config.trace_output)
 
     def __enter__(self):
         return self
 
     def __exit__(self, *exc) -> None:
         self.close()
+
+    @property
+    def mips_index_bytes(self) -> int:
+        return (self._certified_mips_index.nbytes
+                if self._certified_mips_index is not None else 0)
 
     def _check_store_integrity(self) -> None:
         """Two cheap, always-on checks that catch the two most common ways
@@ -513,12 +612,30 @@ class StreamingLosslessModel:
             # once at model construction, before any sweep has happened.
             draft_layer_indices = range(cfg.draft_exit_layer)
             draft_uses = cfg.spec_k + 1
+        critical_profile = (CriticalPathProfile.load(cfg.critical_path_profile)
+                            if cfg.critical_path_profile else None)
+        if critical_profile is not None:
+            eligible = {
+                key for key, meta in self.manifest["tensors"].items()
+                if not meta.get("row_gather") and key not in stream_only
+            }
+            covered = eligible & set(critical_profile.tensors)
+            coverage = len(covered) / max(len(eligible), 1)
+            if critical_profile.trace_count < 1 or coverage < 0.90:
+                missing = sorted(eligible - covered)
+                raise RuntimeError(
+                    "critical_path_profile covers %.1f%% of placement candidates; "
+                    "at least 90%% measured coverage is required to avoid silently "
+                    "falling back to traffic estimates. Missing examples: %s" %
+                    (100.0 * coverage, ", ".join(missing[:5])))
         plan = plan_from_manifest(self.manifest, vram_budget_gb=cfg.vram_budget_gb,
                                   ram_budget_gb=cfg.ram_budget_gb or 0.0,
                                   decode_slice_elems=cfg.decode_slice_elems,
                                   draft_layer_indices=draft_layer_indices,
                                   draft_uses=draft_uses,
-                                  stream_only=stream_only)
+                                  stream_only=stream_only,
+                                  critical_path_profile=critical_profile,
+                                  placement_policy=cfg.placement_policy)
         if not plan.feasible:
             raise RuntimeError("VRAM budget is infeasible: " + plan.reason)
         for key in plan.vram_keys:
@@ -537,7 +654,12 @@ class StreamingLosslessModel:
         meta = self.manifest["tensors"][key]
         t0 = time.perf_counter()
         arrays = {name: self._reader.read(ref) for name, ref in meta["blobs"].items()}
-        return arrays, time.perf_counter() - t0
+        end = time.perf_counter()
+        event_id = self.trace.record("read", "storage-main", t0, end, tensor_key=key,
+                                     nbytes=int(meta["comp_bytes"]))
+        if event_id:
+            self._last_read_event[key] = event_id
+        return arrays, end - t0
 
     def _decode_tensor(self, key: str, arrays: dict) -> torch.Tensor:
         meta = self.manifest["tensors"][key]
@@ -554,14 +676,42 @@ class StreamingLosslessModel:
                 out = out.to(torch.bfloat16)
             elif "float16" in dt:
                 out = out.to(torch.float16)
-            return out.to(self.device)
+            dependency = self._last_read_event.pop(key, None)
+            t1 = time.perf_counter()
+            out = out.to(self.device)
+            if self.trace.enabled and torch.cuda.is_available():
+                torch.cuda.synchronize()
+            event_id = self.trace.record(
+                "transfer", "cuda-default", t1, time.perf_counter(),
+                tensor_key=key, dependencies=([dependency] if dependency else ()))
+            self._remember_layer_prepare(key, event_id)
+            return out
 
+        if self.trace.enabled and torch.cuda.is_available():
+            torch.cuda.synchronize()
         t1 = time.perf_counter()
         layer = self._compressed_layer(key, arrays)
         out = decompress_layer_gpu(layer, device=self.device,
                                    max_slice_elems=self.config.decode_slice_elems)
-        self.stats.decode_seconds += time.perf_counter() - t1
+        if self.trace.enabled and torch.cuda.is_available():
+            torch.cuda.synchronize()
+        end = time.perf_counter()
+        self.stats.decode_seconds += end - t1
+        dependency = self._last_read_event.pop(key, None)
+        event_id = self.trace.record(
+            "decode", "cuda-default", t1, end, tensor_key=key,
+            dependencies=([dependency] if dependency else ()))
+        self._remember_layer_prepare(key, event_id)
         return out
+
+    def _remember_layer_prepare(self, key: str, event_id: str | None) -> None:
+        if not event_id or not key.startswith("model.layers."):
+            return
+        try:
+            layer_idx = int(key.split(".", 3)[2])
+        except (IndexError, ValueError):
+            return
+        self._layer_prepare_events.setdefault(layer_idx, []).append(event_id)
 
     def _compressed_layer(self, key: str, arrays: dict) -> CompressedLayer:
         """Rebuild the CompressedLayer view over already-read arrays.
@@ -838,7 +988,13 @@ class StreamingLosslessModel:
             meta = self.manifest["tensors"][key]
             t0 = time.perf_counter()
             arrays = {name: reader.read(ref) for name, ref in meta["blobs"].items()}
-            result[key] = (arrays, time.perf_counter() - t0)
+            end = time.perf_counter()
+            event_id = self.trace.record("read", "storage-%d" % id(reader), t0, end,
+                                         tensor_key=key,
+                                         nbytes=int(meta["comp_bytes"]))
+            if event_id:
+                self._last_read_event[key] = event_id
+            result[key] = (arrays, end - t0)
         return result
 
     def _start_prefetch(self, idx: int) -> None:
@@ -886,11 +1042,16 @@ class StreamingLosslessModel:
     def _load_layer(self, idx: int) -> None:
         self.control.checkpoint()  # pause/cancel boundary: one layer at a time
         cached = None
+        ready_before_wait = False
+        prefetch_wait = 0.0
         if self.prefetch:
             with self._prefetch_lock:
+                ready_before_wait = idx in self._prefetch_cache
                 th = self._prefetch_threads.pop(idx, None)
             if th is not None:
+                wait_t0 = time.perf_counter()
                 th.join()
+                prefetch_wait = time.perf_counter() - wait_t0
             with self._prefetch_lock:
                 cached = self._prefetch_cache.pop(idx, None)
             # Fire the next `io_prefetch_depth` layers' reads NOW, before
@@ -900,8 +1061,23 @@ class StreamingLosslessModel:
             # Overlapping the next read(s) with THIS layer's decode-plus-
             # compute instead gives the background threads a window an
             # order of magnitude larger to hide inside.
-            for ahead in range(1, self.io_prefetch_depth + 1):
+            active_depth = self._prefetch_controller.choose_depth()
+            for ahead in range(1, active_depth + 1):
                 self._start_prefetch(idx + ahead)
+
+            useful_bytes = sum(
+                int(self.manifest["tensors"][key]["comp_bytes"])
+                for key in (cached or {}))
+            io_seconds = sum(float(item[1]) for item in (cached or {}).values())
+            self.stats.prefetch_wait_seconds += prefetch_wait
+            if ready_before_wait:
+                self.stats.prefetch_hits += 1
+            else:
+                self.stats.prefetch_misses += 1
+            self._prefetch_controller.update(PrefetchObservation(
+                ready=ready_before_wait, wait_s=prefetch_wait,
+                useful_bytes=useful_bytes,
+                bandwidth_bytes_s=(useful_bytes / io_seconds if io_seconds > 0 else 0.0)))
 
         layer = self.layers[idx]
         for pname, _ in layer.named_parameters():
@@ -915,7 +1091,14 @@ class StreamingLosslessModel:
                 if self.ram_tier_format == "compressed":
                     out = self._decode_tensor(key, self._ram_cache[key])
                 else:
+                    t0 = time.perf_counter()
                     out = self._ram_cache[key].to(self.device, non_blocking=True)
+                    if self.trace.enabled and torch.cuda.is_available():
+                        torch.cuda.synchronize()
+                    event_id = self.trace.record(
+                        "transfer", "cuda-default", t0, time.perf_counter(),
+                        tensor_key=key)
+                    self._remember_layer_prepare(key, event_id)
             elif cached is not None and key in cached:
                 arrays, io_s = cached[key]
                 self.stats.io_seconds += io_s
@@ -959,12 +1142,23 @@ class StreamingLosslessModel:
         def make_pre(idx):
             def pre(module, args, kwargs):
                 self._load_layer(idx)
+                if self.trace.enabled or self.config.prefetch_policy == "mpc":
+                    self._layer_compute_start[idx] = time.perf_counter()
                 return None
             return pre
 
         def make_post(idx):
             def post(module, args, kwargs, output):
                 torch.cuda.synchronize()
+                if self.trace.enabled or self.config.prefetch_policy == "mpc":
+                    end = time.perf_counter()
+                    start = self._layer_compute_start.pop(idx, end)
+                    self._prefetch_controller.update_compute(end - start)
+                if self.trace.enabled:
+                    dependencies = self._layer_prepare_events.pop(idx, ())
+                    self.trace.record("compute", "cuda-default", start, end,
+                                      dependencies=dependencies,
+                                      metadata={"layer": idx})
                 self._free_layer(idx)
                 return output
             return post
@@ -1102,6 +1296,47 @@ class StreamingLosslessModel:
         self.stats.compute_seconds += max(0.0, wall - io_delta - decode_delta)
         return out.logits
 
+    @torch.no_grad()
+    def forward_certified_argmax(self, input_ids: torch.Tensor,
+                                 use_cache: bool = False) -> int:
+        """Greedy-only certified MIPS head with an exact full-head fallback."""
+        if self.config.lm_head_policy != "certified_mips":
+            raise RuntimeError("certified argmax requested without its config")
+        if input_ids.shape[0] != 1:
+            raise ValueError("certified_mips currently supports batch size 1")
+        from .certified_mips import MIPSIndex, certified_argmax
+
+        io0, decode0 = self.stats.io_seconds, self.stats.decode_seconds
+        t0 = time.perf_counter()
+        if use_cache:
+            out = self.model.model(input_ids=input_ids, use_cache=True,
+                                   past_key_values=self._kv_cache)
+            self._kv_cache = out.past_key_values
+        else:
+            out = self.model.model(input_ids=input_ids, use_cache=False)
+        hidden = out.last_hidden_state[0, -1]
+        weight = self.model.lm_head.weight
+        if self._certified_mips_index is None:
+            self._certified_mips_index = MIPSIndex.build(weight)
+
+        def full_fallback():
+            return torch.nn.functional.linear(hidden, weight).argmax()
+
+        result = certified_argmax(hidden, weight, self._certified_mips_index,
+                                  fallback=full_fallback)
+        torch.cuda.synchronize()
+        wall = time.perf_counter() - t0
+        self.stats.compute_seconds += max(
+            0.0, wall - (self.stats.io_seconds - io0) - (self.stats.decode_seconds - decode0))
+        self.stats.mips_rows_evaluated += result.rows_evaluated
+        if result.certified:
+            self.stats.mips_certified += 1
+            self.stats.mips_rows_pruned += max(
+                0, self._certified_mips_index.rows - result.rows_evaluated)
+        else:
+            self.stats.mips_fallbacks += 1
+        return result.index
+
     def _install_chunked_lm_head(self) -> None:
         """Compute logits in row blocks instead of materializing lm_head.
 
@@ -1237,8 +1472,12 @@ class StreamingLosslessModel:
         for t in range(max_new_tokens):
             self._tok_i = t
             self.control.checkpoint()
-            logits = self.forward_logits(step_input, use_cache=use_cache)
-            nxt = logits[:, -1, :].argmax(dim=-1, keepdim=True)
+            if self.config.lm_head_policy == "certified_mips":
+                tok = self.forward_certified_argmax(step_input, use_cache=use_cache)
+                nxt = torch.tensor([[tok]], device=self.device, dtype=input_ids.dtype)
+            else:
+                logits = self.forward_logits(step_input, use_cache=use_cache)
+                nxt = logits[:, -1, :].argmax(dim=-1, keepdim=True)
             seq = torch.cat([seq, nxt], dim=1)
             step_input = nxt if use_cache else seq
             tok_id = int(nxt.item())
@@ -1353,7 +1592,7 @@ class StreamingLosslessModel:
         k) so a caller can inspect state_dict() / log() without needing a
         second entry point.
         """
-        from .spec_policy import SweepRecord, ThresholdPolicy, build_policy
+        from .spec_policy import SweepRecord, _prob_entropy, build_policy
         from .verify import sample_categorical, speculative_sample_step, temperature_probs
 
         cfg = self.config
@@ -1381,32 +1620,31 @@ class StreamingLosslessModel:
             draft_seq = seq
             draft_tokens: list[int] = []
             draft_probs: list[torch.Tensor] = []
+            draft_t0 = time.perf_counter()
             for _ in range(k_request):
                 if cfg.draft_mode == "self":
                     dlogits = self.draft_self_logits(draft_seq, cfg.draft_exit_layer)[:, -1, :]
                 else:
                     dlogits = draft_model(input_ids=draft_seq).logits[:, -1, :]
                 probs = temperature_probs(dlogits[0], temperature)
-                if isinstance(policy, ThresholdPolicy):
-                    # Stop drafting the moment the draft's own confidence
-                    # for the token about to be proposed would fall below
-                    # threshold, rather than always drafting k_max and
-                    # trimming afterward -- saves the (wasted, since
-                    # verification recomputes everything regardless) cost of
-                    # drafting past the point the policy expects rejection.
-                    if (len(draft_tokens) >= policy.k_min
-                            and float(probs.max()) < policy.confidence_threshold):
-                        break
+                # Per-position policies inspect the distribution that would
+                # produce the next proposal and can stop before paying for a
+                # token they expect not to survive. Fixed/gamma return False.
+                if policy.should_stop(draft_probs + [probs]):
+                    break
                 tok = sample_categorical(probs, generator)
                 draft_tokens.append(tok)
                 draft_probs.append(probs)
                 draft_seq = torch.cat(
                     [draft_seq, torch.tensor([[tok]], device=draft_seq.device)], dim=1)
+            draft_seconds = time.perf_counter() - draft_t0
 
             step_k = len(draft_tokens)
             chain = torch.cat(
                 [seq, torch.tensor([draft_tokens], device=seq.device)], dim=1)
+            target_t0 = time.perf_counter()
             target_logits = self.forward_logits(chain)
+            target_seconds = time.perf_counter() - target_t0
             base = seq.shape[1] - 1
             target_probs = [
                 temperature_probs(target_logits[0, base + i, :], temperature)
@@ -1423,9 +1661,14 @@ class StreamingLosslessModel:
             self.stats.spec_sweeps += 1
             self.stats.spec_accepted_tokens += n_from_draft
 
-            policy.update(SweepRecord(step_k, n_from_draft, time.perf_counter() - sweep_t0))
+            if cfg.spec_policy_learn:
+                policy.update(SweepRecord(
+                    step_k, n_from_draft, time.perf_counter() - sweep_t0,
+                    draft_confidences=tuple(float(p.max()) for p in draft_probs),
+                    draft_entropies=tuple(_prob_entropy(p) for p in draft_probs),
+                    draft_seconds=draft_seconds, target_seconds=target_seconds))
 
-        if cfg.spec_policy_state:
+        if cfg.spec_policy_state and cfg.spec_policy_learn:
             policy.save(cfg.spec_policy_state)
 
         return seq[:, :input_ids.shape[1] + max_new_tokens], policy

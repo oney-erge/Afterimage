@@ -1,45 +1,45 @@
 # Afterimage
 
-**Run models larger than your GPU's VRAM, bit-exact — with a memory/speed
-dial AirLLM doesn't have.**
+**Run models larger than your GPU's VRAM with exact compressed streaming and
+explicit memory/speed tradeoffs.**
 
 Afterimage entropy-codes bf16 model weights (lossless, ~1.45x — the
 information-theoretic ceiling for bf16 is ~1.51x) and streams them
 layer-by-layer from a compressed on-disk store, the same algorithm AirLLM
 uses. It adds three things on top: spending spare VRAM on residency,
 speculative decoding, and an optional non-lossless mode that shrinks the
-VRAM floor by 45%.
+VRAM floor by about 43% in the current bounded run.
 
 > Status: a working engine, measured against AirLLM on real hardware,
-> including where it does **not** win. See
-> [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md) for the full picture — this
-> README is the short version.
+> including where it does **not** win. The current multi-prompt result is
+> [the bounded research report](docs/BOUNDED_RESEARCH_REPORT_2026-08-21.md).
 
 ---
 
 ## Measured, not projected
 
 Qwen3-14B (29.5 GB bf16), RTX 3080 Laptop (8 GB VRAM), WSL2/CUDA, cold page
-cache, identical prompt, **both systems on the same peak-VRAM counter**:
+cache, four semantic prompt types × four tokens, **every system on the same
+peak-VRAM counter**:
 
 | Configuration | VRAM | s/token | Lossless | vs AirLLM |
 |---|---|---|---|---|
-| **AirLLM** (reference) | 1.57 GB | 27.4 | yes | 1.00x |
-| Afterimage, compression only | 1.68 GB | 28.0 | yes | 0.98x — **parity** |
-| Afterimage, + residency | 3.89 GB | 15.2 | yes | 1.80x |
-| Afterimage, + speculative decoding | 3.78 GB | **2.2** | yes | **12.5x** |
-| Afterimage, chunked head (opt-in, lossy) | **0.86 GB** | 26.4 | no | −45% VRAM, parity speed |
-| Afterimage, chunked head + speculation (lossy) | 2.05 GB | 3.3 | no | 8.3x |
+| **AirLLM 3.1.0** (reference) | 1.58 GB | 28.86 | yes | 1.00x |
+| Afterimage, minimum-memory exact | 1.72 GB | 32.51 | yes | **0.89x** |
+| Afterimage, + 4 GB residency | 3.93 GB | 17.36 | yes | **1.66x** |
+| Afterimage, + fixed speculation | 3.81 GB | **9.15** | yes at T=0 | **3.15x** |
+| Afterimage, chunked head (opt-in, approximate) | **0.90 GB** | 29.61 | no | −43% VRAM, parity band |
 
-**The honest headline: at matched VRAM, lossless, we are not faster than
-AirLLM — we're at parity.** Our real advantage is a dial AirLLM doesn't
-have: spend more VRAM for up to 12.5x, or use 45% *less* VRAM at the same
-speed if bit-exactness can be relaxed. Full derivation, method-by-method,
-and the run-to-run noise band: **[docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md)**.
+**The honest headline: near AirLLM's memory floor, the exact path is about 11%
+slower on this screen.** Spending memory is useful: 1.66x with residency and
+3.15x with fixed speculation. The approximate chunked head uses 43% less VRAM
+at roughly parity speed. These are exploratory point estimates; see the
+[report](docs/BOUNDED_RESEARCH_REPORT_2026-08-21.md) for the protocol,
+hypothesis failures, novelty assessment, and raw files.
 
 ---
 
-## How speculative decoding gets 12.5x, in plain terms
+## How speculative decoding gets 3.15x here, in plain terms
 
 Normally, producing **one word** means reading the **entire 20 GB model**
 off disk. That's the whole cost — one trip to the library for one word.
@@ -85,7 +85,9 @@ docker compose up      # needs the NVIDIA Container Toolkit
 
 `afterimage serve` exposes an OpenAI-compatible `/v1/chat/completions`,
 plus native job control (`/api/compress`, `/api/jobs/{id}`, pause/resume/
-cancel, `/api/plan` for budget feasibility) and a minimal web UI at `/`.
+cancel, `/api/plan` for budget feasibility) and a web UI at `/`. Its
+**Experiment Lab** runs the versioned H0-H8 candidates against named controls
+without changing the normal engine defaults.
 
 ---
 
@@ -127,7 +129,14 @@ embeddings; a KV cache verified bit-exact; speculative decoding (small draft
 model and self-drafting, both via `generate_adaptive`); an optional chunked
 `lm_head` that removes the VRAM floor at the cost of bit-exactness; pause/
 resume/cancel job control; an OpenAI-compatible server; Docker + installers
-for NVIDIA, AMD (untested on real hardware), and CPU fallback. 267 tests.
+for NVIDIA, AMD (untested on real hardware), and CPU fallback.
+
+The opt-in research layer adds event-DAG critical-path placement, published
+AdaEDL stopping plus a new storage-cost-aware rejection-hazard policy,
+feedback-controlled prefetch, baseline-guarded profile selection, certified
+greedy MIPS with a full fallback, exact per-tensor representation planning,
+and expert-local XOR reference artifacts. These are implemented hypotheses,
+not benchmark claims. See [docs/RESEARCH_METHODS.md](docs/RESEARCH_METHODS.md).
 
 **Tried and correctly killed, not hidden:** self-drafting with an
 *untrained* model (0% acceptance), a live bandit tuning draft length
@@ -166,6 +175,8 @@ Full history: [docs/archive/](docs/archive/).
 | [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md) | **start here** — every method, next to AirLLM, with the honest verdict on each |
 | [docs/RESULTS_LOG.md](docs/RESULTS_LOG.md) | append-only ledger of every measured run, including regressions and corrections |
 | [docs/LITERATURE.md](docs/LITERATURE.md) | research survey — lossless codecs, MoE offloading, adaptive/RL-for-speculation |
+| [docs/RESEARCH_METHODS.md](docs/RESEARCH_METHODS.md) | **H0-H8** — hypotheses, prior-art boundary, configuration, tests, and kill gates |
+| [docs/BOUNDED_RESEARCH_REPORT_2026-08-21.md](docs/BOUNDED_RESEARCH_REPORT_2026-08-21.md) | **current evidence** — diverse prompt results, H0-H8 verdicts, comparison, and novelty audit |
 | [docs/archive/](docs/archive/) | superseded planning docs and early results, kept for traceability |
 
 ---

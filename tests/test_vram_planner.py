@@ -1,5 +1,6 @@
 import pytest
 
+from afterimage.runtime.critical_path import CriticalPathProfile, TensorCost
 from afterimage.runtime.vram_planner import TensorInfo, plan_from_manifest, plan_tiers
 
 
@@ -225,6 +226,23 @@ def test_plan_from_manifest_no_draft_args_is_unaffected():
     assert a.vram_keys == b.vram_keys
     assert a.ram_keys == b.ram_keys
     assert a.disk_keys == b.disk_keys
+
+
+def test_critical_path_policy_preserves_observed_zero_value():
+    """An observed off-critical-path tensor is genuinely zero-value; it must
+    not be silently promoted by the old traffic proxy."""
+    manifest = {"tensors": {
+        "off_path": {"orig_bytes": int(50e6), "comp_bytes": int(49e6)},
+        "critical": {"orig_bytes": int(50e6), "comp_bytes": int(10e6)},
+    }}
+    profile = CriticalPathProfile({
+        "off_path": TensorCost("off_path", counterfactual_s=0.0, observations=1),
+        "critical": TensorCost("critical", counterfactual_s=2.0, observations=1),
+    })
+    plan = plan_from_manifest(
+        manifest, vram_budget_gb=0.15, scratch_bytes=int(50e6),
+        critical_path_profile=profile, placement_policy="critical_path")
+    assert plan.vram_keys == ["critical"]
 
 
 # -- stream_only / chunked projection (the lm_head VRAM floor) -------------

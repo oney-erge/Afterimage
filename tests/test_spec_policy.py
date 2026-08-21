@@ -1,9 +1,11 @@
 import json
 
 import pytest
+import torch
 
 from afterimage.runtime.spec_policy import (
-    FixedPolicy, GammaTunePolicy, SweepRecord, ThresholdPolicy, build_policy,
+    AdaEDLPolicy, FixedPolicy, GammaTunePolicy, HazardCostPolicy, SweepRecord,
+    ThresholdPolicy, build_policy,
 )
 
 
@@ -78,6 +80,8 @@ def test_build_policy_dispatch():
     assert isinstance(build_policy("fixed", 8), FixedPolicy)
     assert isinstance(build_policy("gamma", 8), GammaTunePolicy)
     assert isinstance(build_policy("threshold", 8), ThresholdPolicy)
+    assert isinstance(build_policy("adaedl", 8), AdaEDLPolicy)
+    assert isinstance(build_policy("hazard_cost", 8), HazardCostPolicy)
     with pytest.raises(ValueError):
         build_policy("nonsense", 8)
 
@@ -113,3 +117,26 @@ def test_sweep_record_derived_fields():
     r = SweepRecord(k_used=8, n_accepted=5, sweep_seconds=2.0)
     assert r.acceptance == pytest.approx(5 / 8)
     assert r.tokens_per_second == pytest.approx(6 / 2.0)
+
+
+def test_adaedl_uses_published_entropy_lower_bound_and_updates_threshold():
+    policy = AdaEDLPolicy(k_min=1, threshold=0.7, gamma=0.2)
+    concentrated = torch.tensor([0.99, 0.01])
+    diffuse = torch.tensor([0.5, 0.5])
+    assert not policy.should_stop([concentrated, concentrated])
+    assert policy.should_stop([concentrated, diffuse])
+    before = policy.threshold
+    policy.update(SweepRecord(k_used=4, n_accepted=0, sweep_seconds=1.0))
+    assert policy.threshold > before
+
+
+def test_hazard_policy_treats_unseen_tail_as_censored():
+    policy = HazardCostPolicy(k_max=4, n_bins=2)
+    policy.update(SweepRecord(k_used=4, n_accepted=1, sweep_seconds=1.0,
+                              draft_confidences=(0.9, 0.9, 0.9, 0.9),
+                              draft_seconds=0.4, target_seconds=2.0))
+    assert policy.accept[0][1] == 1
+    assert policy.reject[1][1] == 1
+    assert sum(policy.reject[2]) == 0
+    assert sum(policy.reject[3]) == 0
+    assert policy.target_token_s == pytest.approx(1.0)

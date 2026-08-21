@@ -686,3 +686,35 @@ itself lossy, correctly.
 - **Lossy, balanced: 8.3x at +31% VRAM** — arguably the most useful
   operating point on an 8 GB card, and the one to reach for if the
   bit-exactness requirement is ever relaxed.
+
+---
+
+## Bounded multi-prompt research screen (2026-08-21)
+
+The prior one-prompt table above is preserved as history. A new immutable,
+cold-cache screen used four held-out semantic prompt types × four tokens, with
+two disjoint calibration prompts and a 58-minute cap. AirLLM was rerun with EOS
+stopping disabled (rather than `min_new_tokens`, which suppresses EOS logits)
+so the four-token sequences are comparable.
+
+| method | peak VRAM | s/token | vs corrected AirLLM | contract |
+|---|---:|---:|---:|---|
+| AirLLM 3.1.0 | 1.583 GB | 28.861 | 1.00x | BF16 greedy baseline |
+| minimum-memory exact | 1.723 GB | 32.514 | 0.89x | exact |
+| residency @4 GB | 3.934 GB | 17.360 | 1.66x | exact |
+| chunked head | 0.901 GB | 29.606 | 0.97x | approximate |
+| fixed-k speculation | 3.813 GB | 9.150 | 3.15x | greedy-token exact at T=0 |
+| frozen hazard speculation | 3.814 GB | 9.773 | 2.95x | greedy-token exact at T=0 |
+
+Expected answers and output token IDs matched on every shared prompt after the
+AirLLM protocol correction. The screen is one repeat, so it is not a
+confirmatory confidence interval.
+
+H0 oracle headroom was 2.56% (<12% gate); H1 critical-path placement gained
+1.61% (<8% gate); H2 hazard stopping was 6.4% lower-throughput than fixed-k;
+H4 PI prefetch was 35.7% lower-throughput than fixed depth; H5 certified MIPS
+was 30.5% lower-throughput and pruned only 0.084% of rows. H3/H8 were gated;
+H6 lacked alternative artifacts; H7 was inapplicable to this dense checkpoint.
+
+Full analysis, literature boundary, caveats, and raw-file links:
+[BOUNDED_RESEARCH_REPORT_2026-08-21.md](BOUNDED_RESEARCH_REPORT_2026-08-21.md).

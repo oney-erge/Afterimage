@@ -95,6 +95,10 @@ class TensorInfo:
                                # (chunked lm_head -- see materialize_bytes)
     materialize_override: int | None = None  # peak bytes live at once, if it
                                # differs from orig_bytes (chunked projection)
+    profiled_value_s: float = 0.0  # measured preparation time avoided
+    critical_value_s: float = 0.0  # measured critical-path time avoided
+    profiled_observed: bool = False
+    critical_observed: bool = False
 
     @property
     def materialize_bytes(self) -> int:
@@ -113,6 +117,17 @@ class TensorInfo:
         self-draft layer) is ranked by the traffic pinning it ACTUALLY
         avoids, not by a single-touch assumption that no longer holds."""
         return (self.uses * self.comp_bytes) / max(self.orig_bytes, 1)
+
+    def placement_density(self, policy: str) -> float:
+        if policy == "traffic_density":
+            return self.value_density
+        if policy == "profiled_knapsack":
+            return ((self.uses * self.profiled_value_s) / max(self.orig_bytes, 1)
+                    if self.profiled_observed else self.value_density)
+        if policy == "critical_path":
+            return ((self.uses * self.critical_value_s) / max(self.orig_bytes, 1)
+                    if self.critical_observed else self.value_density)
+        raise ValueError("unknown placement policy %r" % policy)
 
 
 @dataclasses.dataclass
@@ -217,7 +232,8 @@ def plan_tiers(tensors, vram_budget_gb: float, ram_budget_gb: float = 0.0,
                scratch_bytes: int = None,
                decode_slice_elems: int = None,
                activation_slack_bytes: int = DEFAULT_ACTIVATION_SLACK_BYTES,
-               pin_layer_weights: bool = False) -> TierPlan:
+               pin_layer_weights: bool = False,
+               placement_policy: str = "traffic_density") -> TierPlan:
     """Decide what stays in VRAM, what stays in RAM, and what streams from
     disk every token, for the given budgets.
 
@@ -283,7 +299,8 @@ def plan_tiers(tensors, vram_budget_gb: float, ram_budget_gb: float = 0.0,
     candidates = [t for t in all_tensors if not t.stream_only]
 
     # Highest bus-traffic-avoided per byte first (see module docstring).
-    ranked = sorted(candidates, key=lambda t: t.value_density, reverse=True)
+    ranked = sorted(candidates,
+                    key=lambda t: t.placement_density(placement_policy), reverse=True)
     if pin_layer_weights:
         ranked = ([t for t in ranked if t.is_layer_weight]
                   + [t for t in ranked if not t.is_layer_weight])
@@ -341,6 +358,8 @@ def plan_from_manifest(manifest: dict, vram_budget_gb: float,
                        ram_budget_gb: float = 0.0,
                        draft_layer_indices=None, draft_uses: int = 1,
                        stream_only: dict | None = None,
+                       critical_path_profile=None,
+                       placement_policy: str = "traffic_density",
                        **kw) -> TierPlan:
     """Build a tier plan directly from a compressed store's manifest.
 
@@ -360,6 +379,12 @@ def plan_from_manifest(manifest: dict, vram_budget_gb: float,
     """
     hot = set(draft_layer_indices) if draft_layer_indices else set()
     stream_only = stream_only or {}
+    def measured(key: str, field: str) -> float:
+        if critical_path_profile is None:
+            return 0.0
+        cost = critical_path_profile.tensors.get(key)
+        return float(getattr(cost, field)) if cost is not None else 0.0
+
     infos = [
         TensorInfo(
             key=key,
@@ -370,7 +395,15 @@ def plan_from_manifest(manifest: dict, vram_budget_gb: float,
             uses=(draft_uses if _layer_index(key) in hot else 1),
             stream_only=key in stream_only,
             materialize_override=stream_only.get(key),
+            profiled_value_s=(measured(key, "read_s") + measured(key, "decode_s")
+                              + measured(key, "transfer_s")),
+            critical_value_s=measured(key, "counterfactual_s"),
+            profiled_observed=(critical_path_profile is not None
+                               and key in critical_path_profile.tensors),
+            critical_observed=(critical_path_profile is not None
+                               and key in critical_path_profile.tensors),
         )
         for key, meta in manifest["tensors"].items()
     ]
-    return plan_tiers(infos, vram_budget_gb, ram_budget_gb, **kw)
+    return plan_tiers(infos, vram_budget_gb, ram_budget_gb,
+                      placement_policy=placement_policy, **kw)

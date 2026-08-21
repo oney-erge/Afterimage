@@ -1,5 +1,9 @@
 # What this is, method by method, next to AirLLM
 
+> **Current-results note (21 August 2026):** the table below is the historical
+> one-prompt result. The four-prompt bounded rerun supersedes broad performance
+> claims: [BOUNDED_RESEARCH_REPORT_2026-08-21.md](BOUNDED_RESEARCH_REPORT_2026-08-21.md).
+
 Qwen3-14B is **29.5 GB**. The GPU has **8 GB**. The model does not fit.
 
 AirLLM and this engine solve that the same way: **stream the model through

@@ -71,6 +71,12 @@ def test_zero_prefetch_depth_is_valid_and_disables_prefetch():
     assert cfg.io_prefetch_depth == 0
 
 
+def test_existing_fixed_prefetch_depth_is_not_capped_by_adaptive_default():
+    assert EngineConfig(io_prefetch_depth=16).io_prefetch_depth == 16
+    with pytest.raises(ValueError, match="max_depth"):
+        EngineConfig(io_prefetch_depth=16, prefetch_policy="pi")
+
+
 def test_ram_tier_format_default_is_decoded():
     cfg = EngineConfig()
     assert cfg.ram_tier_format == "decoded"
@@ -129,3 +135,42 @@ def test_pin_draft_layers_valid_combination():
     cfg = EngineConfig(draft_mode="self", draft_exit_layer=8,
                        pin_draft_layers=True, vram_budget_gb=4.0)
     assert cfg.pin_draft_layers
+
+
+def test_measured_placement_requires_profile_and_real_budget():
+    with pytest.raises(ValueError, match="critical_path_profile"):
+        EngineConfig(placement_policy="critical_path", vram_budget_gb=4.0)
+    with pytest.raises(ValueError, match="vram_budget_gb"):
+        EngineConfig(placement_policy="critical_path",
+                     critical_path_profile="trace-profile.json")
+    cfg = EngineConfig(placement_policy="critical_path",
+                       critical_path_profile="trace-profile.json",
+                       vram_budget_gb=4.0)
+    assert cfg.placement_policy == "critical_path"
+
+
+def test_config_round_trip_and_fingerprint_are_strict_and_stable():
+    cfg = EngineConfig(prefetch_policy="pi", trace_events=True)
+    assert EngineConfig.from_dict(cfg.to_dict()) == cfg
+    assert EngineConfig.from_dict(cfg.to_dict()).fingerprint() == cfg.fingerprint()
+    with pytest.raises(ValueError, match="unknown EngineConfig fields"):
+        EngineConfig.from_dict({"not_a_setting": True})
+
+
+def test_spec_policy_can_be_frozen_for_held_out_evaluation():
+    cfg = EngineConfig(spec_policy_state="calibrated.json", spec_policy_learn=False)
+    assert not cfg.spec_policy_learn
+
+
+def test_trace_output_cannot_silently_write_an_empty_trace():
+    with pytest.raises(ValueError, match="trace_events"):
+        EngineConfig(trace_output="trace.json")
+    EngineConfig(trace_events=True, trace_output="trace.json")
+
+
+def test_exactness_contract_distinguishes_greedy_and_sampling():
+    assert EngineConfig().exactness_contract == "reference_execution_equivalent"
+    assert EngineConfig(draft_mode="model").exactness_contract == "distribution_exact"
+    assert EngineConfig(lm_head_policy="certified_mips").exactness_contract == "greedy_token_exact"
+    with pytest.raises(ValueError, match="mips_index_ram_limit_gb"):
+        EngineConfig(mips_index_ram_limit_gb=0)
