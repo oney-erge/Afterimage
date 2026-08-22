@@ -324,6 +324,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                        require_pinned_ram=args.require_pinned_ram,
                        draft_mode=("model" if args.draft_model else "none"),
                        spec_k=args.spec_k,
+                       spec_target_cache=args.spec_target_cache,
                        trace_events=bool(args.trace_output),
                        trace_output=args.trace_output)
     if not cfg.is_lossless:
@@ -703,12 +704,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     r_adv = r.add_argument_group(
         "advanced / research",
-        "opt-in mechanisms from the H0-H15 research layer -- see "
+        "opt-in mechanisms from the H0-H18 research layer -- see "
         "docs/RESEARCH_METHODS.md. Ordinary use never needs these.")
     r_adv.add_argument("--vram-cap-gb", type=float, default=None)
     r_adv.add_argument("--io-prefetch-depth", type=int, default=1)
     r_adv.add_argument("--storage-read-policy", default="per_blob",
-                       choices=["per_blob", "coalesced_extents"])
+                       choices=["per_blob", "coalesced_extents", "tensor_extents"])
     r_adv.add_argument("--storage-extent-max-bytes", type=int, default=1 << 28)
     r_adv.add_argument("--storage-extent-max-gap-bytes", type=int, default=0)
     r_adv.add_argument("--io-prefetch-max-depth", type=int, default=8)
@@ -727,6 +728,9 @@ def build_parser() -> argparse.ArgumentParser:
                             "regulated H9 mechanism gate")
     r_adv.add_argument("--trace-output", default=None,
                        help="write an event-DAG trace after generation")
+    r_adv.add_argument("--spec-target-cache", action="store_true",
+                       help="H18: crop/reuse the exact target KV prefix between "
+                            "speculative verification sweeps")
     r_adv.add_argument("--decode-slice-elems", type=int, default=1 << 25,
                        help="weights per bounded decode slice. Smaller values shrink "
                             "transient decode scratch, which is what lowers the floor "

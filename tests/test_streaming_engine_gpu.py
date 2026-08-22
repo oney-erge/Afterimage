@@ -783,6 +783,42 @@ def test_generate_adaptive_model_draft_matches_greedy_at_temperature_zero(tmp_pa
     assert torch.equal(adaptive_seq, ref_seq)
 
 
+def test_rollback_cached_speculation_matches_full_prefix_verification(
+        tmp_path, monkeypatch):
+    """H18 must change only target-prefix reuse, never accepted tokens."""
+    from afterimage.runtime.config import EngineConfig
+    from afterimage.runtime.streaming_engine import StreamingLosslessModel
+
+    cfg, ref_model = _build_tiny_model(tie=False, seed=164)
+    store_dir = _make_store(tmp_path, monkeypatch, ref_model, cfg,
+                            "fake/spec-cache-engine", "spec_cache")
+    _, unrelated_draft = _build_tiny_model(tie=False, seed=1999)
+    draft_gpu = unrelated_draft.to("cuda")
+    ids = torch.randint(0, cfg.vocab_size, (1, 7), device="cuda")
+
+    outputs = []
+    cached_stats = None
+    for target_cache in (False, True):
+        engine = StreamingLosslessModel(
+            "fake/spec-cache-engine", store_dir, device="cuda",
+            config=EngineConfig(io_prefetch_depth=1, draft_mode="model",
+                                spec_k=2, spec_target_cache=target_cache))
+        generator = torch.Generator(device="cuda").manual_seed(123)
+        with torch.no_grad():
+            sequence, _ = engine.generate_adaptive(
+                ids.clone(), max_new_tokens=7, draft_model=draft_gpu,
+                temperature=0.0, generator=generator)
+        outputs.append(sequence)
+        if target_cache:
+            cached_stats = (engine.stats.spec_cache_crops,
+                            engine.stats.spec_cached_prefix_tokens)
+        engine.close()
+
+    assert torch.equal(outputs[0], outputs[1])
+    assert cached_stats is not None and cached_stats[0] > 0
+    assert cached_stats[1] > 0
+
+
 def test_generate_adaptive_rejects_draft_mode_none(tmp_path, monkeypatch):
     from afterimage.runtime.config import EngineConfig
     from afterimage.runtime.streaming_engine import StreamingLosslessModel
