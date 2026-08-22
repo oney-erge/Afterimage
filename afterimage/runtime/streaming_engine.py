@@ -1437,6 +1437,61 @@ class StreamingLosslessModel:
             module.register_forward_pre_hook(make_pre(mod_name, pnames), with_kwargs=True)
             module.register_forward_hook(make_post(mod_name, pnames), with_kwargs=True)
 
+    def _kv_cache_length(self) -> int:
+        """Return the cached prefix length or fail closed on an unknown cache.
+
+        H18 mutates cache length after verification, so guessing a tensor
+        dimension would turn a performance experiment into a correctness
+        risk.  Current Transformers ``DynamicCache`` exposes this contract
+        directly; legacy tuple caches are intentionally not accepted by the
+        experimental path.
+        """
+        if self._kv_cache is None:
+            return 0
+        get_length = getattr(self._kv_cache, "get_seq_length", None)
+        if not callable(get_length):
+            raise RuntimeError(
+                "spec_target_cache requires a cache with get_seq_length(); "
+                "disable it for this Transformers/model version")
+        return int(get_length())
+
+    def _crop_kv_cache(self, maximum_length: int) -> None:
+        """Crop speculative lookahead to the immutable accepted prefix."""
+        if maximum_length < 0:
+            raise ValueError("KV cache crop length must be non-negative")
+        if self._kv_cache is None:
+            raise RuntimeError("cannot crop an empty target KV cache")
+        crop = getattr(self._kv_cache, "crop", None)
+        if not callable(crop):
+            raise RuntimeError(
+                "spec_target_cache requires DynamicCache.crop(); disable it "
+                "for this Transformers/model version")
+        crop(maximum_length)
+        actual = self._kv_cache_length()
+        if actual != maximum_length:
+            raise RuntimeError(
+                "target KV cache crop produced length %d, expected %d" %
+                (actual, maximum_length))
+        self.stats.spec_cache_crops += 1
+
+    def _spec_target_input(self, seq: torch.Tensor,
+                           draft_tokens: list[int]) -> tuple[torch.Tensor, int]:
+        """Build verifier input and the first draft-logit offset for H18."""
+        proposals = torch.tensor(
+            [draft_tokens], device=seq.device, dtype=seq.dtype)
+        if not self.config.spec_target_cache or self._kv_cache is None:
+            return torch.cat([seq, proposals], dim=1), seq.shape[1] - 1
+        expected = seq.shape[1] - 1
+        cached = self._kv_cache_length()
+        if cached != expected:
+            raise RuntimeError(
+                "target KV cache has %d prefix tokens, expected %d before "
+                "speculative verification" % (cached, expected))
+        self.stats.spec_cached_prefix_tokens += cached
+        # Cache owns seq[:-1]. Feed the final committed token so its logits
+        # predict proposal 0, followed by the proposed lookahead tokens.
+        return torch.cat([seq[:, -1:], proposals], dim=1), 0
+
     @torch.no_grad()
     def forward_logits(self, input_ids: torch.Tensor, use_cache: bool = False) -> torch.Tensor:
         """One full forward pass. transformers drives the stack; the hooks
@@ -1719,6 +1774,7 @@ class StreamingLosslessModel:
         seq = input_ids
         self._tok_total = max_new_tokens
         self._gen_t0 = time.perf_counter()
+        self._kv_cache = None
         n_generated = 0
 
         while n_generated < max_new_tokens:
@@ -1736,10 +1792,9 @@ class StreamingLosslessModel:
                 draft_seq = torch.cat(
                     [draft_seq, torch.tensor([[tok]], device=draft_seq.device)], dim=1)
 
-            chain = torch.cat(
-                [seq, torch.tensor([draft_tokens], device=seq.device)], dim=1)
-            target_logits = self.forward_logits(chain)
-            base = seq.shape[1] - 1
+            target_input, base = self._spec_target_input(seq, draft_tokens)
+            target_logits = self.forward_logits(
+                target_input, use_cache=self.config.spec_target_cache)
             target_probs = [
                 torch.softmax(target_logits[0, base + i, :] / temperature, dim=-1)
                 for i in range(step_k)
@@ -1751,6 +1806,8 @@ class StreamingLosslessModel:
                 draft_probs, target_probs, draft_tokens, bonus_probs, generator)
 
             seq = torch.cat([seq, torch.tensor([accepted], device=seq.device)], dim=1)
+            if self.config.spec_target_cache:
+                self._crop_kv_cache(seq.shape[1] - 1)
             n_generated += len(accepted)
             self._tok_i = min(n_generated, max_new_tokens)
             self.stats.spec_sweeps += 1
@@ -1820,6 +1877,7 @@ class StreamingLosslessModel:
         seq = input_ids
         self._tok_total = max_new_tokens
         self._gen_t0 = time.perf_counter()
+        self._kv_cache = None
         n_generated = 0
 
         while n_generated < max_new_tokens:
@@ -1849,12 +1907,11 @@ class StreamingLosslessModel:
             draft_seconds = time.perf_counter() - draft_t0
 
             step_k = len(draft_tokens)
-            chain = torch.cat(
-                [seq, torch.tensor([draft_tokens], device=seq.device)], dim=1)
+            target_input, base = self._spec_target_input(seq, draft_tokens)
             target_t0 = time.perf_counter()
-            target_logits = self.forward_logits(chain)
+            target_logits = self.forward_logits(
+                target_input, use_cache=cfg.spec_target_cache)
             target_seconds = time.perf_counter() - target_t0
-            base = seq.shape[1] - 1
             target_probs = [
                 temperature_probs(target_logits[0, base + i, :], temperature)
                 for i in range(step_k)
@@ -1873,6 +1930,8 @@ class StreamingLosslessModel:
                 accepted = accepted[:stopped_at + 1]
 
             seq = torch.cat([seq, torch.tensor([accepted], device=seq.device)], dim=1)
+            if cfg.spec_target_cache:
+                self._crop_kv_cache(seq.shape[1] - 1)
             n_generated += len(accepted)
             self._tok_i = min(n_generated, max_new_tokens)
             self.stats.spec_sweeps += 1

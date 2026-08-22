@@ -94,10 +94,21 @@ def test_coalesced_storage_reads_are_explicit_and_bounded():
                        storage_extent_max_bytes=4096,
                        storage_extent_max_gap_bytes=16)
     assert cfg.storage_extent_max_bytes == 4096
+    tensor_scoped = EngineConfig(storage_read_policy="tensor_extents",
+                                 storage_extent_max_bytes=1024)
+    assert tensor_scoped.storage_read_policy == "tensor_extents"
     with pytest.raises(ValueError, match="storage_read_policy"):
         EngineConfig(storage_read_policy="magic")
     with pytest.raises(ValueError, match="max_bytes"):
         EngineConfig(storage_extent_max_bytes=0)
+
+
+def test_spec_target_cache_is_explicit_and_fingerprinted():
+    control = EngineConfig(draft_mode="model")
+    candidate = EngineConfig(draft_mode="model", spec_target_cache=True)
+    assert not control.spec_target_cache
+    assert candidate.spec_target_cache
+    assert candidate.fingerprint() != control.fingerprint()
 
 
 def test_require_pinned_ram_is_a_strict_ram_tier_contract():

@@ -142,6 +142,21 @@ PROFILES = {
     "extent-qubo-v1": MethodProfile(
         "extent-qubo-v1", "Physical-extent QUBO residency",
         {"placement_policy": "replay_extent_qubo"}),
+    "spec-critical-path-v1": MethodProfile(
+        "spec-critical-path-v1", "Critical-path residency with fixed speculation",
+        {"placement_policy": "critical_path", "draft_mode": "model",
+         "spec_k": 8, "spec_k_policy": "fixed"},
+        exactness_contract="distribution_exact"),
+    "tensor-extents-v1": MethodProfile(
+        "tensor-extents-v1", "Tensor-scoped micro-extents",
+        {"storage_read_policy": "tensor_extents",
+         "storage_extent_max_bytes": 1 << 23,
+         "storage_extent_max_gap_bytes": 0}),
+    "rollback-cached-spec-v1": MethodProfile(
+        "rollback-cached-spec-v1", "Rollback-cached target speculation",
+        {"draft_mode": "model", "spec_k": 8, "spec_k_policy": "fixed",
+         "spec_target_cache": True},
+        exactness_contract="distribution_exact"),
 }
 
 
@@ -394,6 +409,35 @@ HYPOTHESES = {
             "returned the profiled-knapsack control exactly (0% predicted "
             "gain, 100% overlap), blocked at its own pre-GPU mechanism gate.",
             effect_pct=0.0)),
+    "h16-spec-critical-path": Hypothesis(
+        "h16-spec-critical-path", "Speculation-conditioned critical-path residency",
+        "Jointly using the measured critical-path resident set and the proven "
+        "fixed speculative chain compounds their gains at the same total VRAM.",
+        "spec-critical-path-v1", "tuned-fixed-spec-v1", "generation",
+        "committed_tokens_per_second", 0.05, "distribution_exact",
+        ("draft_model_id", "critical_path_profile"),
+        "Kill if the resident action does not differ, peak VRAM rises more "
+        "than 5%, or paired throughput gain is below 5%.",
+        minimum_repeats=3, minimum_new_tokens=8),
+    "h17-tensor-extents": Hypothesis(
+        "h17-tensor-extents", "Tensor-scoped overlap-preserving micro-extents",
+        "Coalescing only inside each tensor keeps H14's fixed-request savings "
+        "without turning a prefetched layer into one blocking extent.",
+        "tensor-extents-v1", "exact-streaming-v1", "generation",
+        "committed_tokens_per_second", 0.05, "reference_execution_equivalent",
+        (), "Kill if calls fall less than 20%, byte amplification exceeds 5%, "
+        "or paired throughput gain is below 5%.",
+        minimum_repeats=3, minimum_new_tokens=8),
+    "h18-rollback-cached-spec": Hypothesis(
+        "h18-rollback-cached-spec", "Rollback-cached target verification",
+        "Cropping the exact target KV cache to the accepted prefix avoids "
+        "recomputing immutable context on every speculative target sweep.",
+        "rollback-cached-spec-v1", "tuned-fixed-spec-v1", "generation",
+        "committed_tokens_per_second", 0.05, "distribution_exact",
+        ("draft_model_id",),
+        "Kill on any greedy-token mismatch at temperature zero, unavailable "
+        "cache crop support, over 5% peak-VRAM growth, or under 5% gain.",
+        minimum_repeats=3, minimum_new_tokens=8),
 }
 
 
