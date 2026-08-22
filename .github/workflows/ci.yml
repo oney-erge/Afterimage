@@ -18,6 +18,9 @@ jobs:
       # Narrow ruleset (pyflakes + syntax errors) -- see pyproject.toml's
       # [tool.ruff.lint] comment for why this isn't a full style pass yet.
       - run: python -m ruff check afterimage
+      # Keeps the docs a new user reads first from drifting back into
+      # em-dash-heavy, AI-sounding prose. See scripts/check_prose.py.
+      - run: python scripts/check_prose.py
 
   cpu-tests:
     runs-on: ubuntu-latest

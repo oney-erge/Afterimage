@@ -1,24 +1,28 @@
 # Usage
 
-## Install
+## Get started
 
 ```bash
-./install.sh          # Linux / WSL2 -- detects GPU, sets up a venv, runs the quickstart
-```
-```powershell
-.\install.ps1          # Windows (native CUDA)
+git clone https://github.com/iodriller/Afterimage.git
+cd Afterimage
+./start
 ```
 
-Both scripts detect your GPU vendor, install the matching torch build,
-editable-install the package, run `afterimage doctor`, then run
-`afterimage quickstart` before launching the server — so you find out in a
-few minutes whether the install actually works, rather than after an hour
-and ~50 GB spent on a 14B-class model.
+That's it. First run, it sets everything up (detects your GPU, installs
+the matching torch build, creates a venv) and then runs a small model end
+to end so you can watch it work before committing to a real download.
+Every run after that just starts the server. Run `./start` again any time.
 
-By hand:
+On Windows, double-click `start.bat`. On macOS, double-click
+`start.command` (or run `./start` from a terminal). Same script either
+way, and it always tells you whether it just installed something or is
+just starting.
+
+By hand, if you'd rather:
 ```bash
 pip install -e ".[gpu,server]"   # NVIDIA; drop "gpu" for CPU-only or AMD
 afterimage doctor
+afterimage quickstart
 ```
 
 ## Quickstart (a few minutes, ~2 GB)
@@ -27,10 +31,10 @@ afterimage doctor
 afterimage quickstart
 ```
 
-Compresses and runs Qwen3-0.6B end to end and prints the measured s/token,
-peak VRAM, and I/O/decode split on your actual hardware. It is not a
-benchmark of the engine's real capability — the point is to prove the
-pipeline works here, before committing to a real model.
+Compresses and runs Qwen3-0.6B end to end and prints the measured
+seconds-per-token, peak VRAM, and I/O/decode split on your actual
+hardware. It's not a benchmark of what the engine can really do, just
+proof the pipeline works here before you point it at something big.
 
 ## A real model
 
@@ -49,8 +53,7 @@ afterimage run Qwen/Qwen3-14B "..." --profile balanced  # 1.66x, ~4 GB VRAM, no 
 afterimage run Qwen/Qwen3-14B "..." --profile min-memory  # lowest VRAM, slowest, fully exact
 ```
 
-Or set the underlying knobs directly — see
-[CONFIGURATION.md](CONFIGURATION.md):
+Or set the underlying knobs directly. See [CONFIGURATION.md](CONFIGURATION.md):
 
 ```bash
 afterimage run Qwen/Qwen3-14B "..." \
@@ -77,7 +80,7 @@ a VRAM slider with live feasibility checking against `/api/plan`, a draft
 model field, and a live seconds-per-token readout once generation starts.
 
 The API is OpenAI-compatible (`/v1/chat/completions`, `/v1/models`) plus
-Afterimage's own fields for the dial — see
+Afterimage's own fields for the dial, documented in
 [CONFIGURATION.md](CONFIGURATION.md#server-side-api-fields). Operational
 endpoints: `GET /health`, `GET /api/version`, `GET /api/stats`.
 
@@ -117,6 +120,6 @@ not affect `compress`/`run`/`serve`. See
 
 ## Next steps
 
-- [CONFIGURATION.md](CONFIGURATION.md) — every knob, what it costs, supported architectures
-- [TROUBLESHOOTING.md](TROUBLESHOOTING.md) — common failures and fixes
-- [HOW_IT_WORKS.md](HOW_IT_WORKS.md) — the mechanism, method by method, next to AirLLM
+- [CONFIGURATION.md](CONFIGURATION.md): every knob, what it costs, supported architectures
+- [TROUBLESHOOTING.md](TROUBLESHOOTING.md): common failures and fixes
+- [HOW_IT_WORKS.md](HOW_IT_WORKS.md): the mechanism, method by method, next to AirLLM

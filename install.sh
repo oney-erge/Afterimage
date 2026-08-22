@@ -1,37 +1,40 @@
 #!/usr/bin/env bash
-# Afterimage installer for Linux/WSL2: detects GPU vendor, installs the
-# matching torch build, creates a venv, editable-installs the package, and
-# runs the hardware diagnosis. If Afterimage is already installed here,
-# re-running this script just launches the server instead of reinstalling
-# -- safe to bind to a desktop shortcut or a `make run`-style habit.
+# Sets up Afterimage on Linux/WSL2/macOS the first time; every time after
+# that, just starts it. Run it with `./start` at the repo root, or this
+# file directly -- same thing.
+#
+# Detects your GPU, installs the matching torch build, creates a venv,
+# editable-installs the package, and runs the hardware check. If it's
+# already set up here, it skips straight to launching the server.
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV_DIR="$REPO_DIR/.venv"
 
-log() { echo "[install] $*"; }
+log() { echo "[start] $*"; }
 
 detect_gpu() {
   if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then
     echo "nvidia"
   elif command -v rocm-smi >/dev/null 2>&1 && rocm-smi >/dev/null 2>&1; then
     echo "amd"
+  elif [ "$(uname -s)" = "Darwin" ]; then
+    echo "mac"
   else
     echo "none"
   fi
 }
 
 if [ -x "$VENV_DIR/bin/afterimage" ]; then
-  log "already installed at $VENV_DIR -- launching (re-run with --reinstall to rebuild the venv)"
   if [ "${1:-}" = "--reinstall" ]; then
-    log "removing existing venv for a clean reinstall"
+    log "rebuilding from scratch"
     rm -rf "$VENV_DIR"
   else
     exec "$VENV_DIR/bin/afterimage" serve
   fi
 fi
 
-log "setting up a new environment at $VENV_DIR"
+log "first run -- setting things up (this takes a few minutes)"
 GPU_VENDOR="$(detect_gpu)"
 log "detected GPU vendor: $GPU_VENDOR"
 
@@ -55,6 +58,16 @@ case "$GPU_VENDOR" in
     pip install torch --index-url https://download.pytorch.org/whl/rocm6.1
     pip install -e "$REPO_DIR[server]"
     ;;
+  mac)
+    log "macOS: this runs CPU-only, and that's a real limit worth stating plainly."
+    log "Afterimage's decode kernels need CUDA, which Macs don't have. A streamed"
+    log "14B model on CPU is slow enough to be a demo, not a daily tool."
+    log "If your Mac has enough unified memory to hold the model directly, a"
+    log "normal (non-streaming) runtime will just be faster -- Afterimage exists"
+    log "for the case where the model doesn't fit, which unified memory often avoids."
+    pip install torch
+    pip install -e "$REPO_DIR[server]"
+    ;;
   none)
     log "no GPU detected -- installing CPU-only torch (inference will be slow;"
     log "the GPU decode kernels in afterimage/runtime/gpu_decode*.py require CUDA)"
@@ -63,14 +76,11 @@ case "$GPU_VENDOR" in
     ;;
 esac
 
-log "running hardware diagnosis"
 afterimage doctor || true
 
-log "install complete."
-log "Running the quickstart (compresses a small model, ~2 GB, and generates a"
-log "few tokens) to prove this install actually works before you commit an"
-log "hour and ~50 GB to a real model. Ctrl-C to skip it."
-afterimage quickstart --yes || log "quickstart did not finish -- see the output above"
+log "set up. Running a small model end to end first, so you can see it work"
+log "before waiting on a big download. Ctrl-C to skip straight to the server."
+afterimage quickstart --yes || log "that didn't finish -- see above, but the server will still start"
 
-log "Launching the server (Ctrl-C to stop; re-run this script any time to relaunch)."
+log "starting the server (Ctrl-C to stop; run this script again any time)"
 exec afterimage serve
