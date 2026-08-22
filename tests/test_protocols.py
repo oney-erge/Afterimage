@@ -16,6 +16,12 @@ def test_every_hypothesis_has_one_valid_protocol():
         "physical storage request geometry")
     assert protocol_for("h15-extent-qubo-residency").family == (
         "offline tensor placement")
+    assert protocol_for("h16-spec-critical-path").family == (
+        "offline tensor placement")
+    assert protocol_for("h17-tensor-extents").family == (
+        "physical storage request geometry")
+    assert protocol_for("h18-rollback-cached-spec").family == (
+        "exact speculative execution mechanics")
     payload = protocol_payload()
     assert payload["evidence_levels"]["L1"].startswith("mechanism smoke")
 

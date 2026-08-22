@@ -11,6 +11,8 @@ def test_all_hypotheses_and_profiles_are_registered():
         (11, "neural-utility-spec"),
         (12, "bayesian-prefetch"), (13, "qubo-residency"),
         (14, "coalesced-storage"), (15, "extent-qubo-residency"),
+        (16, "spec-critical-path"), (17, "tensor-extents"),
+        (18, "rollback-cached-spec"),
     ]}
     assert all(h.candidate_profile in PROFILES and h.control_profile in PROFILES
                for h in HYPOTHESES.values())

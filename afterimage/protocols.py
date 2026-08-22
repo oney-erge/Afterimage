@@ -131,6 +131,28 @@ PROTOCOLS = {
         "differ from fixed k in at least 10% of opportunities.",
         "Paired 95% lower bound is positive, point effect clears the gate, no "
         "major prompt family regresses, and the target-distribution test passes."),
+    "speculation-runtime": TestProtocol(
+        "speculation-runtime", "exact speculative execution mechanics",
+        "paired committed tokens/second versus the same frozen draft chain",
+        ("token_ids_at_temperature_zero", "target_sweeps", "accepted_tokens",
+         "cache_crops", "cached_prefix_tokens", "peak_vram"),
+        (
+            COMMON_INVARIANT,
+            EvidenceStage("l1-mechanism", "L1", "Prove cache/action divergence",
+                          minimum_cases=1, tokens_per_case=4,
+                          paired_repeats=1, max_minutes=15),
+            EvidenceStage("l2-screen", "L2", "Randomized paired prompt screen",
+                          minimum_cases=4, tokens_per_case=8,
+                          paired_repeats=2, max_minutes=40),
+            EvidenceStage("l3-confirm", "L3", "Frozen long-context confirmation",
+                          minimum_cases=4, tokens_per_case=16,
+                          paired_repeats=3, max_minutes=60,
+                          confirmatory=True),
+        ),
+        "Advance only when the cache/action mechanism is exercised, greedy "
+        "tokens match at temperature zero, and peak VRAM remains within 5%.",
+        "Paired 95% lower bound is positive, the point effect clears the gate, "
+        "tokens match, and no prompt family or long-context stratum regresses."),
     "certified-search": TestProtocol(
         "certified-search", "exact branch-and-bound search",
         "certified rows avoided and end-to-end greedy throughput",
@@ -231,6 +253,9 @@ HYPOTHESIS_PROTOCOLS = {
     "h13-qubo-residency": "placement-latency",
     "h14-coalesced-storage": "storage-extent",
     "h15-extent-qubo-residency": "placement-latency",
+    "h16-spec-critical-path": "placement-latency",
+    "h17-tensor-extents": "storage-extent",
+    "h18-rollback-cached-spec": "speculation-runtime",
 }
 
 

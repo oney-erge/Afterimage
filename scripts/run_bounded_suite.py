@@ -125,6 +125,14 @@ METHODS = {
          "storage_extent_max_bytes": 1 << 28,
          "storage_extent_max_gap_bytes": 0},
         "reference_execution_equivalent", 20.0),
+    "tensor-extents": Method(
+        "tensor-extents", "Afterimage tensor-scoped micro-extents", "afterimage",
+        {"vram_budget_gb": 4.00, "decode_slice_elems": 1 << 22,
+         "io_prefetch_depth": 2,
+         "storage_read_policy": "tensor_extents",
+         "storage_extent_max_bytes": 1 << 23,
+         "storage_extent_max_gap_bytes": 0},
+        "reference_execution_equivalent", 20.0),
     "replay-extent-qubo": Method(
         "replay-extent-qubo", "Afterimage physical-extent QUBO residency",
         "afterimage",
@@ -140,6 +148,19 @@ METHODS = {
         {"vram_budget_gb": 2.70, "decode_slice_elems": 1 << 22,
          "io_prefetch_depth": 2, "draft_mode": "model", "spec_k": 8,
          "spec_k_policy": "fixed"}, "greedy_token_exact_at_temperature_zero", 8.0),
+    "spec-critical": Method(
+        "spec-critical", "Afterimage critical-path residency + fixed speculation",
+        "afterimage",
+        {"vram_budget_gb": 2.70, "decode_slice_elems": 1 << 22,
+         "io_prefetch_depth": 2, "placement_policy": "critical_path",
+         "draft_mode": "model", "spec_k": 8, "spec_k_policy": "fixed"},
+        "greedy_token_exact_at_temperature_zero", 8.0),
+    "spec-cached": Method(
+        "spec-cached", "Afterimage rollback-cached target speculation", "afterimage",
+        {"vram_budget_gb": 2.70, "decode_slice_elems": 1 << 22,
+         "io_prefetch_depth": 2, "draft_mode": "model", "spec_k": 8,
+         "spec_k_policy": "fixed", "spec_target_cache": True},
+        "greedy_token_exact_at_temperature_zero", 8.0),
     "spec-hazard": Method(
         "spec-hazard", "Afterimage frozen rejection-hazard stopping", "afterimage",
         {"vram_budget_gb": 2.70, "decode_slice_elems": 1 << 22,
@@ -415,6 +436,8 @@ def run_afterimage(method: Method, rendered: list[dict], n_tokens: int,
                     if hasattr(engine._prefetch_controller, "state_dict") else None),
                 "spec_sweeps": stats.spec_sweeps,
                 "spec_accepted_tokens": stats.spec_accepted_tokens,
+                "spec_cache_crops": stats.spec_cache_crops,
+                "spec_cached_prefix_tokens": stats.spec_cached_prefix_tokens,
                 "tokens_per_target_sweep": len(generated) / max(stats.spec_sweeps, 1),
                 "policy_state": policy.state_dict() if policy is not None else None,
                 "mips_certified": stats.mips_certified,
@@ -779,7 +802,7 @@ def main() -> int:
         temp_dir = pathlib.Path(temp_name)
         if any(name in selected for name in (
                 "critical-path", "profiled-knapsack", "replay-cem",
-                "replay-qubo", "replay-extent-qubo")):
+                "replay-qubo", "replay-extent-qubo", "spec-critical")):
             log("\nCALIBRATION: critical-path profile")
             try:
                 critical = prepare_critical_profile(tokenizer, temp_dir, deadline)
@@ -857,7 +880,9 @@ def main() -> int:
                                        if pin_preflight is not None else None),
                 })
                 continue
-            if method_id in {"critical-path", "profiled-knapsack"} and critical is None:
+            if method_id in {
+                    "critical-path", "profiled-knapsack", "spec-critical"
+                    } and critical is None:
                 result["failures"].append({"method": method_id,
                                            "error": "not started: calibration failed"})
                 continue
@@ -881,8 +906,9 @@ def main() -> int:
                         },
                     })
                     continue
-            if method_id in {"spec-fixed", "spec-hazard", "spec-neural",
-                             "chunked-spec"} and draft_model is None:
+            if method_id in {
+                    "spec-fixed", "spec-critical", "spec-cached", "spec-hazard",
+                    "spec-neural", "chunked-spec"} and draft_model is None:
                 from afterimage.runtime.streaming_engine import load_draft_model
                 log("\nLoading resident draft model %s" % DRAFT_MODEL)
                 draft_model = load_draft_model(DRAFT_MODEL, device="cuda")
