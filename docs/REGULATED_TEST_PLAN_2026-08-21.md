@@ -3,10 +3,15 @@
 Date: 2026-08-21
 
 Status: implemented as a machine-readable L0-L3 protocol registry in
-`afterimage/protocols.py`, exposed by `afterimage test-plan` and the experiment
+`afterimage/protocols.py`, exposed by `afterimage research test-plan` and the experiment
 API. This document is the proposed execution order. Existing short result files
 remain valid mechanism screens, but they are not retroactively promoted to
 confirmatory evidence.
+
+The proposed H9/H11/H12/H14/H15 gates have now been executed, followed by the
+H0/H3/H6/H7/H8 reevaluation and H9 smaller-scale pinned screen. See
+[`ALL_HYPOTHESES_AND_BASELINES.md`](ALL_HYPOTHESES_AND_BASELINES.md) for the
+controlling comparison and decisions.
 
 ## Why one benchmark matrix is not a scientific test
 
@@ -55,12 +60,13 @@ Correctness, resource and environment gates override timing.
 | Certified search | H5 | adversarial certificate audit and >=70% predicted pruning | real-head pruning, fallbacks, index amortization and end-to-end latency |
 | Artifact design | H6, H7 | representative bitwise round trips | cross-family/checkpoint coverage before any live GPU claim |
 | RAM overlay | H9 | host can pin >=1.6 GB with no pageable fallback | matched-VRAM paired screen, then fixed-stage pinned confirmation |
+| Storage request geometry | H14 | exact tokens, >=50% fewer calls and <=5% byte amplification | fixed-residency randomized pairs |
 
 Exact stage counts, diagnostics and decision rules are queryable with:
 
 ```bash
-afterimage test-plan h12-bayesian-prefetch --json
-afterimage test-plan h13-qubo-residency
+afterimage research test-plan h12-bayesian-prefetch --json
+afterimage research test-plan h13-qubo-residency
 ```
 
 ## Current H11-H13 results under the new interpretation
@@ -118,9 +124,11 @@ timing direction cannot be credited to the network.
    control, and log posterior calibration plus inflight bytes. Stop if the 90%
    upper interval is below +5% or wait remains worse; advance only on consistent
    throughput and >=10% lower exposed wait. Target: <=40 minutes.
-4. **H9: keep environment-gated.** This WSL host exposes only 64 MB memlock.
-   Do not treat pageable RAM as pinned H9; rerun only on a host that successfully
-   pins the full 1.56 GB head.
+4. **H9: the mechanism gate now passes at smaller scale.** A systemd scope can
+   raise memlock to unlimited, but WSL2 still caps aggregate CUDA-pinned memory
+   near 1 GB on this host. Qwen3-0.6B's 0.311 GB head completed the genuine
+   pinned screen at +41.4% throughput and matched VRAM. The full 1.556 GB 14B
+   head still needs native Linux or a different host.
 5. **AirLLM: anchor L2/L3 sessions, not every microtest.** Rerun it once per
    regulated hardware session with identical model, BF16 greedy protocol, EOS
    handling and peak-VRAM counter. Compare matched-memory and extra-memory rows

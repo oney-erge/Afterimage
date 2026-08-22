@@ -1,5 +1,9 @@
 # Bounded research report — 21 August 2026
 
+> Historical first screen. The current controlling interpretation, including
+> later H0/H3/H6/H7/H8/H9 runs and the Accelerate baseline, is
+> [ALL_HYPOTHESES_AND_BASELINES.md](ALL_HYPOTHESES_AND_BASELINES.md).
+
 ## Outcome
 
 The richer benchmark changes the headline. On four held-out prompt types,

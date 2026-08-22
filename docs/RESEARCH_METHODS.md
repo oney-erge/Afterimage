@@ -166,7 +166,7 @@ Generate raw steady-state traces without changing the default planner:
 ```bash
 afterimage run MODEL PROMPT --vram-budget-gb 4 \
   --trace-output traces/control-01.json --max-new-tokens 32
-afterimage profile-trace traces/control-*.json \
+afterimage research profile-trace traces/control-*.json \
   --out profiles/MODEL-critical-path.json \
   --manifest STORE/manifest.json
 ```
@@ -399,14 +399,12 @@ Both are implemented and measured. H14's mechanism gate passed cleanly (read
 calls fell 89%, byte amplification stayed at 0%) and its performance gate
 failed hard: **27.7% slower**, because a large contiguous read serialises
 against decode instead of overlapping with it -- a real negative result about
-this engine's I/O/decode overlap, not an unfinished feature. H15 could not
-be evaluated at all in its first hardware run: the frozen plan was identical
-to its control (`treatment_diverged=false`). That was traced to a bug in the
-QUBO planners' `repair()` step silently reimplementing the control's own
-ranking function on every candidate, which has since been fixed in
-`replay_planner.py` -- H13 and H15 both need a fresh calibration run before
-either can be judged. Full derivation:
+this engine's I/O/decode overlap, not an unfinished feature. H15's fresh extent
+calibration evaluated 81 physical groups and 369 candidates but still returned
+the profiled control with 100% overlap and 0% gain. H13 and H15 therefore remain
+stopped at the action-divergence gate. Full derivation:
 [HYPOTHESIS_LINEAGE.md](HYPOTHESIS_LINEAGE.md).
 
-Run `afterimage experiments --json` for the machine-readable H0-H15 registry,
-or `afterimage test-plan HYPOTHESIS --json` for its regulated protocol.
+Run `afterimage research experiments --json` for the machine-readable H0-H15
+registry, or `afterimage research test-plan HYPOTHESIS --json` for its regulated
+protocol.

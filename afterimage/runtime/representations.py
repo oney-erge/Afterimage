@@ -68,8 +68,45 @@ class RepresentationPlan:
                    schema_version=int(payload["schema_version"]))
 
 
-def _prune_dominated(states: dict[tuple[int, int], tuple[float, int, dict]]) -> dict:
+def _prune_dominated(states: dict[tuple[int, int], tuple[float, int, object]]) -> dict:
     """Drop states no better in either memory dimension or objective."""
+    # Representation alternatives commonly share the same persistent-store
+    # bytes (for example, one exact compressed artifact staged from disk,
+    # compressed RAM, decoded RAM, or VRAM).  In that case the original
+    # all-pairs dominance scan is needlessly quadratic.  Sweep VRAM/RAM in
+    # ascending order and query the best preparation cost at any smaller RAM
+    # usage with a Fenwick prefix-min tree: O(n log n), exactly the same
+    # dominance relation.  Keep the general four-dimensional fallback for
+    # alternatives whose storage sizes really differ.
+    storage_values = {value[1] for value in states.values()}
+    if len(storage_values) <= 1 and states:
+        ordered = sorted(states.items(),
+                         key=lambda item: (item[0][0], item[0][1], item[1][0]))
+        ram_values = sorted({state[1] for state in states})
+        ram_index = {value: i + 1 for i, value in enumerate(ram_values)}
+        tree = [math.inf] * (len(ram_values) + 1)
+
+        def query(index: int) -> float:
+            best = math.inf
+            while index > 0:
+                best = min(best, tree[index])
+                index -= index & -index
+            return best
+
+        def update(index: int, value: float) -> None:
+            while index < len(tree):
+                tree[index] = min(tree[index], value)
+                index += index & -index
+
+        kept = {}
+        for state, value in ordered:
+            index = ram_index[state[1]]
+            if query(index) <= value[0]:
+                continue
+            kept[state] = value
+            update(index, value[0])
+        return kept
+
     kept = {}
     ordered = sorted(states.items(), key=lambda item: (item[0][0], item[0][1], item[1][0]))
     for state, value in ordered:
@@ -97,7 +134,14 @@ def plan_representations(options: list[RepresentationOption], *, vram_budget_byt
     q = max(1, quantum_bytes)
     vcap = vram_budget_bytes // q
     rcap = ram_budget_bytes // q
-    states: dict[tuple[int, int], tuple[float, int, dict]] = {(0, 0): (0.0, 0, {})}
+    # Keep choices as linked back-pointers.  Copying a growing dictionary for
+    # every DP transition made a real 441-tensor plan consume gigabytes and
+    # minutes even though dominance pruning discarded almost all copies.
+    # Back-pointers preserve the exact selected path with O(1) transition
+    # memory; reconstruct the one winning dictionary only at the end.
+    states: dict[tuple[int, int], tuple[float, int, object]] = {
+        (0, 0): (0.0, 0, None)
+    }
     for tensor_key, choices in grouped.items():
         next_states = {}
         for (used_v, used_r), (cost, storage, selected) in states.items():
@@ -111,7 +155,7 @@ def plan_representations(options: list[RepresentationOption], *, vram_budget_byt
                 if storage_budget_bytes is not None and ns > storage_budget_bytes:
                     continue
                 candidate = (cost + option.prepare_s, ns,
-                             {**selected, tensor_key: option})
+                             (selected, tensor_key, option))
                 current = next_states.get((nv, nr))
                 if current is None or candidate[:2] < current[:2]:
                     next_states[(nv, nr)] = candidate
@@ -120,8 +164,12 @@ def plan_representations(options: list[RepresentationOption], *, vram_budget_byt
             return RepresentationPlan({}, 0, 0, 0, 0.0, False,
                                       "no representation for %s fits the budgets" % tensor_key)
 
-    (used_v, used_r), (cost, storage, selected) = min(
+    (used_v, used_r), (cost, storage, selected_node) = min(
         states.items(), key=lambda item: (item[1][0], item[1][1]))
+    selected = {}
+    while selected_node is not None:
+        selected_node, tensor_key, option = selected_node
+        selected[tensor_key] = option
     return RepresentationPlan(selected, used_v * q, used_r * q, storage, cost)
 
 

@@ -1,5 +1,8 @@
 # What this is, method by method, next to AirLLM
 
+System and evidence-flow diagrams are collected in
+[ARCHITECTURE.md](ARCHITECTURE.md).
+
 Qwen3-14B is **29.5 GB**. The GPU has **8 GB**. The model does not fit.
 
 AirLLM and this engine solve that the same way: **stream the model through
@@ -217,7 +220,7 @@ rather than confirmatory: it is one repeat, not the five-repeat protocol
 | **CPU/GPU split decode** | Use the idle 16-core CPU to decode | Passed its isolated gate at 1.33 GB/s, then made the engine **0.52x** once integrated — CPU decode ran inside the same thread as the I/O it was meant to overlap. Removed. |
 | **Coalesced storage reads (H14)** | Merge adjacent blob reads into fewer, larger requests | Cut read calls 89% with zero byte amplification, then made the engine **0.72x** (27.7% slower) — a large contiguous read serialises against decode instead of overlapping with it. |
 | **Neural speculative stopping (H11)** | Learn when to stop drafting from a tiny survival network | **Zero stop decisions** in every calibration run: the break-even survival probability is structurally under ~2% given real costs, so the network is fixed-k in disguise unless genuinely low-confidence positions are sampled. |
-| **QUBO residency search (H13/H15)** | Anneal a pairwise-interaction Hamiltonian over resident tensor sets | Returned exactly its control seed — traced to a repair-step bug that silently reimplemented the control's own ranking; fixed, awaiting a rerun. |
+| **QUBO residency search (H13/H15)** | Anneal a pairwise-interaction Hamiltonian over resident tensor/extent sets | After making repair eviction-only, a fresh run still returned exactly its control: 730 H13 and 369 H15 evaluations, 0% gain and 100% overlap. |
 
 ---
 

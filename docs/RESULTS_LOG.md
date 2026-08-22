@@ -775,3 +775,68 @@ Raw files: `results/2026-08-21_h9_ram_overlay_*.json`,
 `results/2026-08-21_h13_qubo_qwen3-14b_rtx3080_screen2.json`,
 `results/2026-08-21_h14_coalesced_storage_*.json`,
 `results/2026-08-21_h15_extent_qubo_qwen3-14b_rtx3080_gate1.json`.
+
+### Regulated/post-repair follow-up (controlling evidence)
+
+The preregistered follow-ups above were subsequently executed. This entry is
+append-only and supersedes the earlier forward-looking statements without
+rewriting their chronology.
+
+- **H11:** reached 200 training observations (Brier 0.115; 88% positive
+  labels), then stopped 0/47 times on two held-out regimes. The frozen policy
+  failed its 10% action-divergence gate; no latency comparison was run.
+- **H12:** two randomized four-family blocks, four tokens per cell, completed
+  in 36.8 minutes with a same-session AirLLM anchor. Bayesian prefetch was
+  5.89% slower paired (90% interval [-8.01%, +5.55%]), won 3/8 pairs, and
+  increased exposed wait 28.2%. Exact tokens and 780 posterior observations
+  show this is a performance/mechanism failure, not missing calibration.
+- **H13/H15 repair correction:** both planners were rerun from fresh traces
+  after repair became eviction-only. H13 evaluated 730 candidates; H15
+  evaluated 369 over 81 physical extents. Both still returned the control with
+  0% gain and 100% overlap, so the null result survives the repair fix and GPU
+  timing remains blocked.
+- **H14:** a second implementation removed constituent-array copies through
+  writable shared extent buffers. Exactness and the 89.1% call reduction held,
+  but paired performance still regressed 27.7%; the current approach is killed.
+- **H9:** a fail-closed preflight measured 64 MiB soft/hard memlock versus the
+  required 1.6 GB and skipped allocation. Pageable fallback is no longer
+  accepted as H9 evidence.
+
+Concise tables and raw links:
+[`FINAL_TEST_RESULTS_2026-08-21.md`](FINAL_TEST_RESULTS_2026-08-21.md).
+
+## 2026-08-22 final reevaluation and external baseline
+
+This append-only entry supersedes the H9 environment conclusion and fills the
+offline/artifact gaps without rewriting the earlier measurements.
+
+- **H9:** the shell memlock limit was raised to unlimited with a systemd scope.
+  CUDA-pinned allocations succeeded through 1.0 GB and failed above that, which
+  is consistent with NVIDIA's documented WSL2 pinned-memory limitation. The
+  intended full decoded-head treatment therefore ran on Qwen3-0.6B, whose
+  0.311 GB head fits: 1.279 versus 1.809 s/token, +41.4% throughput, 0.419 GB
+  matched peak VRAM, identical token IDs, and no pageable fallback. The 14B
+  scale question remains open because its head is 1.556 GB.
+- **H0/H3:** the 2.56% oracle gate was reproduced from the fixed/hazard result
+  rows. Four-fold held-out H3 replay reached 97.50% of oracle but chose exactly
+  the baseline reward, so it ran successfully and added 0%.
+- **H6:** the first real 441-tensor DP revealed a quadratic state-pruning and
+  path-copy bottleneck; both were repaired. A zero transfer field in the event
+  trace then exposed a cost-model error. After flooring RAM copies with a real
+  6.669 GB/s pinned H2D benchmark, the exact mixed plan predicts 15.011 versus
+  24.421 seconds of preparation (38.56% lower), at 3.959 GB VRAM and 7.986 GB
+  RAM. This passes only the offline prediction gate.
+- **H7:** eight real Qwen1.5-MoE-A2.7B expert tensors round-tripped exactly.
+  Forced XOR reference storage was 2.24% larger than independent zlib; the safe
+  chooser fell back and saved 0%.
+- **H8:** two real held-out replay/timing pairs produced 11.87% MAPE and -0.80
+  rank correlation. The selected policy improved only 0.33%, so the simulator
+  gate failed.
+- **Hugging Face Accelerate:** the 1.8 GB automatic map used no CUDA at all and
+  was preserved only as an excluded CPU diagnostic. At a 4.0 GB allowance the
+  map used 2 CUDA, 9 CPU, and 33 disk modules; the four-family BF16 result was
+  14.318 s/token at 3.800 GB with the same token IDs. It beats Afterimage
+  residency alone, while Afterimage fixed speculation remains 1.56x faster.
+
+Controlling report:
+[`ALL_HYPOTHESES_AND_BASELINES.md`](ALL_HYPOTHESES_AND_BASELINES.md).

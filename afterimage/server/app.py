@@ -589,16 +589,22 @@ def _specialized_experiment(hypothesis_id: str, req: ExperimentRunRequest,
             raise ValueError("independent_compressed_bytes missing %s" % sorted(missing_sizes))
         independent_total = sum(float(independent[key]) for key in tensors)
         candidate_total = 0.0
+        reference_total = 0.0
         for key in tensors:
             if key in bases or audit[key] is None:
                 candidate_total += float(independent[key])
+                reference_total += float(independent[key])
             else:
                 candidate_total += min(float(independent[key]),
                                        float(audit[key]["compressed_bytes"]))
+                reference_total += float(audit[key]["compressed_bytes"])
         total_gain = 1.0 - candidate_total / max(independent_total, 1.0)
         run.summary = {"audit": audit, "reference_bases": sorted(bases),
                        "independent_bytes": independent_total,
                        "candidate_bytes": candidate_total,
+                       "reference_only_bytes": reference_total,
+                       "reference_only_reduction": (
+                           1.0 - reference_total / max(independent_total, 1.0)),
                        "total_storage_reduction": total_gain}
         run.verdict = "favored" if total_gain >= hypothesis.minimum_effect else "falsified"
     elif hypothesis.runner == "trace_simulator":

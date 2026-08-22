@@ -19,7 +19,7 @@ Issues = "https://github.com/iodriller/Afterimage/issues"
 [project.optional-dependencies]
 gpu = ["torch>=2.2", "triton>=2.2"]
 server = ["fastapi>=0.110", "uvicorn[standard]>=0.29", "pydantic>=2.0", "websockets>=12.0"]
-bench = ["airllm"]
+bench = ["airllm", "accelerate>=1.0"]
 # Only needed for EngineConfig(cpu_decode_fraction=...) -- see its docstring
 # and docs/RESULTS_LOG.md before enabling it; currently measured to make
 # wall time flat-to-worse on the real 14B despite a JIT-compiled decoder

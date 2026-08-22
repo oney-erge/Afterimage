@@ -1,5 +1,6 @@
 from afterimage.runtime.representations import (
-    RepresentationOption, plan_representations, validate_artifacts,
+    RepresentationOption, _prune_dominated, plan_representations,
+    validate_artifacts,
 )
 
 
@@ -39,3 +40,27 @@ def test_representation_plan_round_trip(tmp_path):
     plan.save(path)
     loaded = type(plan).load(path)
     assert loaded == plan
+
+
+def test_equal_storage_fast_prune_matches_brute_force_dominance():
+    states = {}
+    for vram in range(9):
+        for ram in range(11):
+            # Deterministic, non-monotone costs exercise memory/cost tradeoffs.
+            cost = float(((vram * 17 + ram * 29) % 31) + (vram + ram) / 100)
+            states[(vram, ram)] = (cost, 1234, (vram, ram))
+
+    expected = {}
+    for state, value in states.items():
+        dominated = any(
+            other_state != state
+            and other_state[0] <= state[0]
+            and other_state[1] <= state[1]
+            and other[0] <= value[0]
+            and other[1] <= value[1]
+            for other_state, other in states.items()
+        )
+        if not dominated:
+            expected[state] = value
+
+    assert _prune_dominated(states) == expected

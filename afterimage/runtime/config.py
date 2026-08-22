@@ -99,6 +99,10 @@ class EngineConfig:
         array. "coalesced_extents" merges physically adjacent arrays into
         bounded reads before exact decoding. It changes request geometry and
         temporary host-buffer size, never tensor values or model arithmetic.
+        "tensor_extents" applies the bounded merge within one tensor only.
+        The tensor remains the prefetch scheduling and timing unit, avoiding
+        the layer-wide serialization measured for H14 while still amortizing
+        fixed requests for its adjacent metadata blobs.
         storage_extent_max_bytes bounds a merged request and
         storage_extent_max_gap_bytes bounds otherwise-unused gap bytes read.
 
@@ -229,6 +233,12 @@ class EngineConfig:
         distribution for any k -- a bad choice costs a slow sweep, never a
         wrong token. See runtime/spec_policy.py's module docstring.
 
+    spec_target_cache
+        Reuse the target model's exact KV prefix between speculative sweeps.
+        After verification, the cache is cropped to the accepted prefix minus
+        its last token; the next sweep feeds that token plus the new proposal.
+        False preserves the historical full-prefix recomputation control.
+
     pin_draft_layers
         Only meaningful with draft_mode="self". When True, the residency
         planner treats layers [0, draft_exit_layer) as used (spec_k + 1)
@@ -319,6 +329,7 @@ class EngineConfig:
     draft_exit_layer: int | None = None
     spec_k: int = 8
     spec_k_policy: str = "fixed"
+    spec_target_cache: bool = False
     pin_draft_layers: bool = False
     spec_policy_state: str | None = None
     spec_policy_learn: bool = True
@@ -356,9 +367,11 @@ class EngineConfig:
             raise ValueError(
                 "io_prefetch_depth must be >= 0 (0 disables prefetch), got %d"
                 % self.io_prefetch_depth)
-        if self.storage_read_policy not in ("per_blob", "coalesced_extents"):
+        if self.storage_read_policy not in (
+                "per_blob", "coalesced_extents", "tensor_extents"):
             raise ValueError(
-                "storage_read_policy must be 'per_blob' or 'coalesced_extents', "
+                "storage_read_policy must be 'per_blob', 'coalesced_extents' "
+                "or 'tensor_extents', "
                 "got %r" % self.storage_read_policy)
         if self.storage_extent_max_bytes < 1:
             raise ValueError("storage_extent_max_bytes must be positive")

@@ -1,11 +1,13 @@
 # Hypothesis lineage
 
 Where each Afterimage hypothesis came from, what was actually borrowed, and
-what was changed. **None of these is claimed as novel.** Every mechanism below
-is an adaptation of published work from speculative decoding, systems
-optimisation, control theory, survival analysis, or compression; the only thing
-that is ours is the specific transfer to lossless compressed weight streaming —
-and, so far, every one of those transfers has failed its gate.
+what was changed. **None of these is claimed as a confirmed novel method.** Every
+mechanism below adapts published work from speculative decoding, systems
+optimisation, control theory, survival analysis, or compression; what is ours is
+the specific transfer to lossless compressed weight streaming. The evidence is
+mixed: some performance candidates are contradicted, some have only a small
+positive direction, some are gated or inapplicable, and one passed its mechanism
+gate while regressing end to end. None has reached L3 confirmation.
 
 Citation status is marked per row:
 **[V]** = source independently re-checked against the publisher/arXiv record on
@@ -13,7 +15,7 @@ Citation status is marked per row:
 [LITERATURE.md](LITERATURE.md) / [RESEARCH_METHODS.md](RESEARCH_METHODS.md)
 without a fresh check in that pass.
 
-Verdicts and measured numbers: [README](../README.md#the-research-layer-16-hypotheses-0-passed)
+Verdicts and measured numbers: [README](../README.md#research-status-mixed-evidence-no-l3-confirmation)
 and [BOUNDED_RESEARCH_REPORT_2026-08-21.md](BOUNDED_RESEARCH_REPORT_2026-08-21.md).
 
 ---
@@ -22,7 +24,7 @@ and [BOUNDED_RESEARCH_REPORT_2026-08-21.md](BOUNDED_RESEARCH_REPORT_2026-08-21.m
 
 | ID | Hypothesis | Source | Afterimage adaptation |
 |---|---|---|---|
-| **H0** | Oracle gap — check first whether different prompts or system states actually *need* different configurations. If the theoretical upside is tiny, adaptive control is not worth building. | **[V]** [BanditSpec](https://arxiv.org/abs/2505.15141) (ICML 2025, PMLR 267:24045) evaluates adaptive speculative-decoding policies against an *oracle best hyperparameter* upper bound. | Used as a **research gate**, not a method. The oracle gap is measured before anything adaptive is built; H3 and H8 are only worth pursuing if enough headroom exists. Measured 2.56% against a 12% gate — so H3/H8 were never run. |
+| **H0** | Oracle gap — check first whether different prompts or system states actually *need* different configurations. If the theoretical upside is tiny, adaptive control is not worth building. | **[V]** [BanditSpec](https://arxiv.org/abs/2505.15141) (ICML 2025, PMLR 267:24045) evaluates adaptive speculative-decoding policies against an *oracle best hyperparameter* upper bound. | Used as a **research gate**, not a method. The measured gap is 2.56% against a 12% gate. H3/H8 were later executed as bounded replays anyway: H3 reproduced the baseline and H8 failed simulator calibration, confirming that the gate had identified little usable upside. |
 
 This is the most useful thing in the whole research layer, and it cost one
 afternoon: it prevented an entire RL stack from being built on a 2.5% ceiling.
@@ -40,9 +42,10 @@ afternoon: it prevented an entire RL stack from being built on a 2.5% ceiling.
 | **H15** | Physical-extent QUBO residency — make the binary variable a bounded contiguous `weights.bin` span rather than a tensor. | Same as H13, plus the H14 observation that request geometry matters. | Selecting a variable makes every tensor in that span resident, coupling physical layout to residency while keeping the runtime's tensor-level plan artifact unchanged. |
 
 H13 and H15 both returned **exactly their control plan** (`treatment_diverged =
-false`). See the review's root-cause note: the budget-repair operator is itself
-a greedy density knapsack over the same coefficients the control uses, so it
-maps almost any annealed state back to the seed.
+false`). Greedy budget refill was identified as one confound and removed, but a
+fresh post-repair run still produced 0% gain and 100% overlap after 730 tensor
+and 369 extent evaluations. The current null result therefore survives that
+correction.
 
 ---
 

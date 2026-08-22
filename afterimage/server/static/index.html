@@ -74,10 +74,12 @@
   .verdict-box { border-radius: 6px; padding: 10px 12px; margin: 10px 0; font-size: 12.5px; line-height: 1.55; }
   .verdict-box.v-contradicted, .verdict-box.v-mechanism_only { background: var(--danger-dim); }
   .verdict-box.v-below_threshold, .verdict-box.v-no_comparison { background: var(--warn-dim); }
+  .verdict-box.v-positive_screen { background: var(--accent-dim); }
   .verdict-box.v-gate, .verdict-box.v-not_applicable { background: var(--surface); border: 1px solid var(--border); }
   .verdict-label { font-weight: 700; text-transform: uppercase; font-size: 10.5px; letter-spacing: .06em; display: block; margin-bottom: 4px; }
   .v-contradicted .verdict-label, .v-mechanism_only .verdict-label { color: var(--danger); }
   .v-below_threshold .verdict-label, .v-no_comparison .verdict-label { color: var(--warn); }
+  .v-positive_screen .verdict-label { color: var(--accent); }
   .v-gate .verdict-label, .v-not_applicable .verdict-label { color: var(--muted); }
   .experiment-card .detail { color: var(--muted); font-size: 11.5px; margin: 6px 0; line-height: 1.5; font-family: var(--mono); }
   .experiment-card details { margin-top: 10px; }
@@ -469,6 +471,7 @@ function parseJsonField(id) {
 
 const VERDICT_LABEL = {
   gate: 'Diagnostic gate', below_threshold: "No — not enough to promise you",
+  positive_screen: 'Promising L1 screen — not confirmed',
   contradicted: 'No — measured worse', mechanism_only: 'No — worked, but slower overall',
   no_comparison: "Can't tell yet", not_applicable: 'Not applicable here',
 };

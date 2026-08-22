@@ -668,6 +668,12 @@ def main() -> int:
     parser.add_argument("--case-ids", default=None,
                         help="comma-separated evaluation case IDs; default is all")
     parser.add_argument("--time-budget-minutes", type=float, default=58.0)
+    parser.add_argument(
+        "--ram-overlay-vram-budget-gb", type=float, default=None,
+        help="override the matched VRAM budget for exact-min and ram-overlay-head")
+    parser.add_argument(
+        "--ram-overlay-host-budget-gb", type=float, default=None,
+        help="override the pinned-host budget and allocation gate for ram-overlay-head")
     parser.add_argument("--out", required=True)
     args = parser.parse_args()
 
@@ -678,6 +684,23 @@ def main() -> int:
         parser.error("unknown methods: %s" % ", ".join(unknown))
     if args.max_new_tokens < 1:
         parser.error("--max-new-tokens must be positive")
+    if args.ram_overlay_vram_budget_gb is not None:
+        if args.ram_overlay_vram_budget_gb <= 0:
+            parser.error("--ram-overlay-vram-budget-gb must be positive")
+        for method_id in ("exact-min", "ram-overlay-head"):
+            method = METHODS[method_id]
+            METHODS[method_id] = dataclasses.replace(
+                method,
+                overrides={**method.overrides,
+                           "vram_budget_gb": args.ram_overlay_vram_budget_gb})
+    if args.ram_overlay_host_budget_gb is not None:
+        if args.ram_overlay_host_budget_gb <= 0:
+            parser.error("--ram-overlay-host-budget-gb must be positive")
+        method = METHODS["ram-overlay-head"]
+        METHODS["ram-overlay-head"] = dataclasses.replace(
+            method,
+            overrides={**method.overrides,
+                       "ram_budget_gb": args.ram_overlay_host_budget_gb})
 
     out = pathlib.Path(args.out).resolve()
     if out.exists():
@@ -727,6 +750,10 @@ def main() -> int:
         "draft_model": DRAFT_MODEL,
         "store": STORE,
         "selected_methods": selected,
+        "ram_overlay_matched_vram_budget_gb": (
+            METHODS["ram-overlay-head"].overrides["vram_budget_gb"]),
+        "ram_overlay_host_budget_gb": (
+            METHODS["ram-overlay-head"].overrides["ram_budget_gb"]),
         "environment": environment_manifest(repo_root, tokenizer),
         "calibration_artifacts": {},
         "methods": [],
@@ -737,7 +764,9 @@ def main() -> int:
     pin_preflight = None
     if "ram-overlay-head" in selected:
         from afterimage.runtime.memory_preflight import pinned_memory_preflight
-        pin_preflight = pinned_memory_preflight(int(1.60e9), attempt_allocation=True)
+        pin_preflight = pinned_memory_preflight(
+            int(METHODS["ram-overlay-head"].overrides["ram_budget_gb"] * 1e9),
+            attempt_allocation=True)
         result["calibration_artifacts"]["pinned_memory_preflight"] = (
             dataclasses.asdict(pin_preflight))
         checkpoint(partial, result)
@@ -838,13 +867,13 @@ def main() -> int:
                 result["failures"].append({"method": method_id,
                                            "error": "not started: replay plan failed"})
                 continue
-            if method_id == "replay-extent-qubo":
+            if method_id in {"replay-qubo", "replay-extent-qubo"}:
                 report = replay_plans[method_id]["plan"]["report"]
                 if (not report["treatment_diverged"]
                         or report["optimized_over_control"] < 0.02):
                     result["failures"].append({
                         "method": method_id,
-                        "error": "not started: extent-plan mechanism gate failed",
+                        "error": "not started: QUBO plan mechanism gate failed",
                         "mechanism_gate": {
                             "treatment_diverged": report["treatment_diverged"],
                             "optimized_over_control": report["optimized_over_control"],

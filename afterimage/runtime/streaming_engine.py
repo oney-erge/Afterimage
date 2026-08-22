@@ -71,6 +71,8 @@ class StreamStats:
     compute_seconds: float = 0.0
     spec_sweeps: int = 0
     spec_accepted_tokens: int = 0
+    spec_cache_crops: int = 0
+    spec_cached_prefix_tokens: int = 0
     prefetch_hits: int = 0
     prefetch_misses: int = 0
     prefetch_wait_seconds: float = 0.0
@@ -91,6 +93,8 @@ class StreamStats:
         self.compute_seconds = 0.0
         self.spec_sweeps = 0
         self.spec_accepted_tokens = 0
+        self.spec_cache_crops = 0
+        self.spec_cached_prefix_tokens = 0
         self.prefetch_hits = 0
         self.prefetch_misses = 0
         self.prefetch_wait_seconds = 0.0
@@ -713,7 +717,8 @@ class StreamingLosslessModel:
         meta = self.manifest["tensors"][key]
         named_refs = list(meta["blobs"].items())
         t0 = time.perf_counter()
-        if self.config.storage_read_policy == "coalesced_extents":
+        if self.config.storage_read_policy in (
+                "coalesced_extents", "tensor_extents"):
             decoded, read_calls, extent_bytes = self._reader.read_many(
                 [ref for _, ref in named_refs],
                 max_gap_bytes=self.config.storage_extent_max_gap_bytes,
@@ -1115,19 +1120,28 @@ class StreamingLosslessModel:
                 cursor = key_end
             return result, read_calls, extent_bytes
 
-        # per_blob: each tensor is its own real seek+read, so time every
-        # tensor's reads individually -- these spans are genuine
-        # measurements and critical_path.py / CriticalPathProfile may treat
-        # them as such.
+        # per_blob and tensor_extents keep each tensor as its own measured
+        # scheduling unit.  H17 changes only the requests *inside* that
+        # unit; unlike H14 it never creates one layer-wide blocking extent.
         read_calls = 0
         extent_bytes = 0
         for key in layer_keys:
             meta = self.manifest["tensors"][key]
             t0 = time.perf_counter()
-            arrays = {name: reader.read(ref) for name, ref in meta["blobs"].items()}
+            named_refs = list(meta["blobs"].items())
+            if self.config.storage_read_policy == "tensor_extents":
+                decoded, key_calls, key_extent_bytes = reader.read_many(
+                    [ref for _, ref in named_refs],
+                    max_gap_bytes=self.config.storage_extent_max_gap_bytes,
+                    max_extent_bytes=self.config.storage_extent_max_bytes)
+                arrays = {name: array for (name, _), array in zip(named_refs, decoded)}
+            else:
+                arrays = {name: reader.read(ref) for name, ref in named_refs}
+                key_calls = len(named_refs)
+                key_extent_bytes = int(meta["comp_bytes"])
             t1 = time.perf_counter()
-            read_calls += len(meta["blobs"])
-            extent_bytes += int(meta["comp_bytes"])
+            read_calls += key_calls
+            extent_bytes += key_extent_bytes
             event_id = self.trace.record("read", "storage-%d" % id(reader), t0, t1,
                                          tensor_key=key, nbytes=int(meta["comp_bytes"]))
             if event_id:

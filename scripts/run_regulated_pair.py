@@ -63,7 +63,7 @@ def _aggregate_rows(rows: list[dict]) -> dict:
     }
 
 
-def _analyse(result: dict, protocol: dict) -> dict:
+def _analyse(result: dict, protocol: dict, *, level: str = "L2") -> dict:
     trials = result["trials"]
     control_rows = [row for trial in trials if trial["arm"] == "control"
                     for row in trial["rows"]]
@@ -77,7 +77,7 @@ def _analyse(result: dict, protocol: dict) -> dict:
     paired = assess_paired_effect(
         [control_by_pair[key]["wall_seconds"] for key in shared],
         [candidate_by_pair[key]["wall_seconds"] for key in shared],
-        minimum_effect=protocol["minimum_effect"], level="L2", seed=0)
+        minimum_effect=protocol["minimum_effect"], level=level, seed=0)
     exact = bool(shared) and all(
         control_by_pair[key]["output_token_ids"]
         == candidate_by_pair[key]["output_token_ids"] for key in shared)
@@ -159,6 +159,8 @@ def main() -> int:
         parser.error("blocks and max-new-tokens must be positive")
 
     protocol = PROTOCOLS[args.hypothesis]
+    evidence_level = ("L2" if args.blocks >= 2 and args.max_new_tokens >= 4
+                      else "L1")
     out = pathlib.Path(args.out).resolve()
     partial = out.with_suffix(out.suffix + ".partial")
     if out.exists() or partial.exists():
@@ -180,7 +182,9 @@ def main() -> int:
     result = {
         "schema_version": 1,
         "status": "running",
-        "evidence_level": "L2_regulated_exploratory",
+        "evidence_level": (
+            "L2_regulated_exploratory" if evidence_level == "L2"
+            else "L1_mechanism_screen"),
         "confirmatory_protocol_satisfied": False,
         "hypothesis_id": protocol["hypothesis_id"],
         "protocol": protocol,
@@ -248,7 +252,7 @@ def main() -> int:
             _checkpoint(partial, result)
 
     try:
-        result["analysis"] = _analyse(result, protocol)
+        result["analysis"] = _analyse(result, protocol, level=evidence_level)
     except Exception as exc:
         result["failures"].append({
             "phase": "analysis", "error": repr(exc),

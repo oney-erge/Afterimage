@@ -39,6 +39,7 @@ def test_h14_analysis_checks_calls_bytes_and_tokens():
             _row(0, "a", 8.0, [1], storage_read_calls=40,
                  storage_extent_bytes=103)]},
     ]}
-    analysis = _analyse(result, PROTOCOLS["H14"])
+    analysis = _analyse(result, PROTOCOLS["H14"], level="L1")
     assert analysis["mechanism_gate"]["passed"]
     assert analysis["paired_token_exact"]
+    assert analysis["paired_effect"]["decision"] == "mechanism_only"

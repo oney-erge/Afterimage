@@ -46,6 +46,8 @@ class MeasuredOutcome:
     verdict is one of:
       "gate"            -- a diagnostic gate, not a speed treatment; it did its job
       "below_threshold" -- measured a real but sub-gate positive direction
+      "positive_screen" -- passed its registered L1 mechanism/effect gate,
+                            but is not yet a scale-matched L3 result
       "contradicted"    -- measured slower/worse than its named control
       "mechanism_only"  -- the mechanism worked exactly as designed; the
                             end-to-end objective regressed anyway
@@ -193,11 +195,12 @@ HYPOTHESES = {
         ("calibration_dataset", "result_dataset"),
         "Kill if the oracle itself has <12% headroom.",
         measured=MeasuredOutcome(
-            "no_comparison",
-            "Correctly never built -- H0 showed there wasn't enough upside "
-            "to justify it, so no GPU time was spent finding out.",
-            "Not run: H0's oracle gap (2.56%) was below the 12% gate this "
-            "hypothesis requires before it's worth building.")),
+            "below_threshold",
+            "It ran, but learned to use the same fixed policy as the control; "
+            "there was no throughput improvement to capture.",
+            "Four-fold held-out replay reached 97.50% of the oracle, while "
+            "chosen reward equaled baseline reward exactly. H0 limits the "
+            "available oracle headroom to 2.56%.")),
     "h4-feedback-prefetch": Hypothesis(
         "h4-feedback-prefetch", "Feedback-controlled prefetch",
         "PI control reduces exposed stalls under changing storage conditions.",
@@ -234,11 +237,13 @@ HYPOTHESES = {
         ("representation_options", "uniform_prepare_s"),
         "Kill before kernels if predicted gain <10%.",
         measured=MeasuredOutcome(
-            "not_applicable",
-            "Not testable yet -- the current store only has one exact "
-            "representation per tensor, so there's nothing to choose between.",
-            "The v2 compressed store contains no alternative exact "
-            "representations to plan over.")),
+            "positive_screen",
+            "The offline mixed-representation plan passed its prediction "
+            "gate, but it has not passed a held-out live execution.",
+            "Across 441 real tensors, the exact DP predicted 15.01 s of "
+            "preparation versus 24.42 s for uniform disk (38.56% lower), "
+            "using 3.96 GB VRAM and 7.99 GB RAM. Pinned H2D was independently "
+            "measured at 6.669 GB/s.", effect_pct=38.56)),
     "h7-xor-reference": Hypothesis(
         "h7-xor-reference", "Expert-local lossless reference coding",
         "Known BitX-style XOR deltas transfer profitably from model-family "
@@ -248,11 +253,13 @@ HYPOTHESES = {
         ("expert_tensors", "independent_compressed_bytes", "reference_bases"),
         "Kill if residuals are not at least 10% smaller.",
         measured=MeasuredOutcome(
-            "not_applicable",
-            "Not relevant to your model unless it's a mixture-of-experts "
-            "checkpoint -- Qwen3-14B is dense and has no experts to compare.",
-            "Qwen3-14B is dense; there are no expert tensors for this "
-            "hypothesis to act on.")),
+            "contradicted",
+            "The codec is exact, but real experts were less compressible as "
+            "XOR deltas than independently.",
+            "Eight Qwen1.5-MoE layer-0 experts round-tripped bit-for-bit. "
+            "Forced XOR-reference storage was 2.24% larger, so the safe "
+            "chooser fell back to independent storage and saved 0%.",
+            effect_pct=0.0)),
     "h8-model-based-rl": Hypothesis(
         "h8-model-based-rl", "Shadow model-based joint controller",
         "A calibrated trace simulator closes residual contextual-controller regret.",
@@ -260,11 +267,12 @@ HYPOTHESES = {
         "improvement_over_baseline", 0.10, "reference_execution_equivalent",
         ("trace_dataset",), "Kill if simulator MAPE >10% or rank correlation <0.9.",
         measured=MeasuredOutcome(
-            "no_comparison",
-            "Correctly never built -- this is shadow-only until H0 and H3 "
-            "both pass, and neither did.",
-            "Not run: gated behind H0/H3, which the oracle-gap measurement "
-            "already closed.")),
+            "contradicted",
+            "The shadow simulator ran and failed its calibration gate; its "
+            "chosen policy improved only 0.33%.",
+            "Two real held-out CEM/control timing pairs produced 11.87% MAPE "
+            "and -0.80 rank correlation, versus required <=10% and >=0.90.",
+            effect_pct=0.33, n_pairs=2)),
     "h9-ram-overlay-head": Hypothesis(
         "h9-ram-overlay-head", "Liveness-guided RAM output-head overlay",
         "A decoded pinned-RAM lm_head beats disk/decode streaming at matched "
@@ -274,13 +282,14 @@ HYPOTHESES = {
         (), "Kill if gain <10%, peak VRAM rises >5%, or any token differs.",
         minimum_repeats=5, minimum_new_tokens=16,
         measured=MeasuredOutcome(
-            "no_comparison",
-            "Can't tell on a typical WSL2 host -- this needs pinned "
-            "(page-locked) host RAM, and WSL2 usually caps that at 64 MB.",
-            "The pinned-RAM allocation this hypothesis needs was not "
-            "attempted: the host's hard memlock limit is 64 MiB against a "
-            "1.6 GB request. Retest only on a host that can actually pin "
-            "that much RAM.")),
+            "positive_screen",
+            "The pinned output-head mechanism passed at a scale this WSL2 "
+            "host can genuinely pin; the 14B head still exceeds that ceiling.",
+            "On Qwen3-0.6B, 1.279 versus 1.809 s/token is 41.4% higher "
+            "throughput at matched 0.419 GB peak VRAM, with identical tokens "
+            "and no pageable fallback. It reached 3.33x AirLLM. The 1.556 GB "
+            "14B head cannot be pinned under this host's ~1 GB WSL2 ceiling.",
+            effect_pct=41.4)),
     "h10-replay-cem": Hypothesis(
         "h10-replay-cem", "Digital-twin whole-set residency search",
         "Offline CEM search over complete resident sets beats independent "
@@ -294,9 +303,9 @@ HYPOTHESES = {
             "below_threshold",
             "No -- the search landed at parity with the simpler measured-"
             "cost planner, not ahead of it.",
-            "19.480 s/token -- parity with the profiled-knapsack control; "
-            "predicted only +2.1% over the best seeded plan, below the 8% gate.",
-            effect_pct=2.1)),
+            "19.480 versus 19.554 s/token in the common screen (+0.38%); "
+            "a one-token pilot showed +2.1%. Both are below the 8% gate.",
+            effect_pct=0.38)),
     "h11-neural-utility-spec": Hypothesis(
         "h11-neural-utility-spec", "Tiny censored-survival utility controller",
         "A pooled nonlinear survival model trained on cascade feedback chooses "
