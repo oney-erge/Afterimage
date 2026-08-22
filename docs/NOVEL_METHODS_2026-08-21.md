@@ -2,10 +2,14 @@
 
 Date: 2026-08-21
 
-Status: H9-H11 are implemented as opt-in research configurations. They do not
+Status: H9-H13 are implemented as opt-in research configurations. They do not
 replace the existing H0-H8 methods and they do not yet have confirmatory GPU
 results. “Novel” below means a candidate combination not found in the reviewed
-sources, not a priority or publication claim.
+sources, not a priority or publication claim. H14-H15 (storage-extent
+residency) are documented in
+[RESEARCH_METHODS.md](RESEARCH_METHODS.md#h14-h15----storage-layout-as-a-residency-action)
+rather than here. [HYPOTHESIS_LINEAGE.md](HYPOTHESIS_LINEAGE.md) is the single
+table of every hypothesis's source, adaptation and current verdict, H0-H15.
 
 ## Current exploratory screens
 
@@ -199,3 +203,26 @@ resident target and draft model so they time-share VRAM across draft/verify
 phases; and make storage layout an action so the replay agent jointly chooses
 resident tensors and contiguous read extents. Both need deeper runtime changes
 and should be attempted only if H9/H10 pass their gates.
+
+## H12-H13 follow-on
+
+Two further opt-in exact methods are now implemented:
+
+- H12 `prefetch_policy="bayes_probit"` models log read latency and observed
+  per-layer lead windows with normal-inverse-gamma posteriors. A probit chance
+  constraint chooses the smallest prefetch depth predicted to be ready on time.
+- H13 `placement_policy="replay_qubo"` derives linear and pairwise residency
+  coefficients from event-DAG counterfactuals and applies a classical simulated
+  annealer to the capacity-penalized binary energy.
+
+The first screens do not establish either performance hypothesis. H12 was 1.4%
+faster by aggregate wall time (2.23% paired median, 90% descriptive interval
+[-6.26%, +7.50%]) but increased exposed wait and missed its 5% gate. H13's QUBO
+returned exactly its profiled-knapsack seed, so a faster separate run is
+run-to-run variation rather than a treatment effect. The longer H11 rerun also
+made zero neural stop decisions despite a favorable timing direction.
+
+These outcomes prompted a hypothesis-aware L0-L3 testing system rather than
+another universal short matrix. See
+[REGULATED_TEST_PLAN_2026-08-21.md](REGULATED_TEST_PLAN_2026-08-21.md) for the
+protocols, current H11-H13 analysis and proposed next execution order.

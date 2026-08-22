@@ -2,7 +2,7 @@
 decoded together per Triton program, instead of one chunk per program.
 
 Diagnosis from measuring gpu_decode.py's v1 kernel: it achieved only
-2.04 GB/s (docs/LOSSLESS_ENGINE.md Phase A), a 10x shortfall against the
+2.04 GB/s (docs/archive/LOSSLESS_ENGINE.md Phase A), a 10x shortfall against the
 ~20 GB/s target, despite ~1000x spare compute existing in the offloaded
 regime. v1 launches one Triton program per chunk using shape-[1] ("scalar")
 tensors throughout -- each program does chunk_size sequential steps with no
@@ -76,7 +76,7 @@ def decode_gpu_v2(enc: ChunkedEncoded, block_chunks: int = 32, device: str = "cu
 
     Default of 32 matches the GPU's native warp width and was empirically
     the fastest configuration measured (16.87 GB/s vs. e.g. 128's
-    13.83 GB/s on the same data -- see docs/LOSSLESS_ENGINE.md Phase A),
+    13.83 GB/s on the same data -- see docs/archive/LOSSLESS_ENGINE.md Phase A),
     consistent with the diagnosis that v1's scalar-per-program design left
     most of the SIMD width idle: 32 is the size where each program exactly
     fills one warp, and larger blocks that span multiple warps measured

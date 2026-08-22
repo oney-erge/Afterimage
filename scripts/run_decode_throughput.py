@@ -4,7 +4,7 @@ to hide behind the bus it replaces?
 
 Target: exceed effective bandwidth from the source tier, so decode never
 becomes the bottleneck. Measured on this rig: ~20 GB/s from host RAM over
-PCIe, ~2 GB/s from NVMe (docs/EXECUTION_PLAN.md Stage A.4).
+PCIe, ~2 GB/s from NVMe (docs/archive/EXECUTION_PLAN.md Stage A.4).
 
 Measures DECODE throughput only (bytes of *decompressed output* per second),
 isolated from disk I/O, H2D transfer, and Python/kernel-launch overhead via
@@ -33,7 +33,7 @@ def bench_one(n_weights: int, chunk_size: int, n_warmup: int = 3, n_iters: int =
     torch.manual_seed(0)
     # realistic bf16-like exponent distribution: concentrated on a handful
     # of values, matching the measured ~2.6-bit entropy from the real
-    # entropy audit (docs/LOSSLESS_ENGINE.md #2), not uniform random noise
+    # entropy audit (docs/archive/LOSSLESS_ENGINE.md #2), not uniform random noise
     hot = torch.randperm(256)[:6]
     probs = torch.zeros(256)
     probs[hot] = torch.rand(6)
@@ -140,7 +140,7 @@ def main():
     log(f"  (raw kernel output, int32 units: {best['raw_kernel_gbps']:.2f} GB/s -- "
         f"NOT the number that answers the Phase A question)")
     log("")
-    log("Target thresholds (docs/EXECUTION_PLAN.md measured bandwidths):")
+    log("Target thresholds (docs/archive/EXECUTION_PLAN.md measured bandwidths):")
     log(f"  vs host RAM tier (~20 GB/s): {'CLEARS' if best['reconstructed_gbps'] > 20 else 'DOES NOT CLEAR'}")
     log(f"  vs NVMe tier (~2 GB/s):      {'CLEARS' if best['reconstructed_gbps'] > 2 else 'DOES NOT CLEAR'}")
 

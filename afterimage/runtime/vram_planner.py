@@ -47,7 +47,7 @@ path, which is why no existing offloading engine does it.
 Self-speculation breaks the "used exactly once" assumption (draft-aware ranking)
 ----------------------------------------------------------------------------------
 The paragraph above is only true for plain streaming. Under self-speculative
-decoding (docs/PROPOSAL_ADAPTIVE.md mechanism A), the model drafts using its
+decoding (docs/archive/PROPOSAL_ADAPTIVE.md mechanism A), the model drafts using its
 own first N layers, run once per proposed token in a chain of length k, THEN
 all layers run once more to verify -- so layers [0, N) are actually touched
 (k + 1) times per sweep while layers [N, n_layers) are touched once. They are

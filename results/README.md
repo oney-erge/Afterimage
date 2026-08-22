@@ -24,6 +24,13 @@ YYYY-MM-DD_HYPOTHESIS_MODEL_HARDWARE_RUNID.json
 An `inconclusive` or `falsified` result is still a result. Do not delete it or
 replace it with a later run under the same identifier.
 
+A `*.json.partial` file is a run still being written (interrupted, or a
+background process not yet finished). It is not committed -- see
+`.gitignore` -- and it is not evidence for any hypothesis until the run
+completes and is renamed to `.json`. Never treat a `.partial` file's contents
+as a result, and never delete one without confirming the run that owns it
+has actually stopped.
+
 For a short exploratory screen before that full protocol, use the diverse,
 disjoint calibration/evaluation suite with a hard wall-time cap:
 

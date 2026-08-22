@@ -51,7 +51,7 @@ case "$GPU_VENDOR" in
     log "installing ROCm torch build"
     log "NOTE: ROCm/AMD support in this project is built against a device"
     log "      abstraction but has not been exercised on real AMD hardware --"
-    log "      treat it as untested, not verified. See docs/MASTER_PLAN.md."
+    log "      treat it as untested, not verified. See docs/archive/MASTER_PLAN.md."
     pip install torch --index-url https://download.pytorch.org/whl/rocm6.1
     pip install -e "$REPO_DIR[server]"
     ;;

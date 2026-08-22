@@ -718,3 +718,60 @@ H6 lacked alternative artifacts; H7 was inapplicable to this dense checkpoint.
 
 Full analysis, literature boundary, caveats, and raw-file links:
 [BOUNDED_RESEARCH_REPORT_2026-08-21.md](BOUNDED_RESEARCH_REPORT_2026-08-21.md).
+
+---
+
+## H9-H15 exploratory screens (2026-08-21)
+
+One-prompt-class mechanism screens, not the five-repeat confirmatory protocol.
+Full narrative, literature boundary and gates:
+[NOVEL_METHODS_2026-08-21.md](NOVEL_METHODS_2026-08-21.md) (H9-H13),
+[RESEARCH_METHODS.md](RESEARCH_METHODS.md#h14-h15----storage-layout-as-a-residency-action)
+(H14-H15), and current evidence-level interpretation:
+[REGULATED_TEST_PLAN_2026-08-21.md](REGULATED_TEST_PLAN_2026-08-21.md).
+
+| ID | Method | Measured | Gate | Verdict |
+|---|---|---:|---:|---|
+| H9 | Pageable RAM overlay, 2 tokens | +1.9% throughput | 10% | below gate; pinning blocked by a 64 MB host memlock limit, so this is pageable RAM, not the intended pinned treatment |
+| H10 | Replay-CEM, 1 token | +2.1% | 8% | below gate; replay predicted only +0.6% over its best seeded control |
+| H11 | Neural utility, 8 tokens (screen1) | +4.4% direction | 8% | inconclusive: identical target sweeps and accepted-token counts in both arms |
+| H11 | Neural utility, 16 tokens (screen3) | +9.5% direction | 8% | failed L1: **zero stop decisions** recorded; timing cannot be credited to the network |
+| H12 | Bayesian probit prefetch | +2.23% paired median, 90% CI [-6.26%, +7.50%] | 5% | below gate; exposed wait was higher than fixed depth |
+| H13 | Event-interference QUBO residency | run-to-run only | 5% | `optimized_over_control=0`; the frozen plan was byte-identical to its `profiled_knapsack` seed |
+| H14 | Coalesced contiguous storage reads | **-27.7%** | 5% | mechanism gate passed (read calls -89%, 0% byte amplification); performance gate failed hard -- stop for futility |
+| H15 | Physical-extent QUBO residency | not measured | 2% (pre-GPU) | blocked at the mechanism gate: `treatment_diverged=false` |
+
+H9's 1.056 GB/token disk-read reduction and stable token IDs were real; the
+gate failure is an environment limit (see H9's own row), not a mechanism
+failure -- rerun only on a host that can actually pin ≥1.6 GB.
+
+H13 and H15 share one root cause, found and fixed after these screens: both
+QUBO planners' `repair()` step backfilled freed VRAM budget by
+`marginal(idx)/size(idx)` -- exactly `critical_path`'s and
+`profiled_knapsack`'s own ranking function. Every annealed candidate was
+therefore repaired back onto the deterministic control before scoring,
+regardless of what the anneal explored, so the search could never diverge
+from its own seed. Fixed in `afterimage/runtime/replay_planner.py` (`repair()`
+is now eviction-only); H13 and H15 need a fresh calibration + screen before
+either can be judged. Full derivation:
+[HYPOTHESIS_LINEAGE.md](HYPOTHESIS_LINEAGE.md).
+
+H11's "zero stop decisions" is not obviously a bug in the same sense: solving
+`should_stop`'s break-even condition against the state file's own measured
+costs (`draft_token_s≈0.028`, `target_sweep_s≈13.7`) gives a required
+survival probability under 2%, because a streamed target sweep costs roughly
+500x one draft step. Under that ratio, "keep drafting" is close to the
+economically correct answer regardless of confidence unless truly low-
+survival positions are actually sampled -- which two short calibration
+prompts may simply not have produced. `NeuralUtilityPolicy` now exposes
+`last_required_survival` / `min_required_survival` / `max_required_survival`
+in its state so this is diagnosable directly from a future run instead of
+looking like an unexplained null result.
+
+Raw files: `results/2026-08-21_h9_ram_overlay_*.json`,
+`results/2026-08-21_h10_replay_cem_*.json`,
+`results/2026-08-21_h11_neural_utility_*.json`,
+`results/2026-08-21_h12_h13_qwen3-14b_rtx3080_interrupted1.json`,
+`results/2026-08-21_h13_qubo_qwen3-14b_rtx3080_screen2.json`,
+`results/2026-08-21_h14_coalesced_storage_*.json`,
+`results/2026-08-21_h15_extent_qubo_qwen3-14b_rtx3080_gate1.json`.

@@ -1,4 +1,5 @@
-"""H2 gate (docs/PROPOSAL.md): measure real CPU decode throughput on the
+"""docs/archive/PROPOSAL.md's own H2 gate (unrelated to the current H2
+hazard-cost stopping hypothesis): measure real CPU decode throughput on the
 actual compressed 14B store before writing a single line of dispatcher
 code. If aggregate throughput is below ~1 GB/s of decoded weight output,
 H2 is dead and this prints that plainly -- no engine change is justified.
