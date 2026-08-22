@@ -430,6 +430,11 @@ def run_afterimage(method: Method, rendered: list[dict], n_tokens: int,
                 "storage_extent_bytes": stats.storage_extent_bytes,
                 "pageable_ram_fallback_keys": sorted(
                     engine._ram_cache_pageable_keys),
+                "tier_assignment_fingerprint": sha256_json(engine._tier),
+                "tier_counts": {
+                    tier: sum(value == tier for value in engine._tier.values())
+                    for tier in ("vram", "ram", "disk", "row_gather")
+                },
                 "final_prefetch_depth": engine._prefetch_controller.choose_depth(),
                 "prefetch_controller_state": (
                     engine._prefetch_controller.state_dict()
