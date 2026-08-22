@@ -40,6 +40,27 @@ PROTOCOLS = {
         "minimum_effect": 0.05,
         "burn_in_tokens": 1,
     },
+    "H16": {
+        "hypothesis_id": "h16-spec-critical-path",
+        "control": "spec-fixed",
+        "candidate": "spec-critical",
+        "minimum_effect": 0.05,
+        "burn_in_tokens": 1,
+    },
+    "H17": {
+        "hypothesis_id": "h17-tensor-extents",
+        "control": "exact-resident",
+        "candidate": "tensor-extents",
+        "minimum_effect": 0.05,
+        "burn_in_tokens": 1,
+    },
+    "H18": {
+        "hypothesis_id": "h18-rollback-cached-spec",
+        "control": "spec-fixed",
+        "candidate": "spec-cached",
+        "minimum_effect": 0.05,
+        "burn_in_tokens": 1,
+    },
 }
 
 
@@ -60,6 +81,9 @@ def _aggregate_rows(rows: list[dict]) -> dict:
         "prefetch_peak_inflight_bytes": max(
             (row.get("prefetch_peak_inflight_bytes", 0) for row in rows),
             default=0),
+        "spec_cache_crops": sum(row.get("spec_cache_crops", 0) for row in rows),
+        "spec_cached_prefix_tokens": sum(
+            row.get("spec_cached_prefix_tokens", 0) for row in rows),
     }
 
 
@@ -116,7 +140,8 @@ def _analyse(result: dict, protocol: dict, *, level: str = "L2") -> dict:
         mechanism["passed"] = bool(
             exact and mechanism["posterior_observations"] >= 160
             and wait_reduction is not None and wait_reduction >= 0.10)
-    else:
+    elif protocol["hypothesis_id"] in (
+            "h14-coalesced-storage", "h17-tensor-extents"):
         control_calls = control.get("storage_read_calls", 0)
         candidate_calls = candidate.get("storage_read_calls", 0)
         call_reduction = (1.0 - candidate_calls / control_calls
@@ -125,15 +150,52 @@ def _analyse(result: dict, protocol: dict, *, level: str = "L2") -> dict:
         candidate_bytes = candidate.get("storage_extent_bytes", 0)
         byte_amplification = (candidate_bytes / control_bytes - 1.0
                               if control_bytes else None)
+        required_reduction = (0.20 if protocol["hypothesis_id"] ==
+                              "h17-tensor-extents" else 0.50)
         mechanism = {
             "read_call_reduction": call_reduction,
-            "required_read_call_reduction": 0.50,
+            "required_read_call_reduction": required_reduction,
             "byte_amplification": byte_amplification,
             "maximum_byte_amplification": 0.05,
         }
         mechanism["passed"] = bool(
-            exact and call_reduction is not None and call_reduction >= 0.50
+            exact and call_reduction is not None
+            and call_reduction >= required_reduction
             and byte_amplification is not None and byte_amplification <= 0.05)
+    elif protocol["hypothesis_id"] == "h16-spec-critical-path":
+        candidate_fingerprints = {
+            row.get("tier_assignment_fingerprint") for row in candidate_rows}
+        control_fingerprints = {
+            row.get("tier_assignment_fingerprint") for row in control_rows}
+        peak_ratio = (candidate["peak_vram_gb"] / control["peak_vram_gb"]
+                      if control.get("peak_vram_gb", 0) else None)
+        mechanism = {
+            "candidate_tier_fingerprints": sorted(candidate_fingerprints - {None}),
+            "control_tier_fingerprints": sorted(control_fingerprints - {None}),
+            "treatment_diverged": bool(
+                candidate_fingerprints - {None}
+                and candidate_fingerprints != control_fingerprints),
+            "peak_vram_ratio": peak_ratio,
+            "maximum_peak_vram_ratio": 1.05,
+        }
+        mechanism["passed"] = bool(
+            exact and mechanism["treatment_diverged"]
+            and peak_ratio is not None and peak_ratio <= 1.05)
+    else:
+        peak_ratio = (candidate["peak_vram_gb"] / control["peak_vram_gb"]
+                      if control.get("peak_vram_gb", 0) else None)
+        mechanism = {
+            "cache_crops": candidate["spec_cache_crops"],
+            "cached_prefix_tokens": candidate["spec_cached_prefix_tokens"],
+            "control_cache_crops": control["spec_cache_crops"],
+            "peak_vram_ratio": peak_ratio,
+            "maximum_peak_vram_ratio": 1.05,
+        }
+        mechanism["passed"] = bool(
+            exact and mechanism["cache_crops"] > 0
+            and mechanism["cached_prefix_tokens"] > 0
+            and mechanism["control_cache_crops"] == 0
+            and peak_ratio is not None and peak_ratio <= 1.05)
     analysis["mechanism_gate"] = mechanism
     analysis["advance_to_l3"] = bool(
         mechanism["passed"]
@@ -179,6 +241,17 @@ def main() -> int:
 
     started = time.perf_counter()
     deadline = started + args.time_budget_minutes * 60
+    method_ids = {protocol["control"], protocol["candidate"]}
+    calibration_temp = tempfile.TemporaryDirectory(prefix="afterimage-regulated-")
+    critical = None
+    if "spec-critical" in method_ids:
+        critical = bounded.prepare_critical_profile(
+            tokenizer, pathlib.Path(calibration_temp.name), deadline)
+    draft_model = None
+    if any(bounded.METHODS[method_id].overrides.get("draft_mode") == "model"
+           for method_id in method_ids):
+        from afterimage.runtime.streaming_engine import load_draft_model
+        draft_model = load_draft_model(bounded.DRAFT_MODEL, device="cuda")
     result = {
         "schema_version": 1,
         "status": "running",
@@ -232,6 +305,8 @@ def main() -> int:
             try:
                 rows, metadata = bounded.run_afterimage(
                     method, evaluation, args.max_new_tokens, deadline,
+                    draft_model=draft_model,
+                    critical_profile=critical["path"] if critical else None,
                     burn_in_rendered=calibration,
                     burn_in_tokens=protocol["burn_in_tokens"])
                 for row in rows:
@@ -267,6 +342,7 @@ def main() -> int:
     result["completed_at_unix"] = time.time()
     _checkpoint(partial, result)
     partial.replace(out)
+    calibration_temp.cleanup()
     print("wrote immutable result %s" % out)
     return 0 if result["status"] == "complete" else 2
 
