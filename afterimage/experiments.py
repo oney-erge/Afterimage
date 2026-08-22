@@ -37,6 +37,30 @@ class MethodProfile:
 
 
 @dataclasses.dataclass(frozen=True)
+class MeasuredOutcome:
+    """What was actually measured, in the words a non-researcher needs, not
+    just the numeric gate. Single-sourced from docs/RESULTS_LOG.md and
+    docs/FINAL_TEST_RESULTS_2026-08-21.md so the UI's Lab cards and the
+    written record can never silently drift apart.
+
+    verdict is one of:
+      "gate"            -- a diagnostic gate, not a speed treatment; it did its job
+      "below_threshold" -- measured a real but sub-gate positive direction
+      "contradicted"    -- measured slower/worse than its named control
+      "mechanism_only"  -- the mechanism worked exactly as designed; the
+                            end-to-end objective regressed anyway
+      "no_comparison"   -- an upstream mechanism/action/environment gate
+                            stopped it before a valid speed comparison existed
+      "not_applicable"  -- this checkpoint/host cannot exercise the hypothesis
+    """
+    verdict: str
+    plain_language: str
+    detail: str = ""
+    effect_pct: float | None = None
+    n_pairs: int | None = None
+
+
+@dataclasses.dataclass(frozen=True)
 class Hypothesis:
     id: str
     title: str
@@ -51,6 +75,7 @@ class Hypothesis:
     kill_criterion: str = ""
     minimum_repeats: int = 1
     minimum_new_tokens: int = 1
+    measured: MeasuredOutcome | None = None
 
 
 PROFILES = {
@@ -124,14 +149,28 @@ HYPOTHESES = {
         "Joint context has at least 12% value over the best global profile.",
         "contextual-linucb-v1", "exact-streaming-v1", "oracle_gap",
         "joint_uplift", 0.12, "reference_execution_equivalent",
-        ("result_dataset",), "Kill adaptive control when the joint oracle gap is <12%."),
+        ("result_dataset",), "Kill adaptive control when the joint oracle gap is <12%.",
+        measured=MeasuredOutcome(
+            "gate",
+            "Not a speedup itself -- this measurement is what told us the "
+            "other adaptive-control ideas (H3, H8) weren't worth building.",
+            "Measured joint oracle uplift: 2.56%, against a 12% gate.",
+            effect_pct=2.56)),
     "h1-critical-path": Hypothesis(
         "h1-critical-path", "Critical-path residency planner",
         "Event-DAG criticality ranks residency better than traffic density.",
         "critical-path-v1", "exact-streaming-v1", "generation",
         "committed_tokens_per_second", 0.08, "reference_execution_equivalent",
         ("critical_path_profile",), "Kill if held-out rank correlation <0.8 or gain <8%.",
-        minimum_repeats=5, minimum_new_tokens=16),
+        minimum_repeats=5, minimum_new_tokens=16,
+        measured=MeasuredOutcome(
+            "below_threshold",
+            "No -- it's the strongest exact non-speculative candidate measured "
+            "so far, but the gain is too small to promise you over the "
+            "simpler traffic-density default.",
+            "18.99 s/token, 1.58x AirLLM at 4 GB -- the best exact "
+            "non-speculative row seen, but not confirmed at L3 yet.",
+            effect_pct=1.61)),
     "h2-hazard-cost": Hypothesis(
         "h2-hazard-cost", "Cost-aware rejection hazard",
         "Survival-calibrated stopping beats the best tuned fixed chain.",
@@ -139,35 +178,67 @@ HYPOTHESES = {
         "committed_tokens_per_second", 0.08, "distribution_exact",
         ("draft_model_id", "spec_policy_state"),
         "Kill if the paired lower confidence bound is not positive.",
-        minimum_repeats=5, minimum_new_tokens=128),
+        minimum_repeats=5, minimum_new_tokens=128,
+        measured=MeasuredOutcome(
+            "contradicted",
+            "No -- measured slower than just fixing the draft chain length. "
+            "Use fixed-k speculation instead.",
+            "9.773 vs fixed-k's 9.150 s/token: 6.4% lower throughput.",
+            effect_pct=-6.4)),
     "h3-contextual-bandit": Hypothesis(
         "h3-contextual-bandit", "Baseline-guarded contextual profile bandit",
         "A safe bandit reaches 95% of the joint oracle across requests.",
         "contextual-linucb-v1", "exact-streaming-v1", "profile_bandit",
         "oracle_fraction", 0.95, "reference_execution_equivalent",
         ("calibration_dataset", "result_dataset"),
-        "Kill if the oracle itself has <12% headroom."),
+        "Kill if the oracle itself has <12% headroom.",
+        measured=MeasuredOutcome(
+            "no_comparison",
+            "Correctly never built -- H0 showed there wasn't enough upside "
+            "to justify it, so no GPU time was spent finding out.",
+            "Not run: H0's oracle gap (2.56%) was below the 12% gate this "
+            "hypothesis requires before it's worth building.")),
     "h4-feedback-prefetch": Hypothesis(
         "h4-feedback-prefetch", "Feedback-controlled prefetch",
         "PI control reduces exposed stalls under changing storage conditions.",
         "pi-prefetch-v1", "fixed-prefetch-v1", "generation",
         "committed_tokens_per_second", 0.05, "reference_execution_equivalent",
         (), "Kill if throughput gain <5% and stall reduction <10%.",
-        minimum_repeats=5, minimum_new_tokens=32),
+        minimum_repeats=5, minimum_new_tokens=32,
+        measured=MeasuredOutcome(
+            "contradicted",
+            "No -- feedback-controlled prefetch made things worse, one "
+            "variant much worse. Leave prefetch depth fixed.",
+            "PI control was 35.7% slower; MPC regressed further by "
+            "sometimes choosing a prefetch depth of zero.",
+            effect_pct=-35.7)),
     "h5-certified-mips": Hypothesis(
         "h5-certified-mips", "Certified greedy LM-head search",
         "Roundoff-aware MIPS bounds avoid most output rows with no token changes.",
         "certified-mips-v1", "exact-streaming-v1", "generation",
         "committed_tokens_per_second", 0.08, "greedy_token_exact",
         (), "Kill if certificates cover <70% of rows or any certificate is wrong.",
-        minimum_repeats=5, minimum_new_tokens=32),
+        minimum_repeats=5, minimum_new_tokens=32,
+        measured=MeasuredOutcome(
+            "contradicted",
+            "No -- almost nothing got pruned, and the bookkeeping to try "
+            "cost more than it saved.",
+            "Only 0.084% of output rows were certifiably prunable; 30.5% "
+            "lower throughput than the plain full head.",
+            effect_pct=-30.5)),
     "h6-representations": Hypothesis(
         "h6-representations", "Per-tensor exact physical representations",
         "A multi-choice physical design beats every uniform representation.",
         "per-tensor-representation-v1", "exact-streaming-v1", "representation_plan",
         "gain_over_uniform", 0.10, "reference_execution_equivalent",
         ("representation_options", "uniform_prepare_s"),
-        "Kill before kernels if predicted gain <10%."),
+        "Kill before kernels if predicted gain <10%.",
+        measured=MeasuredOutcome(
+            "not_applicable",
+            "Not testable yet -- the current store only has one exact "
+            "representation per tensor, so there's nothing to choose between.",
+            "The v2 compressed store contains no alternative exact "
+            "representations to plan over.")),
     "h7-xor-reference": Hypothesis(
         "h7-xor-reference", "Expert-local lossless reference coding",
         "Known BitX-style XOR deltas transfer profitably from model-family "
@@ -175,13 +246,25 @@ HYPOTHESES = {
         "xor-reference-v1", "exact-streaming-v1", "xor_audit",
         "total_storage_reduction", 0.10, "weight_exact",
         ("expert_tensors", "independent_compressed_bytes", "reference_bases"),
-        "Kill if residuals are not at least 10% smaller."),
+        "Kill if residuals are not at least 10% smaller.",
+        measured=MeasuredOutcome(
+            "not_applicable",
+            "Not relevant to your model unless it's a mixture-of-experts "
+            "checkpoint -- Qwen3-14B is dense and has no experts to compare.",
+            "Qwen3-14B is dense; there are no expert tensors for this "
+            "hypothesis to act on.")),
     "h8-model-based-rl": Hypothesis(
         "h8-model-based-rl", "Shadow model-based joint controller",
         "A calibrated trace simulator closes residual contextual-controller regret.",
         "model-based-rl-v1", "contextual-linucb-v1", "trace_simulator",
         "improvement_over_baseline", 0.10, "reference_execution_equivalent",
-        ("trace_dataset",), "Kill if simulator MAPE >10% or rank correlation <0.9."),
+        ("trace_dataset",), "Kill if simulator MAPE >10% or rank correlation <0.9.",
+        measured=MeasuredOutcome(
+            "no_comparison",
+            "Correctly never built -- this is shadow-only until H0 and H3 "
+            "both pass, and neither did.",
+            "Not run: gated behind H0/H3, which the oracle-gap measurement "
+            "already closed.")),
     "h9-ram-overlay-head": Hypothesis(
         "h9-ram-overlay-head", "Liveness-guided RAM output-head overlay",
         "A decoded pinned-RAM lm_head beats disk/decode streaming at matched "
@@ -189,7 +272,15 @@ HYPOTHESES = {
         "ram-overlay-head-v1", "exact-streaming-v1", "generation",
         "committed_tokens_per_second", 0.10, "reference_execution_equivalent",
         (), "Kill if gain <10%, peak VRAM rises >5%, or any token differs.",
-        minimum_repeats=5, minimum_new_tokens=16),
+        minimum_repeats=5, minimum_new_tokens=16,
+        measured=MeasuredOutcome(
+            "no_comparison",
+            "Can't tell on a typical WSL2 host -- this needs pinned "
+            "(page-locked) host RAM, and WSL2 usually caps that at 64 MB.",
+            "The pinned-RAM allocation this hypothesis needs was not "
+            "attempted: the host's hard memlock limit is 64 MiB against a "
+            "1.6 GB request. Retest only on a host that can actually pin "
+            "that much RAM.")),
     "h10-replay-cem": Hypothesis(
         "h10-replay-cem", "Digital-twin whole-set residency search",
         "Offline CEM search over complete resident sets beats independent "
@@ -198,7 +289,14 @@ HYPOTHESES = {
         "committed_tokens_per_second", 0.08, "reference_execution_equivalent",
         ("replay_plan_state", "critical_path_profile"),
         "Kill if held-out replay error >10% or paired throughput gain <8%.",
-        minimum_repeats=5, minimum_new_tokens=16),
+        minimum_repeats=5, minimum_new_tokens=16,
+        measured=MeasuredOutcome(
+            "below_threshold",
+            "No -- the search landed at parity with the simpler measured-"
+            "cost planner, not ahead of it.",
+            "19.480 s/token -- parity with the profiled-knapsack control; "
+            "predicted only +2.1% over the best seeded plan, below the 8% gate.",
+            effect_pct=2.1)),
     "h11-neural-utility-spec": Hypothesis(
         "h11-neural-utility-spec", "Tiny censored-survival utility controller",
         "A pooled nonlinear survival model trained on cascade feedback chooses "
@@ -208,7 +306,15 @@ HYPOTHESES = {
         ("draft_model_id", "spec_policy_state"),
         "Kill if held-out calibration error is poor or the paired lower "
         "confidence bound is not positive.",
-        minimum_repeats=5, minimum_new_tokens=128),
+        minimum_repeats=5, minimum_new_tokens=128,
+        measured=MeasuredOutcome(
+            "no_comparison",
+            "No -- it never actually decided anything differently than "
+            "just fixing the draft length, so its timing can't be trusted.",
+            "Well-calibrated (88% positive labels, Brier 0.115) but chose "
+            "to keep drafting in all 47 held-out opportunities -- zero stop "
+            "decisions, so it behaves exactly like fixed-k. Any timing "
+            "difference is noise, not the network.")),
     "h12-bayesian-prefetch": Hypothesis(
         "h12-bayesian-prefetch", "Bayesian chance-constrained prefetch",
         "A probit constraint over posterior read and lead-time distributions "
@@ -216,7 +322,14 @@ HYPOTHESES = {
         "bayes-probit-prefetch-v1", "fixed-prefetch-v1", "generation",
         "committed_tokens_per_second", 0.05, "reference_execution_equivalent",
         (), "Kill if throughput gain <5% or exposed wait does not fall by 10%.",
-        minimum_repeats=5, minimum_new_tokens=32),
+        minimum_repeats=5, minimum_new_tokens=32,
+        measured=MeasuredOutcome(
+            "contradicted",
+            "No -- the regulated rerun was slower, and it waited on I/O "
+            "more, not less.",
+            "5.89% slower paired (8 blocks); won only 3 of 8 pairs; exposed "
+            "wait rose 28.2% instead of falling.",
+            effect_pct=-5.89, n_pairs=8)),
     "h13-qubo-residency": Hypothesis(
         "h13-qubo-residency", "Event-interference QUBO residency",
         "A pairwise Hamiltonian of event-DAG counterfactual interactions finds "
@@ -225,7 +338,15 @@ HYPOTHESES = {
         "committed_tokens_per_second", 0.05, "reference_execution_equivalent",
         ("replay_plan_state", "critical_path_profile"),
         "Kill if held-out replay error >10% or paired throughput gain <5%.",
-        minimum_repeats=5, minimum_new_tokens=16),
+        minimum_repeats=5, minimum_new_tokens=16,
+        measured=MeasuredOutcome(
+            "no_comparison",
+            "Can't tell yet -- the search returned the exact same plan its "
+            "control already uses, so there's nothing new to time.",
+            "730 candidates evaluated; returned the profiled-knapsack "
+            "control exactly (0% predicted gain, 100% plan overlap), even "
+            "after the greedy-refill bug behind this was fixed.",
+            effect_pct=0.0)),
     "h14-coalesced-storage": Hypothesis(
         "h14-coalesced-storage", "Bounded contiguous storage reads",
         "Coalescing adjacent compressed arrays lowers fixed storage-request "
@@ -235,7 +356,16 @@ HYPOTHESES = {
         "reference_execution_equivalent", (),
         "Kill if read calls do not fall 50%, byte amplification exceeds 5%, "
         "or throughput gain is below 5%.",
-        minimum_repeats=3, minimum_new_tokens=16),
+        minimum_repeats=3, minimum_new_tokens=16,
+        measured=MeasuredOutcome(
+            "mechanism_only",
+            "No -- it does exactly what it says (89% fewer storage reads, "
+            "zero extra bytes) and still made every run slower.",
+            "89.07% fewer read calls, 0% byte amplification, identical "
+            "tokens in all 4 pairs -- but 27.73% lower throughput, every "
+            "pair unfavorable. One big read blocks the decode it was "
+            "supposed to overlap with.",
+            effect_pct=-27.73, n_pairs=4)),
     "h15-extent-qubo-residency": Hypothesis(
         "h15-extent-qubo-residency", "Physical-extent QUBO residency",
         "Searching bounded contiguous storage groups exposes a useful plan "
@@ -246,7 +376,15 @@ HYPOTHESES = {
         ("replay_plan_state", "critical_path_profile"),
         "Kill before GPU timing unless the frozen plan differs from control "
         "and predicts at least 2% replay gain.",
-        minimum_repeats=3, minimum_new_tokens=16),
+        minimum_repeats=3, minimum_new_tokens=16,
+        measured=MeasuredOutcome(
+            "no_comparison",
+            "Can't tell yet -- same as H13: the search over storage extents "
+            "also returned its control's plan exactly.",
+            "369 candidates evaluated over 81 real storage extents; "
+            "returned the profiled-knapsack control exactly (0% predicted "
+            "gain, 100% overlap), blocked at its own pre-GPU mechanism gate.",
+            effect_pct=0.0)),
 }
 
 

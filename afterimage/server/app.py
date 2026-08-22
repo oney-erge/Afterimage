@@ -96,6 +96,93 @@ def hardware() -> dict:
             "vram_free_gb": free, "vram_total_gb": total}
 
 
+# Measured reference point: Qwen3-14B on the RTX 3080 Laptop (README's
+# benchmark table / docs/FINAL_TEST_RESULTS_2026-08-21.md). Extrapolating to
+# other sizes assumes the same architecture family and roughly linear
+# scaling of store size and streamed-read time with parameter count -- true
+# to first order for same-precision dense transformers, not a promise for
+# any specific checkpoint. Every number this produces is an ESTIMATE; only
+# a real compress + run on the actual model is a measurement.
+MEASURED_REFERENCE = {
+    "model": "Qwen/Qwen3-14B",
+    "params_b": 14.0,
+    "bf16_gb_per_b_params": 29.536 / 14.0,
+    "compressed_gb_per_b_params": 20.328 / 14.0,
+    "min_memory_s_per_token_per_b": 32.514 / 14.0,
+    "min_memory_vram_gb": 1.723,
+    "fast_s_per_token_per_b": 9.150 / 14.0,
+    "fast_vram_floor_gb": 3.813,
+}
+
+
+def _capability_estimate(params_b: float) -> dict:
+    ref = MEASURED_REFERENCE
+    return {
+        "params_b": round(params_b, 2),
+        "bf16_gb": round(params_b * ref["bf16_gb_per_b_params"], 1),
+        "compressed_store_gb": round(params_b * ref["compressed_gb_per_b_params"], 1),
+        "min_memory_s_per_token": round(params_b * ref["min_memory_s_per_token_per_b"], 1),
+        "fast_s_per_token": round(params_b * ref["fast_s_per_token_per_b"], 1),
+    }
+
+
+@app.get("/api/capability")
+def capability() -> dict:
+    """What this GPU can actually do, in plain terms -- the "what this means
+    for you" card on the Home screen is built entirely from this response.
+    Every number here is a rough extrapolation from one measured checkpoint,
+    not a benchmark; the response says so explicitly so the UI never has to
+    invent that caveat itself.
+
+    streaming_fast_max_params_b can come out LARGER than
+    streaming_slow_max_params_b -- that is not a bug. They answer different
+    questions ("biggest model that stays fast under speculation" vs.
+    "biggest model minimum-memory streaming can still limp through") and are
+    not nested: nothing here promises the fast profile's acceptance rate
+    (measured only at the 14B/0.6B draft pair) holds at other scales.
+    """
+    import torch
+    ref = MEASURED_REFERENCE
+    gpu = _detect_gpu()
+    vram_gb = gpu.get("vram_gb")
+    ram_gb = _detect_ram_gb()
+
+    native_fit_max_params_b = None
+    streaming_fast_max_params_b = None
+    streaming_slow_max_params_b = None
+    if vram_gb:
+        # Whole bf16 model resident, no streaming -- roughly what you could
+        # do WITHOUT Afterimage. ~15% headroom reserved for KV cache and
+        # activations, itself a rough rule of thumb, not a measurement.
+        native_fit_max_params_b = round(
+            (vram_gb * 0.85) / ref["bf16_gb_per_b_params"], 1)
+        # "Fast" (speculative) needs roughly the measured fixed VRAM floor
+        # (residency + draft model) to first order, regardless of size; if
+        # the card clears that floor, speed then scales ~linearly with
+        # params. 15s/token is a chosen "still feels interactive" ceiling.
+        # Extrapolated from the one measured 14B/0.6B draft pair -- larger
+        # targets may see a lower speculative acceptance rate than that
+        # pair did, which this simple scaling does not model.
+        if vram_gb >= ref["fast_vram_floor_gb"]:
+            streaming_fast_max_params_b = round(
+                15.0 / ref["fast_s_per_token_per_b"], 1)
+        # Minimum-memory streaming has essentially no VRAM floor to speak
+        # of, so size stops being the limit at all -- only speed does.
+        # 45s/token is a chosen "still usable, but slow" ceiling.
+        streaming_slow_max_params_b = round(
+            45.0 / ref["min_memory_s_per_token_per_b"], 1)
+
+    return {
+        "vram_gb": vram_gb, "ram_gb": ram_gb,
+        "cuda_available": torch.cuda.is_available(),
+        "measured_reference_model": ref["model"],
+        "native_fit_max_params_b": native_fit_max_params_b,
+        "streaming_fast_max_params_b": streaming_fast_max_params_b,
+        "streaming_slow_max_params_b": streaming_slow_max_params_b,
+        "estimates": [_capability_estimate(p) for p in (4, 7, 14, 32, 70)],
+    }
+
+
 @app.get("/api/models")
 def list_models() -> dict:
     out = []
@@ -107,6 +194,78 @@ def list_models() -> dict:
                 out.append({"model_id": man.get("model_id", p.name), "store": str(p),
                            "orig_gb": man["total_orig_bytes"] / 1e9,
                            "comp_gb": man["total_comp_bytes"] / 1e9, "ratio": man["ratio"]})
+    return {"models": out}
+
+
+# This engine's hard-coded Llama-family layout (see streaming_engine.py's
+# construction-time architecture check) -- kept in sync manually rather than
+# imported, since HF's search API returns architecture strings, not a
+# loaded config we could introspect the same way the engine does.
+_SUPPORTED_ARCHITECTURES = (
+    "LlamaForCausalLM", "Qwen2ForCausalLM", "Qwen3ForCausalLM",
+    "MistralForCausalLM",
+)
+
+
+@app.get("/api/models/search")
+def search_models(q: str = "", limit: int = 20) -> dict:
+    """Search the HuggingFace Hub for bf16 safetensors checkpoints and
+    classify each one's fit against this machine's detected VRAM, using the
+    same estimate /api/capability is built from. Best-effort: a network or
+    API failure returns an empty list with an explanation rather than a
+    500 -- this must never block someone who already knows the model id
+    they want and is using /api/compress directly."""
+    try:
+        from huggingface_hub import HfApi
+        api = HfApi()
+        results = list(api.list_models(
+            search=q or None, filter="safetensors", sort="downloads",
+            limit=max(1, min(limit, 50)),
+            expand=["safetensors", "config", "downloads"]))
+    except Exception as exc:
+        return {"models": [], "error": "%s: %s" % (type(exc).__name__, exc)}
+
+    cap = capability()
+    vram_gb = cap["vram_gb"]
+    ref = MEASURED_REFERENCE
+    already = {m["model_id"] for m in list_models()["models"]}
+
+    out = []
+    for m in results:
+        model_id = m.id
+        params_b = None
+        safetensors = getattr(m, "safetensors", None)
+        if safetensors and getattr(safetensors, "total", None):
+            params_b = safetensors.total / 1e9
+        architectures = list(getattr(m, "config", {}).get("architectures", [])
+                            if getattr(m, "config", None) else [])
+        supported = (not architectures
+                    or any(a in _SUPPORTED_ARCHITECTURES for a in architectures))
+
+        row = {
+            "model_id": model_id, "downloads": getattr(m, "downloads", None),
+            "params_b": round(params_b, 2) if params_b else None,
+            "architectures": architectures,
+            "supported_architecture": supported,
+            "already_compressed": model_id in already,
+            "fit": "unknown",
+        }
+        if not supported:
+            row["fit"] = "unsupported"
+        elif params_b:
+            estimate = _capability_estimate(params_b)
+            row.update(estimate)
+            if vram_gb is None:
+                row["fit"] = "unknown"
+            elif params_b <= (vram_gb * 0.85) / ref["bf16_gb_per_b_params"]:
+                row["fit"] = "native"
+            elif estimate["fast_s_per_token"] <= 15.0 and vram_gb >= ref["fast_vram_floor_gb"]:
+                row["fit"] = "streams_fast"
+            elif estimate["min_memory_s_per_token"] <= 45.0:
+                row["fit"] = "streams_slow"
+            else:
+                row["fit"] = "streams_very_slow"
+        out.append(row)
     return {"models": out}
 
 
@@ -150,6 +309,86 @@ def plan(req: PlanRequest) -> dict:
     return {"feasible": p.feasible, "reason": p.reason, "vram_gb": p.vram_gb, "ram_gb": p.ram_gb,
             "disk_gb_per_token": p.disk_gb_per_token, "vram_tensors": len(p.vram_keys),
             "ram_tensors": len(p.ram_keys), "disk_tensors": len(p.disk_keys)}
+
+
+# -- profile comparison ---------------------------------------------------
+
+class CompareRequest(BaseModel):
+    model_id: str
+    prompt: str = "The capital of France is"
+    max_new_tokens: int = 12
+
+
+@app.post("/api/compare")
+def compare(req: CompareRequest) -> dict:
+    """Runs the same prompt under all three named profiles
+    (min-memory/balanced/fast) sequentially on this machine and reports
+    each one's real measured numbers. This is what turns "3.15x" from a
+    number in a README into something a user watched happen on their own
+    GPU. Runs as a job (like compression) since a 14B-class model can take
+    several minutes across three profiles -- the caller polls/watches it
+    exactly like a compress job."""
+    from afterimage.cli import RUN_PROFILES
+
+    store_dir = _store_dir_for(req.model_id)
+    if not (store_dir / "manifest.json").exists():
+        raise HTTPException(
+            404, "no compressed store for %r -- POST /api/compress first" % req.model_id)
+
+    def work(control):
+        import torch
+        from transformers import AutoTokenizer
+        from afterimage.runtime.streaming_engine import (
+            StreamingLosslessModel, load_draft_model,
+        )
+
+        tok = AutoTokenizer.from_pretrained(req.model_id)
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        ids = tok(req.prompt, return_tensors="pt").input_ids.to(device)
+
+        rows = []
+        profile_names = list(RUN_PROFILES.keys())
+        for i, name in enumerate(profile_names):
+            control.checkpoint()
+            control.report(stage=name, profile_index=i, total_profiles=len(profile_names))
+            preset = RUN_PROFILES[name]
+            cfg = EngineConfig(vram_budget_gb=preset["vram_budget_gb"], progress=False,
+                               draft_mode=("model" if preset["draft_model"] else "none"))
+            if torch.cuda.is_available():
+                torch.cuda.reset_peak_memory_stats()
+            t0 = time.perf_counter()
+            with StreamingLosslessModel(req.model_id, store_dir, device=device,
+                                        config=cfg, control=control) as sm:
+                if preset["draft_model"]:
+                    draft = load_draft_model(preset["draft_model"], device=device)
+                    seq, _policy = sm.generate_adaptive(
+                        ids, max_new_tokens=req.max_new_tokens, draft_model=draft,
+                        temperature=0.0)
+                else:
+                    seq = sm.generate_greedy(ids, max_new_tokens=req.max_new_tokens)
+                wall_s = time.perf_counter() - t0
+                n_tokens = seq.shape[1] - ids.shape[1]
+                text = tok.decode(seq[0, ids.shape[1]:], skip_special_tokens=True)
+                rows.append({
+                    "profile": name,
+                    "vram_budget_gb": preset["vram_budget_gb"],
+                    "draft_model": preset["draft_model"],
+                    "text": text,
+                    "tokens": n_tokens,
+                    "wall_seconds": wall_s,
+                    "seconds_per_token": wall_s / max(n_tokens, 1),
+                    "peak_vram_gb": (torch.cuda.max_memory_allocated() / 1e9
+                                    if torch.cuda.is_available() else None),
+                })
+        baseline = next((r for r in rows if r["profile"] == "min-memory"), None)
+        for row in rows:
+            if baseline and row["seconds_per_token"] > 0:
+                row["speedup_vs_min_memory"] = (
+                    baseline["seconds_per_token"] / row["seconds_per_token"])
+        return {"prompt": req.prompt, "rows": rows}
+
+    job = registry.create("compare", work)
+    return {"job_id": job.id}
 
 
 # -- job control ------------------------------------------------------
@@ -314,7 +553,8 @@ def _specialized_experiment(hypothesis_id: str, req: ExperimentRunRequest,
         plan = plan_representations(
             options, vram_budget_bytes=int(req.inputs.get("vram_budget_bytes", 0)),
             ram_budget_bytes=int(req.inputs.get("ram_budget_bytes", 0)),
-            storage_budget_bytes=req.inputs.get("storage_budget_bytes"))
+            storage_budget_bytes=req.inputs.get("storage_budget_bytes"),
+            quantum_bytes=int(req.inputs.get("quantum_bytes", 16 << 20)))
         run.summary = plan.to_dict()
         control_s = float(req.inputs["uniform_prepare_s"])
         gain = 1.0 - plan.predicted_prepare_s / max(control_s, 1e-12)
@@ -322,11 +562,25 @@ def _specialized_experiment(hypothesis_id: str, req: ExperimentRunRequest,
         run.verdict = ("favored" if plan.feasible and gain >= hypothesis.minimum_effect
                        else "falsified" if plan.feasible else "invalid")
     elif hypothesis.runner == "xor_audit":
-        from safetensors.torch import load_file
         tensors = {}
+        # ``load_file`` eagerly materializes every tensor in a shard.  Real
+        # MoE shards are several gigabytes even when an audit needs only a
+        # handful of experts, so loading once per requested expert made H7
+        # practically unrunnable.  ``safe_open`` memory-maps each unique
+        # shard and materializes only the named tensors.
+        from safetensors import safe_open
+        by_path = {}
         for item in req.inputs["expert_tensors"]:
-            loaded = load_file(item["path"], device="cpu")
-            tensors[item["id"]] = loaded[item["tensor_key"]]
+            by_path.setdefault(item["path"], []).append(item)
+        for path, items in by_path.items():
+            with safe_open(path, framework="pt", device="cpu") as handle:
+                available = set(handle.keys())
+                for item in items:
+                    if item["tensor_key"] not in available:
+                        raise ValueError(
+                            "tensor %s is missing from %s" %
+                            (item["tensor_key"], path))
+                    tensors[item["id"]] = handle.get_tensor(item["tensor_key"])
         bases = set(req.inputs["reference_bases"])
         audit = audit_reference_candidates(tensors, base_keys=bases)
         independent = req.inputs["independent_compressed_bytes"]
@@ -756,18 +1010,27 @@ def _stream_chat(sm, tok, ids, req: ChatCompletionRequest, cid: str, created: in
     bridge for turning a synchronous, blocking token loop into an SSE
     stream without blocking the async event loop on GPU work. Works
     identically for plain greedy and speculative decoding: generate_adaptive
-    calls on_token once per accepted token, same contract as generate_greedy."""
+    calls on_token once per accepted token, same contract as generate_greedy.
+
+    At 9-33 s/token, the gap between tokens is long enough that "nothing
+    happened yet" is indistinguishable from "it's stuck" if all we ever
+    send is token deltas. The queue.get(timeout=...) below turns each silent
+    gap into a periodic "progress" event carrying the live StreamStats
+    snapshot (bytes read, I/O/decode seconds) instead -- no new engine
+    hooks needed, since those counters already update incrementally during
+    generation."""
     import queue
     import threading
 
     import torch
 
     q: queue.Queue = queue.Queue()
-    SENTINEL = object()
+    TOKEN, DONE = "token", "done"
+    gen_t0 = time.perf_counter()
 
     def on_token(tok_id: int) -> None:
         piece = tok.decode([tok_id], skip_special_tokens=True)
-        q.put(piece)
+        q.put((TOKEN, piece))
 
     def run():
         try:
@@ -783,7 +1046,7 @@ def _stream_chat(sm, tok, ids, req: ChatCompletionRequest, cid: str, created: in
                     sm.generate_greedy(ids, max_new_tokens=req.max_tokens,
                                        on_token=on_token, stop_token_ids=stop_ids)
         finally:
-            q.put(SENTINEL)
+            q.put((DONE, None))
 
     threading.Thread(target=run, daemon=True).start()
 
@@ -793,14 +1056,32 @@ def _stream_chat(sm, tok, ids, req: ChatCompletionRequest, cid: str, created: in
                   "choices": [{"index": 0, "delta": delta, "finish_reason": finish_reason}]}
         return "data: " + json.dumps(payload) + "\n\n"
 
+    def progress_event() -> str:
+        payload = {
+            "id": cid, "object": "chat.completion.chunk.progress",
+            "progress": {
+                "elapsed_seconds": round(time.perf_counter() - gen_t0, 1),
+                "bytes_read_gb": round(sm.stats.bytes_read / 1e9, 3),
+                "io_seconds": round(sm.stats.io_seconds, 1),
+                "decode_seconds": round(sm.stats.decode_seconds, 1),
+                "peak_vram_gb": (round(torch.cuda.max_memory_allocated() / 1e9, 3)
+                                if torch.cuda.is_available() else None),
+            },
+        }
+        return "data: " + json.dumps(payload) + "\n\n"
+
     yield chunk({"role": "assistant", "content": ""})
     n_tokens = 0
     while True:
-        piece = q.get()
-        if piece is SENTINEL:
+        try:
+            kind, value = q.get(timeout=1.0)
+        except queue.Empty:
+            yield progress_event()
+            continue
+        if kind == DONE:
             break
         n_tokens += 1
-        yield chunk({"content": piece})
+        yield chunk({"content": value})
     yield chunk({}, finish_reason="stop")
     _engine_cache._last_completion_len = n_tokens
     usage = _stats_usage(sm, ids.shape[1], n_tokens)
