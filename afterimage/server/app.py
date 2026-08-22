@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
+import logging
 import pathlib
 import statistics
 import threading
@@ -32,6 +33,8 @@ from afterimage.experiments import (
 from afterimage.runtime.config import EngineConfig
 from afterimage.server.jobs import registry
 
+logger = logging.getLogger(__name__)
+
 app = FastAPI(title="Afterimage", description="Lossless streaming inference control API")
 
 _STATIC_DIR = pathlib.Path(__file__).parent / "static"
@@ -41,6 +44,42 @@ _EXPERIMENT_RESULTS = ResultStore(DEFAULT_STORE_ROOT / "_experiment_results")
 @app.get("/", response_class=HTMLResponse)
 def index() -> str:
     return (_STATIC_DIR / "index.html").read_text(encoding="utf-8")
+
+
+# -- operability: health, version, last-run stats -----------------------
+
+@app.get("/health")
+def health() -> dict:
+    """Cheap and CUDA-safe: never touches the engine cache lock, so it stays
+    responsive while a request is mid-generation -- exactly the case a
+    container orchestrator's health probe needs to distinguish from a
+    genuinely hung process."""
+    import torch
+    model_loaded = _engine_cache._sm is not None
+    return {"status": "ok", "model_loaded": model_loaded,
+            "loaded_model": _engine_cache._key[0] if _engine_cache._key else None,
+            "cuda_available": torch.cuda.is_available()}
+
+
+@app.get("/api/version")
+def version() -> dict:
+    from afterimage import __version__
+    return {"version": __version__}
+
+
+@app.get("/api/stats")
+def last_stats() -> dict:
+    """The counters from the most recently completed /v1/chat/completions
+    call on the currently loaded engine -- StreamStats.reset() runs at the
+    start of each request, so this is that request's numbers, not a
+    lifetime total."""
+    if _engine_cache._sm is None:
+        raise HTTPException(404, "no model loaded yet")
+    sm = _engine_cache._sm
+    completion_len = _engine_cache._last_completion_len
+    if completion_len is None:
+        raise HTTPException(404, "no completed generation on the loaded model yet")
+    return _stats_usage(sm, 0, completion_len)["afterimage"]
 
 
 # -- hardware / models -------------------------------------------------
@@ -556,12 +595,21 @@ class _EngineCache:
         self._key = None
         self._sm = None
         self._tok = None
+        self._draft_key = None
+        self._draft = None
+        self._last_completion_len: int | None = None
 
     def get(self, model_id: str, cfg: EngineConfig):
-        key = (model_id, cfg.vram_cap_gb, cfg.vram_budget_gb, cfg.ram_budget_gb, cfg.io_prefetch_depth)
+        # The full config fingerprint, not a hand-picked field subset -- an
+        # earlier version keyed on only 5 fields, so a request that changed
+        # e.g. draft_mode or lm_head_slice_rows but matched on those 5
+        # silently reused the previous request's engine with the previous
+        # request's settings instead of reloading.
+        key = (model_id, cfg.fingerprint())
         with self._lock:
             if self._key != key:
                 if self._sm is not None:
+                    logger.info("evicting engine for %s to load %s", self._key[0], model_id)
                     self._sm.close()
                     self._sm = None
                 from transformers import AutoTokenizer
@@ -571,10 +619,24 @@ class _EngineCache:
                 if not (store_dir / "manifest.json").exists():
                     raise HTTPException(
                         404, "no compressed store for %r -- POST /api/compress first" % model_id)
+                logger.info("loading %s (config %s)", model_id, cfg.fingerprint())
                 self._tok = AutoTokenizer.from_pretrained(model_id)
                 self._sm = StreamingLosslessModel(model_id, store_dir, device="cuda", config=cfg)
                 self._key = key
+                logger.info("%s loaded", model_id)
             return self._sm, self._tok
+
+    def get_draft(self, draft_model_id: str, device: str):
+        """A small resident draft model, cached across requests the same
+        way -- reloading a fresh copy every chat request would defeat the
+        whole point of it being small and fast."""
+        key = (draft_model_id, device)
+        with self._lock:
+            if self._draft_key != key:
+                from afterimage.runtime.streaming_engine import load_draft_model
+                self._draft = load_draft_model(draft_model_id, device=device)
+                self._draft_key = key
+            return self._draft
 
 
 _engine_cache = _EngineCache()
@@ -596,6 +658,13 @@ class ChatCompletionRequest(BaseModel):
     vram_cap_gb: float | None = None
     vram_budget_gb: float | None = None
     ram_budget_gb: float | None = None
+    # Not OpenAI-standard fields: Afterimage's dial. draft_model enables
+    # speculative decoding (the 3.15x measured win, see README) -- omit it
+    # for plain greedy decoding. lm_head_slice_rows > 0 trades bit-exactness
+    # for a lower VRAM floor (see EngineConfig.lm_head_slice_rows).
+    draft_model: str | None = None
+    spec_k: int = 8
+    lm_head_slice_rows: int = 0
 
 
 @app.get("/v1/models")
@@ -611,11 +680,39 @@ def _build_prompt(tok, messages: list[ChatMessage]) -> str:
                                    tokenize=False, add_generation_prompt=True)
 
 
+def _stats_usage(sm, ids_len: int, completion_len: int) -> dict:
+    usage = {"prompt_tokens": ids_len, "completion_tokens": completion_len,
+             "total_tokens": ids_len + completion_len}
+    afterimage_stats = {
+        "seconds_per_token": (
+            (sm.stats.io_seconds + sm.stats.decode_seconds + sm.stats.compute_seconds)
+            / max(completion_len, 1)),
+        "io_seconds": sm.stats.io_seconds,
+        "decode_seconds": sm.stats.decode_seconds,
+        "compute_seconds": sm.stats.compute_seconds,
+        "bytes_read_gb": sm.stats.bytes_read / 1e9,
+        "prefetch_hit_rate": (sm.stats.prefetch_hits /
+                              max(sm.stats.prefetch_hits + sm.stats.prefetch_misses, 1)),
+        "spec_sweeps": sm.stats.spec_sweeps,
+        "spec_accepted_tokens": sm.stats.spec_accepted_tokens,
+    }
+    import torch
+    if torch.cuda.is_available():
+        afterimage_stats["peak_vram_gb"] = torch.cuda.max_memory_allocated() / 1e9
+    usage["afterimage"] = afterimage_stats
+    return usage
+
+
 @app.post("/v1/chat/completions")
 def chat_completions(req: ChatCompletionRequest):
+    logger.info("chat completion: model=%s max_tokens=%d stream=%s draft=%s",
+               req.model, req.max_tokens, req.stream, req.draft_model or "none")
     cfg = EngineConfig(vram_cap_gb=req.vram_cap_gb, vram_budget_gb=req.vram_budget_gb,
-                       ram_budget_gb=req.ram_budget_gb, progress=False)
+                       ram_budget_gb=req.ram_budget_gb, progress=False,
+                       draft_mode=("model" if req.draft_model else "none"),
+                       spec_k=req.spec_k, lm_head_slice_rows=req.lm_head_slice_rows)
     sm, tok = _engine_cache.get(req.model, cfg)
+    draft = _engine_cache.get_draft(req.draft_model, sm.device) if req.draft_model else None
     prompt = _build_prompt(tok, req.messages)
     ids = tok(prompt, return_tensors="pt").input_ids.to(sm.device)
     stop_ids = {tok.eos_token_id} if tok.eos_token_id is not None else set()
@@ -626,28 +723,40 @@ def chat_completions(req: ChatCompletionRequest):
     if req.stream:
         # Token-by-token SSE needs each chunk emitted as it's produced, not
         # collected after the fact -- _stream_chat bridges generate_greedy's
-        # synchronous on_token callback (running in a background thread) to
-        # this generator via a queue.
-        return StreamingResponse(_stream_chat(sm, tok, ids, req, cid, created, stop_ids),
-                                 media_type="text/event-stream")
+        # (or generate_adaptive's) synchronous on_token callback (running in
+        # a background thread) to this generator via a queue.
+        return StreamingResponse(
+            _stream_chat(sm, tok, ids, req, cid, created, stop_ids, draft),
+            media_type="text/event-stream")
 
     import torch
+    sm.stats.reset()
+    if torch.cuda.is_available():
+        torch.cuda.reset_peak_memory_stats()
     with torch.no_grad():
-        seq = sm.generate_greedy(ids, max_new_tokens=req.max_tokens, stop_token_ids=stop_ids)
+        if draft is not None:
+            seq, _policy = sm.generate_adaptive(
+                ids, max_new_tokens=req.max_tokens, draft_model=draft,
+                temperature=req.temperature, stop_token_ids=stop_ids)
+        else:
+            seq = sm.generate_greedy(ids, max_new_tokens=req.max_tokens, stop_token_ids=stop_ids)
     text = tok.decode(seq[0, ids.shape[1]:], skip_special_tokens=True)
+    completion_len = seq.shape[1] - ids.shape[1]
+    _engine_cache._last_completion_len = completion_len
     return {"id": cid, "object": "chat.completion", "created": created, "model": req.model,
             "choices": [{"index": 0, "message": {"role": "assistant", "content": text},
                         "finish_reason": "stop"}],
-            "usage": {"prompt_tokens": ids.shape[1],
-                     "completion_tokens": seq.shape[1] - ids.shape[1],
-                     "total_tokens": seq.shape[1]}}
+            "usage": _stats_usage(sm, ids.shape[1], completion_len)}
 
 
-def _stream_chat(sm, tok, ids, req: ChatCompletionRequest, cid: str, created: int, stop_ids: set):
+def _stream_chat(sm, tok, ids, req: ChatCompletionRequest, cid: str, created: int,
+                 stop_ids: set, draft=None):
     """Runs generation in a background thread, pushing each token's decoded
     text piece into a queue that this generator drains -- the standard
     bridge for turning a synchronous, blocking token loop into an SSE
-    stream without blocking the async event loop on GPU work."""
+    stream without blocking the async event loop on GPU work. Works
+    identically for plain greedy and speculative decoding: generate_adaptive
+    calls on_token once per accepted token, same contract as generate_greedy."""
     import queue
     import threading
 
@@ -662,9 +771,17 @@ def _stream_chat(sm, tok, ids, req: ChatCompletionRequest, cid: str, created: in
 
     def run():
         try:
+            sm.stats.reset()
+            if torch.cuda.is_available():
+                torch.cuda.reset_peak_memory_stats()
             with torch.no_grad():
-                sm.generate_greedy(ids, max_new_tokens=req.max_tokens,
-                                   on_token=on_token, stop_token_ids=stop_ids)
+                if draft is not None:
+                    sm.generate_adaptive(ids, max_new_tokens=req.max_tokens,
+                                         draft_model=draft, temperature=req.temperature,
+                                         on_token=on_token, stop_token_ids=stop_ids)
+                else:
+                    sm.generate_greedy(ids, max_new_tokens=req.max_tokens,
+                                       on_token=on_token, stop_token_ids=stop_ids)
         finally:
             q.put(SENTINEL)
 
@@ -677,10 +794,16 @@ def _stream_chat(sm, tok, ids, req: ChatCompletionRequest, cid: str, created: in
         return "data: " + json.dumps(payload) + "\n\n"
 
     yield chunk({"role": "assistant", "content": ""})
+    n_tokens = 0
     while True:
         piece = q.get()
         if piece is SENTINEL:
             break
+        n_tokens += 1
         yield chunk({"content": piece})
     yield chunk({}, finish_reason="stop")
+    _engine_cache._last_completion_len = n_tokens
+    usage = _stats_usage(sm, ids.shape[1], n_tokens)
+    yield "data: " + json.dumps({"id": cid, "object": "chat.completion.chunk.usage",
+                                 "usage": usage}) + "\n\n"
     yield "data: [DONE]\n\n"

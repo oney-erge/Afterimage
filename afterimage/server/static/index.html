@@ -57,6 +57,9 @@
   .experiment-card h3 { margin: 0 0 7px; font-size: 14px; }
   .experiment-card p { margin: 5px 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
   .experiment-card .result { margin-top: 8px; font-family: var(--mono); font-size: 11px; white-space: pre-wrap; }
+  .profile-row { display: flex; gap: 8px; margin-top: 4px; }
+  .profile-btn { flex: 1; }
+  .profile-btn.active { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
 </style>
 </head>
 <body>
@@ -119,11 +122,32 @@
     </div>
     <label>Prompt</label>
     <textarea id="chat-prompt" placeholder="The capital of France is"></textarea>
+
+    <label>Profile — measured operating points from the README's benchmark table</label>
+    <div class="profile-row">
+      <button class="ghost profile-btn" data-profile="min-memory" data-vram="" data-draft="">min-memory</button>
+      <button class="ghost profile-btn" data-profile="balanced" data-vram="4" data-draft="">balanced (1.66x)</button>
+      <button class="ghost profile-btn" data-profile="fast" data-vram="4" data-draft="Qwen/Qwen3-0.6B">fast (3.15x)</button>
+    </div>
+
+    <div class="form-grid" style="margin-top:10px">
+      <div>
+        <label>VRAM budget (GB) — empty = minimum-memory floor</label>
+        <input id="chat-vram" type="number" step="0.5" placeholder="e.g. 4">
+      </div>
+      <div>
+        <label>Draft model id — empty disables speculation</label>
+        <input id="chat-draft" placeholder="Qwen/Qwen3-0.6B">
+      </div>
+    </div>
+    <div class="status-line" id="chat-plan-hint"></div>
+
     <div class="job-controls">
       <button id="chat-send">Generate</button>
     </div>
     <label style="margin-top:14px">Output</label>
     <div id="chat-log"></div>
+    <div class="status-line" id="chat-stats"></div>
   </section>
 
   <section class="full">
@@ -316,21 +340,68 @@ $('plan-run').addEventListener('click', async () => {
   }
 });
 
+document.querySelectorAll('.profile-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.profile-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    $('chat-vram').value = btn.dataset.vram;
+    $('chat-draft').value = btn.dataset.draft;
+    checkChatPlan();
+  });
+});
+
+let chatPlanTimer = null;
+function checkChatPlan() {
+  clearTimeout(chatPlanTimer);
+  chatPlanTimer = setTimeout(async () => {
+    const model_id = $('chat-model').value.trim();
+    const vram_budget_gb = parseFloat($('chat-vram').value);
+    if (!model_id || !vram_budget_gb) { $('chat-plan-hint').textContent = ''; return; }
+    try {
+      const p = await api('/api/plan', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model_id, vram_budget_gb, ram_budget_gb: 0 }),
+      });
+      $('chat-plan-hint').innerHTML = p.feasible
+        ? `<span class="feasible-yes">feasible</span> at ${vram_budget_gb} GB`
+        : `<span class="feasible-no">not feasible</span> — ${p.reason}`;
+    } catch (e) {
+      $('chat-plan-hint').textContent = '';  // model likely not compressed yet -- not an error worth showing here
+    }
+  }, 400);
+}
+$('chat-model').addEventListener('input', checkChatPlan);
+$('chat-vram').addEventListener('input', checkChatPlan);
+
 $('chat-send').addEventListener('click', async () => {
   const model = $('chat-model').value.trim();
   const prompt = $('chat-prompt').value;
   const max_tokens = parseInt($('chat-maxtok').value, 10) || 64;
+  const vram_budget_gb = parseFloat($('chat-vram').value) || null;
+  const draft_model = $('chat-draft').value.trim() || null;
   if (!model || !prompt) return;
   $('chat-send').disabled = true;
   $('chat-log').textContent = '';
+  $('chat-stats').textContent = draft_model
+    ? 'generating (speculative decoding)…' : 'generating…';
+  const t0 = performance.now();
 
   const res = await fetch('/v1/chat/completions', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model, messages: [{ role: 'user', content: prompt }], max_tokens, stream: true }),
+    body: JSON.stringify({
+      model, messages: [{ role: 'user', content: prompt }], max_tokens, stream: true,
+      vram_budget_gb, draft_model,
+    }),
   });
+  if (!res.ok) {
+    $('chat-stats').textContent = `error: ${res.status} ${await res.text()}`;
+    $('chat-send').disabled = false;
+    return;
+  }
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buf = '';
+  let nChars = 0;
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
@@ -343,7 +414,18 @@ $('chat-send').addEventListener('click', async () => {
       if (data === '[DONE]') continue;
       const chunk = JSON.parse(data);
       const delta = chunk.choices?.[0]?.delta?.content;
-      if (delta) $('chat-log').textContent += delta;
+      if (delta) { $('chat-log').textContent += delta; nChars += delta.length; }
+      const usage = chunk.usage?.afterimage;
+      if (usage) {
+        const wallS = (performance.now() - t0) / 1000;
+        const parts = [`${wallS.toFixed(1)}s wall`, `${usage.seconds_per_token.toFixed(2)} s/token`];
+        if (usage.peak_vram_gb != null) parts.push(`${usage.peak_vram_gb.toFixed(2)} GB peak VRAM`);
+        if (usage.spec_sweeps) {
+          parts.push(`${usage.spec_accepted_tokens} tokens / ${usage.spec_sweeps} sweeps ` +
+                     `(${(usage.spec_accepted_tokens / usage.spec_sweeps).toFixed(1)}/sweep)`);
+        }
+        $('chat-stats').textContent = parts.join('  ·  ');
+      }
     }
   }
   $('chat-send').disabled = false;

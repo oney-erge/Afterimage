@@ -23,6 +23,20 @@ import json
 @dataclasses.dataclass
 class EngineConfig:
     """
+    Every field below is real and load-bearing -- nothing here is scaffolding
+    for a future feature. But most runs only ever touch a handful of them:
+
+        vram_budget_gb, ram_budget_gb, draft_mode, spec_k,
+        lm_head_slice_rows, quantize
+
+    Those six are documented in docs/CONFIGURATION.md and are what
+    `afterimage run`'s core argument group exposes. Everything else below
+    belongs to the opt-in H0-H15 research layer (docs/RESEARCH_METHODS.md) --
+    placement/prefetch/representation/expert-codec policies, critical-path
+    profiles, replay plans, and the tracing/experiment plumbing they need.
+    They default to the exact behaviour this engine had before that layer
+    existed, so leaving them alone is always safe.
+
     quantize
         None   -- strictly lossless (DEFAULT). Output is bit-identical to the
                   original bf16 model: verified on real models by comparing

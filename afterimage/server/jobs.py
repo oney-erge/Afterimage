@@ -14,12 +14,15 @@ at all, since JobControl already only depends on threading primitives.
 from __future__ import annotations
 
 import dataclasses
+import logging
 import threading
 import time
 import uuid
 from typing import Any, Callable, Optional
 
 from afterimage.runtime.control import JobCancelled, JobControl
+
+logger = logging.getLogger(__name__)
 
 
 @dataclasses.dataclass
@@ -50,14 +53,18 @@ class JobRegistry:
         job.control.progress_callback = on_progress
 
         def run() -> None:
+            logger.info("job %s (%s) started", job.id, job.kind)
             try:
                 job.result = fn(job.control)
                 job.status = "done"
+                logger.info("job %s (%s) done", job.id, job.kind)
             except JobCancelled:
                 job.status = "cancelled"
+                logger.info("job %s (%s) cancelled", job.id, job.kind)
             except Exception as e:  # noqa: BLE001 -- surfaced to the API caller, not swallowed
                 job.status = "error"
                 job.error = "%s: %s" % (type(e).__name__, e)
+                logger.exception("job %s (%s) failed", job.id, job.kind)
 
         with self._lock:
             self._jobs[job.id] = job

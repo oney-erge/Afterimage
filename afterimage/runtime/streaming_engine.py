@@ -433,6 +433,23 @@ class StreamingLosslessModel:
             self.model = AutoModelForCausalLM.from_config(hf_cfg, dtype=torch.bfloat16)
         self.model.eval()
 
+        # This engine hard-codes a Llama-family layout: a top-level
+        # `.model.layers` list of decoder blocks, `.model.embed_tokens`, and
+        # `.lm_head`. Qwen, Llama and Mistral-family checkpoints match it;
+        # GPT-2/Falcon/MPT-family ones do not. Checking explicitly here
+        # turns an AttributeError buried inside _materialize_resident (which
+        # only makes sense if you already know this constraint) into one
+        # clear message naming the actual architecture -- see
+        # docs/CONFIGURATION.md's supported-architectures table.
+        if not (hasattr(self.model, "model") and hasattr(self.model.model, "layers")):
+            arch = getattr(hf_cfg, "architectures", None) or [type(self.model).__name__]
+            raise RuntimeError(
+                "unsupported model architecture %s for %s: this engine requires "
+                "a Llama-family layout (top-level .model.layers) -- Qwen, Llama "
+                "and Mistral-family checkpoints work; GPT-2/Falcon/MPT-family "
+                "ones do not. See docs/CONFIGURATION.md's supported-architectures "
+                "table." % (arch, model_id))
+
         self.layers = self.model.model.layers
         self.n_layers = len(self.layers)
 
@@ -1730,7 +1747,8 @@ class StreamingLosslessModel:
     @torch.no_grad()
     def generate_adaptive(self, input_ids: torch.Tensor, max_new_tokens: int,
                           draft_model=None, temperature: float = 1.0,
-                          generator: torch.Generator | None = None):
+                          generator: torch.Generator | None = None,
+                          on_token=None, stop_token_ids=()):
         """generate_speculative, but with the two things
         docs/archive/PROPOSAL_ADAPTIVE.md proposes making adaptive:
 
@@ -1756,6 +1774,18 @@ class StreamingLosslessModel:
         Returns (sequence, policy) -- the policy is returned (not just its
         k) so a caller can inspect state_dict() / log() without needing a
         second entry point.
+
+        on_token: optional callable(token_id: int), invoked once per newly
+        accepted token as each sweep's accepted prefix is committed (not
+        one call per drafted token -- a sweep can commit several at once,
+        which is the real unit of progress here). Same purpose as
+        generate_greedy's on_token: lets the server stream over SSE without
+        duplicating this loop.
+
+        stop_token_ids: generation stops the first time an accepted token's
+        id is in this collection, truncating the returned sequence right
+        after it (any later tokens in that same sweep's accepted prefix are
+        discarded, matching generate_greedy's stop-at-first-match semantics).
         """
         from .spec_policy import SweepRecord, _prob_entropy, build_policy
         from .verify import sample_categorical, speculative_sample_step, temperature_probs
@@ -1820,11 +1850,22 @@ class StreamingLosslessModel:
             accepted, n_from_draft = speculative_sample_step(
                 draft_probs, target_probs, draft_tokens, bonus_probs, generator)
 
+            stopped_at = None
+            for i, tok_id in enumerate(accepted):
+                if tok_id in stop_token_ids:
+                    stopped_at = i
+                    break
+            if stopped_at is not None:
+                accepted = accepted[:stopped_at + 1]
+
             seq = torch.cat([seq, torch.tensor([accepted], device=seq.device)], dim=1)
             n_generated += len(accepted)
             self._tok_i = min(n_generated, max_new_tokens)
             self.stats.spec_sweeps += 1
             self.stats.spec_accepted_tokens += n_from_draft
+            if on_token is not None:
+                for tok_id in accepted:
+                    on_token(int(tok_id))
 
             if cfg.spec_policy_learn:
                 policy.update(SweepRecord(
@@ -1833,10 +1874,13 @@ class StreamingLosslessModel:
                     draft_entropies=tuple(_prob_entropy(p) for p in draft_probs),
                     draft_seconds=draft_seconds, target_seconds=target_seconds))
 
+            if stopped_at is not None:
+                break
+
         if cfg.spec_policy_state and cfg.spec_policy_learn:
             policy.save(cfg.spec_policy_state)
 
-        return seq[:, :input_ids.shape[1] + max_new_tokens], policy
+        return seq[:, :input_ids.shape[1] + min(n_generated, max_new_tokens)], policy
 
 
 def load_draft_model(model_id: str = "Qwen/Qwen3-0.6B", device: str = "cuda"):
