@@ -77,6 +77,40 @@ def test_existing_fixed_prefetch_depth_is_not_capped_by_adaptive_default():
         EngineConfig(io_prefetch_depth=16, prefetch_policy="pi")
 
 
+def test_bayesian_prefetch_and_qubo_replay_are_explicit_opt_in():
+    cfg = EngineConfig(prefetch_policy="bayes_probit", io_prefetch_depth=2,
+                       io_prefetch_max_depth=8)
+    assert cfg.prefetch_policy == "bayes_probit"
+    qubo = EngineConfig(placement_policy="replay_qubo",
+                        replay_plan_state="plan.json", vram_budget_gb=4.0)
+    assert qubo.placement_policy == "replay_qubo"
+    extent = EngineConfig(placement_policy="replay_extent_qubo",
+                          replay_plan_state="plan.json", vram_budget_gb=4.0)
+    assert extent.placement_policy == "replay_extent_qubo"
+
+
+def test_coalesced_storage_reads_are_explicit_and_bounded():
+    cfg = EngineConfig(storage_read_policy="coalesced_extents",
+                       storage_extent_max_bytes=4096,
+                       storage_extent_max_gap_bytes=16)
+    assert cfg.storage_extent_max_bytes == 4096
+    with pytest.raises(ValueError, match="storage_read_policy"):
+        EngineConfig(storage_read_policy="magic")
+    with pytest.raises(ValueError, match="max_bytes"):
+        EngineConfig(storage_extent_max_bytes=0)
+
+
+def test_require_pinned_ram_is_a_strict_ram_tier_contract():
+    with pytest.raises(ValueError, match="ram_budget_gb"):
+        EngineConfig(require_pinned_ram=True)
+    with pytest.raises(ValueError, match="decoded"):
+        EngineConfig(vram_budget_gb=2.0, ram_budget_gb=1.0,
+                     ram_tier_format="compressed", require_pinned_ram=True)
+    cfg = EngineConfig(vram_budget_gb=2.0, ram_budget_gb=1.0,
+                       require_pinned_ram=True)
+    assert cfg.require_pinned_ram
+
+
 def test_ram_tier_format_default_is_decoded():
     cfg = EngineConfig()
     assert cfg.ram_tier_format == "decoded"

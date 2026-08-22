@@ -56,6 +56,70 @@ def test_random_access_does_not_require_sequential_reads(tmp_path):
             assert np.all(got == i)
 
 
+def test_read_many_coalesces_contiguous_blobs_bit_exact(tmp_path):
+    path = tmp_path / "w.bin"
+    arrays = [
+        np.arange(64, dtype=np.uint8),
+        np.arange(20, dtype=np.float32).reshape(4, 5),
+        np.arange(11, dtype=np.int32),
+    ]
+    with BinaryWeightWriter(path) as writer:
+        refs = [blobref_to_dict(writer.write(array)) for array in arrays]
+
+    with BinaryWeightReader(path) as reader:
+        decoded, calls, nbytes = reader.read_many(refs, max_extent_bytes=4096)
+
+    assert calls == 1
+    assert nbytes == path.stat().st_size
+    assert all(np.array_equal(left, right)
+               for left, right in zip(decoded, arrays))
+
+
+def test_read_many_respects_extent_bound_and_original_order(tmp_path):
+    path = tmp_path / "w.bin"
+    arrays = [np.full(32, value, dtype=np.uint8) for value in range(3)]
+    with BinaryWeightWriter(path) as writer:
+        refs = [blobref_to_dict(writer.write(array)) for array in arrays]
+
+    with BinaryWeightReader(path) as reader:
+        decoded, calls, nbytes = reader.read_many(
+            [refs[2], refs[0], refs[1]], max_extent_bytes=48)
+
+    assert calls == 3
+    assert nbytes == 96
+    assert [int(array[0]) for array in decoded] == [2, 0, 1]
+
+
+def test_read_many_returns_writable_torch_consumable_arrays_even_when_unaligned(tmp_path):
+    """read_many's memory contract is deliberately different from read()'s:
+    non-owning, and not itemsize-aligned whenever a blob's offset within its
+    merged extent isn't a multiple of that dtype's size. Odd-length leading
+    blobs force later blobs off their natural alignment, exercising exactly
+    that case: values must still be exact and torch must still accept the
+    result without raising."""
+    torch = pytest.importorskip("torch")
+    path = tmp_path / "w.bin"
+    arrays = [
+        np.arange(7, dtype=np.uint8),                    # odd size -> misaligns what follows
+        np.arange(5, dtype=np.uint32),
+        np.arange(3, dtype=np.float32),
+        np.arange(9, dtype=np.uint16).reshape(3, 3),
+    ]
+    with BinaryWeightWriter(path) as writer:
+        refs = [blobref_to_dict(writer.write(array)) for array in arrays]
+
+    with BinaryWeightReader(path) as reader:
+        decoded, calls, nbytes = reader.read_many(
+            refs, max_gap_bytes=0, max_extent_bytes=1 << 28, verify=True)
+
+    assert calls == 1
+    for original, got in zip(arrays, decoded):
+        assert np.array_equal(original, got)
+        assert got.flags.writeable
+        assert not got.flags.owndata
+        torch.from_numpy(got)  # must not raise for any dtype/alignment here
+
+
 def test_empty_array_roundtrips(tmp_path):
     path = tmp_path / "w.bin"
     with BinaryWeightWriter(path) as w:

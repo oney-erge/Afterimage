@@ -13,6 +13,7 @@ command, not just `python -m afterimage.cli`.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import os
 import pathlib
@@ -107,7 +108,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         print("      not been run on real AMD hardware by this project -- treat it as")
         print("      untested, not unsupported. block_chunks (Triton kernel tuning) was")
         print("      tuned for NVIDIA's 32-wide warp; AMD's 64-wide wavefront likely")
-        print("      wants a different value -- see docs/MASTER_PLAN.md.")
+        print("      wants a different value -- see docs/archive/MASTER_PLAN.md.")
 
     print()
     print("Compressed stores in %s:" % DEFAULT_STORE_ROOT)
@@ -170,6 +171,9 @@ def cmd_run(args: argparse.Namespace) -> int:
     cfg = EngineConfig(vram_cap_gb=args.vram_cap_gb, vram_budget_gb=args.vram_budget_gb,
                        ram_budget_gb=args.ram_budget_gb, progress=not args.quiet,
                        io_prefetch_depth=args.io_prefetch_depth,
+                       storage_read_policy=args.storage_read_policy,
+                       storage_extent_max_bytes=args.storage_extent_max_bytes,
+                       storage_extent_max_gap_bytes=args.storage_extent_max_gap_bytes,
                        decode_slice_elems=args.decode_slice_elems,
                        ram_tier_format=args.ram_tier_format,
                        lm_head_slice_rows=args.lm_head_slice_rows,
@@ -179,6 +183,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                        prefetch_policy=args.prefetch_policy,
                        io_prefetch_max_depth=args.io_prefetch_max_depth,
                        lm_head_policy=args.lm_head_policy,
+                       require_pinned_ram=args.require_pinned_ram,
                        trace_events=bool(args.trace_output),
                        trace_output=args.trace_output)
     if not cfg.is_lossless:
@@ -193,6 +198,12 @@ def cmd_run(args: argparse.Namespace) -> int:
             print("io=%.2fs decode=%.2fs compute=%.2fs bytes_read=%.2fGB"
                   % (sm.stats.io_seconds, sm.stats.decode_seconds,
                      sm.stats.compute_seconds, sm.stats.bytes_read / 1e9),
+                  file=sys.stderr)
+            print("storage_read_calls=%d storage_extent_bytes=%.2fGB "
+                  "prefetch_peak_inflight_bytes=%.2fGB"
+                  % (sm.stats.storage_read_calls,
+                     sm.stats.storage_extent_bytes / 1e9,
+                     sm.stats.prefetch_peak_inflight_bytes / 1e9),
                   file=sys.stderr)
     return 0
 
@@ -212,6 +223,62 @@ def cmd_experiments(args: argparse.Namespace) -> int:
                 hypothesis["candidate_profile"], hypothesis["control_profile"],
                 hypothesis["primary_metric"]))
     return 0
+
+
+def cmd_test_plan(args: argparse.Namespace) -> int:
+    """Print the regulated evidence protocol for one or all hypotheses."""
+    from afterimage.experiments import HYPOTHESES
+    from afterimage.protocols import protocol_for, protocol_payload
+
+    if args.hypothesis:
+        query = args.hypothesis.lower()
+        matches = [
+            hypothesis_id for hypothesis_id in HYPOTHESES
+            if hypothesis_id.lower() == query
+            or hypothesis_id.split("-", 1)[0].lower() == query
+        ]
+        if len(matches) != 1:
+            print("Unknown hypothesis %r" % args.hypothesis, file=sys.stderr)
+            return 2
+        hypothesis_id = matches[0]
+        payload = {
+            "hypothesis": dataclasses.asdict(HYPOTHESES[hypothesis_id]),
+            "protocol": dataclasses.asdict(protocol_for(hypothesis_id)),
+        }
+    else:
+        payload = protocol_payload()
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    elif args.hypothesis:
+        print("%s -- %s" % (hypothesis_id, payload["protocol"]["family"]))
+        for stage in payload["protocol"]["stages"]:
+            print("  %s %-3s %s" % (stage["id"], stage["level"], stage["purpose"]))
+        print("advance: " + payload["protocol"]["advance_rule"])
+        print("confirm: " + payload["protocol"]["confirmation_rule"])
+    else:
+        for hypothesis_id, protocol_id in sorted(
+                payload["hypothesis_protocols"].items()):
+            print("%s  %s" % (hypothesis_id, protocol_id))
+    return 0
+
+
+def cmd_pin_preflight(args: argparse.Namespace) -> int:
+    """Fail-closed environment check for pinned-RAM experiments."""
+    from afterimage.runtime.memory_preflight import pinned_memory_preflight
+
+    report = pinned_memory_preflight(
+        int(args.gigabytes * 1e9),
+        attempt_allocation=not args.static_only)
+    payload = dataclasses.asdict(report)
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        print("PASS" if report.success else "BLOCKED", report.reason)
+        print("requested=%.3f GB hard_memlock=%s" % (
+            report.requested_bytes / 1e9,
+            ("unlimited/unknown" if report.memlock_hard_bytes is None
+             else "%.3f GB" % (report.memlock_hard_bytes / 1e9))))
+    return 0 if report.success else 3
 
 
 def cmd_profile_trace(args: argparse.Namespace) -> int:
@@ -235,20 +302,41 @@ def cmd_profile_trace(args: argparse.Namespace) -> int:
 
 
 def cmd_optimize_residency(args: argparse.Namespace) -> int:
-    """Fit a whole-set CEM residency plan on separate calibration traces."""
+    """Fit a whole-set residency plan on separate calibration traces."""
     from afterimage.runtime.critical_path import TraceRecorder
-    from afterimage.runtime.replay_planner import optimize_replay_residency
+    from afterimage.runtime.replay_planner import (
+        optimize_extent_qubo_residency, optimize_qubo_residency,
+        optimize_replay_residency,
+    )
 
     manifest = json.loads(pathlib.Path(args.manifest).read_text(encoding="utf-8"))
     traces = [TraceRecorder.load(path) for path in args.traces]
-    plan = optimize_replay_residency(
-        manifest, traces, vram_budget_gb=args.vram_budget_gb,
-        decode_slice_elems=args.decode_slice_elems,
-        iterations=args.iterations, population=args.population,
-        elite_fraction=args.elite_fraction, seed=args.seed)
+    if args.search_method == "qubo":
+        plan = optimize_qubo_residency(
+            manifest, traces, vram_budget_gb=args.vram_budget_gb,
+            decode_slice_elems=args.decode_slice_elems,
+            pairwise_candidates=args.pairwise_candidates,
+            restarts=args.anneal_restarts, sweeps=args.anneal_sweeps,
+            seed=args.seed)
+    elif args.search_method == "extent-qubo":
+        plan = optimize_extent_qubo_residency(
+            manifest, traces, vram_budget_gb=args.vram_budget_gb,
+            decode_slice_elems=args.decode_slice_elems,
+            max_extent_bytes=args.max_extent_bytes,
+            max_gap_bytes=args.max_extent_gap_bytes,
+            max_tensors_per_extent=args.max_tensors_per_extent,
+            pairwise_candidates=args.pairwise_candidates,
+            restarts=args.anneal_restarts, sweeps=args.anneal_sweeps,
+            seed=args.seed)
+    else:
+        plan = optimize_replay_residency(
+            manifest, traces, vram_budget_gb=args.vram_budget_gb,
+            decode_slice_elems=args.decode_slice_elems,
+            iterations=args.iterations, population=args.population,
+            elite_fraction=args.elite_fraction, seed=args.seed)
     plan.save(args.out)
-    print("Wrote replay-CEM plan with %d resident tensors to %s" %
-          (len(plan.vram_keys), args.out))
+    print("Wrote replay-%s plan with %d resident tensors to %s" %
+          (plan.report.search_method, len(plan.vram_keys), args.out))
     print("Calibration replay: %.3fs -> %.3fs (%.3fx), %d evaluations" %
           (plan.report.baseline_s, plan.report.optimized_s,
            plan.report.predicted_speedup, plan.report.evaluations))
@@ -336,16 +424,24 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--vram-budget-gb", type=float, default=None)
     r.add_argument("--ram-budget-gb", type=float, default=None)
     r.add_argument("--io-prefetch-depth", type=int, default=1)
+    r.add_argument("--storage-read-policy", default="per_blob",
+                   choices=["per_blob", "coalesced_extents"])
+    r.add_argument("--storage-extent-max-bytes", type=int, default=1 << 28)
+    r.add_argument("--storage-extent-max-gap-bytes", type=int, default=0)
     r.add_argument("--io-prefetch-max-depth", type=int, default=8)
-    r.add_argument("--prefetch-policy", default="fixed", choices=["fixed", "pi", "mpc"])
+    r.add_argument("--prefetch-policy", default="fixed",
+                   choices=["fixed", "pi", "mpc", "bayes_probit"])
     r.add_argument("--placement-policy", default="traffic_density",
                    choices=["traffic_density", "profiled_knapsack", "critical_path",
-                            "replay_cem"])
+                            "replay_cem", "replay_qubo", "replay_extent_qubo"])
     r.add_argument("--critical-path-profile", default=None)
     r.add_argument("--replay-plan-state", default=None,
                    help="frozen plan produced by `afterimage optimize-residency`")
     r.add_argument("--lm-head-policy", default="full",
                    choices=["full", "certified_mips", "ram_overlay"])
+    r.add_argument("--require-pinned-ram", action="store_true",
+                   help="fail closed instead of degrading to pageable RAM -- the "
+                        "regulated H9 mechanism gate")
     r.add_argument("--trace-output", default=None,
                    help="write an event-DAG trace after generation")
     r.add_argument("--decode-slice-elems", type=int, default=1 << 25,
@@ -382,9 +478,23 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--prompt", default="The capital of France is")
     b.set_defaults(func=cmd_bench)
 
-    e = sub.add_parser("experiments", help="list versioned H0-H11 experiment definitions")
+    e = sub.add_parser("experiments", help="list versioned H0-H15 experiment definitions")
     e.add_argument("--json", action="store_true")
     e.set_defaults(func=cmd_experiments)
+
+    tp = sub.add_parser(
+        "test-plan", help="show hypothesis-aware L0-L3 evidence requirements")
+    tp.add_argument("hypothesis", nargs="?", default=None)
+    tp.add_argument("--json", action="store_true")
+    tp.set_defaults(func=cmd_test_plan)
+
+    pin = sub.add_parser(
+        "pin-preflight", help="prove a pinned-host-RAM experiment can allocate")
+    pin.add_argument("--gigabytes", type=float, default=1.6)
+    pin.add_argument("--static-only", action="store_true",
+                     help="check limits without attempting the allocation")
+    pin.add_argument("--json", action="store_true")
+    pin.set_defaults(func=cmd_pin_preflight)
 
     t = sub.add_parser("profile-trace",
                        help="build a measured critical-path profile from trace files")
@@ -402,9 +512,17 @@ def build_parser() -> argparse.ArgumentParser:
     o.add_argument("--out", required=True)
     o.add_argument("--vram-budget-gb", type=float, required=True)
     o.add_argument("--decode-slice-elems", type=int, default=1 << 25)
+    o.add_argument("--search-method", choices=["cem", "qubo", "extent-qubo"],
+                   default="cem")
     o.add_argument("--iterations", type=int, default=12)
     o.add_argument("--population", type=int, default=64)
     o.add_argument("--elite-fraction", type=float, default=0.15)
+    o.add_argument("--pairwise-candidates", type=int, default=24)
+    o.add_argument("--anneal-restarts", type=int, default=8)
+    o.add_argument("--anneal-sweeps", type=int, default=2000)
+    o.add_argument("--max-extent-bytes", type=int, default=1 << 28)
+    o.add_argument("--max-extent-gap-bytes", type=int, default=0)
+    o.add_argument("--max-tensors-per-extent", type=int, default=8)
     o.add_argument("--seed", type=int, default=0)
     o.set_defaults(func=cmd_optimize_residency)
 

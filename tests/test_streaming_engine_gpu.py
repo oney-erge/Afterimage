@@ -85,7 +85,18 @@ def test_untied_row_gather_and_prefetch_are_bit_exact_vs_reference(tmp_path, mon
     assert sm_pre.manifest["tensors"]["model.embed_tokens.weight"]["row_gather"] is True
     with torch.no_grad():
         logits_prefetch = sm_pre.forward_logits(ids)
+    per_blob_calls = sm_pre.stats.storage_read_calls
     sm_pre.close()
+
+    sm_extent = StreamingLosslessModel(
+        "fake/untied-engine", store_dir, device="cuda",
+        config=EngineConfig(io_prefetch_depth=1,
+                            storage_read_policy="coalesced_extents",
+                            storage_extent_max_bytes=1 << 20))
+    with torch.no_grad():
+        logits_extent = sm_extent.forward_logits(ids)
+    extent_calls = sm_extent.stats.storage_read_calls
+    sm_extent.close()
 
     sm_no = StreamingLosslessModel("fake/untied-engine", store_dir, device="cuda",
                                    config=EngineConfig(io_prefetch_depth=0))
@@ -98,6 +109,9 @@ def test_untied_row_gather_and_prefetch_are_bit_exact_vs_reference(tmp_path, mon
         "forward pass on the identical weights")
     assert torch.equal(logits_no_prefetch, ref_logits), (
         "row-gathered engine (no prefetch) diverged from reference")
+    assert torch.equal(logits_extent, ref_logits), (
+        "coalesced storage extents changed exact logits")
+    assert extent_calls < per_blob_calls
     assert torch.equal(logits_prefetch, logits_no_prefetch), (
         "prefetch changed the output -- it must only change WHEN bytes are "
         "read, never WHAT is read")
@@ -341,10 +355,11 @@ def test_compute_seconds_does_not_double_count_io_and_decode(tmp_path, monkeypat
 
 
 def test_compressed_ram_tier_is_bit_exact_and_persists_across_tokens(tmp_path, monkeypatch):
-    """H1 (docs/PROPOSAL.md): caching compressed bytes instead of a decoded
-    tensor trades a memcpy for a real GPU decode every token -- must still
-    be bit-exact, and the cache must hold RAW bytes (not a decoded tensor)
-    so the memory-saving claim is actually true."""
+    """docs/archive/PROPOSAL.md's own H1 (unrelated to the current H1
+    critical-path-residency hypothesis): caching compressed bytes instead of
+    a decoded tensor trades a memcpy for a real GPU decode every token --
+    must still be bit-exact, and the cache must hold RAW bytes (not a
+    decoded tensor) so the memory-saving claim is actually true."""
     from afterimage.runtime.config import EngineConfig
     from afterimage.runtime import vram_planner
     from afterimage.runtime.streaming_engine import StreamingLosslessModel
@@ -689,7 +704,7 @@ def test_draft_self_logits_rejects_out_of_range_exit_layer(tmp_path, monkeypatch
 @pytest.mark.parametrize("spec_k_policy", ["fixed", "gamma", "threshold"])
 def test_generate_adaptive_self_draft_matches_greedy_at_temperature_zero(
         tmp_path, monkeypatch, spec_k_policy):
-    """The correctness argument from docs/ADAPTIVE_TEST_PLAN.md §3: at
+    """The correctness argument from docs/archive/ADAPTIVE_TEST_PLAN.md §3: at
     temperature<=0, verify.temperature_probs makes draft and target
     distributions one-hot, so speculative_sample_step's accept/reject
     collapses to 'accept iff draft's argmax == target's argmax, else emit

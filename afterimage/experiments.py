@@ -103,6 +103,18 @@ PROFILES = {
         "neural-utility-spec-v1", "Tiny neural survival-utility stopping",
         {"draft_mode": "model", "spec_k_policy": "neural_utility"},
         exactness_contract="distribution_exact"),
+    "bayes-probit-prefetch-v1": MethodProfile(
+        "bayes-probit-prefetch-v1", "Bayesian probit prefetch depth",
+        {"prefetch_policy": "bayes_probit"}),
+    "replay-qubo-v1": MethodProfile(
+        "replay-qubo-v1", "Pairwise event-interference QUBO residency",
+        {"placement_policy": "replay_qubo"}),
+    "coalesced-storage-v1": MethodProfile(
+        "coalesced-storage-v1", "Bounded contiguous storage reads",
+        {"storage_read_policy": "coalesced_extents"}),
+    "extent-qubo-v1": MethodProfile(
+        "extent-qubo-v1", "Physical-extent QUBO residency",
+        {"placement_policy": "replay_extent_qubo"}),
 }
 
 
@@ -197,15 +209,58 @@ HYPOTHESES = {
         "Kill if held-out calibration error is poor or the paired lower "
         "confidence bound is not positive.",
         minimum_repeats=5, minimum_new_tokens=128),
+    "h12-bayesian-prefetch": Hypothesis(
+        "h12-bayesian-prefetch", "Bayesian chance-constrained prefetch",
+        "A probit constraint over posterior read and lead-time distributions "
+        "reduces exposed stalls without the PI controller's over-prefetching.",
+        "bayes-probit-prefetch-v1", "fixed-prefetch-v1", "generation",
+        "committed_tokens_per_second", 0.05, "reference_execution_equivalent",
+        (), "Kill if throughput gain <5% or exposed wait does not fall by 10%.",
+        minimum_repeats=5, minimum_new_tokens=32),
+    "h13-qubo-residency": Hypothesis(
+        "h13-qubo-residency", "Event-interference QUBO residency",
+        "A pairwise Hamiltonian of event-DAG counterfactual interactions finds "
+        "a faster resident tensor set than independent measured knapsack.",
+        "replay-qubo-v1", "profiled-knapsack-v1", "generation",
+        "committed_tokens_per_second", 0.05, "reference_execution_equivalent",
+        ("replay_plan_state", "critical_path_profile"),
+        "Kill if held-out replay error >10% or paired throughput gain <5%.",
+        minimum_repeats=5, minimum_new_tokens=16),
+    "h14-coalesced-storage": Hypothesis(
+        "h14-coalesced-storage", "Bounded contiguous storage reads",
+        "Coalescing adjacent compressed arrays lowers fixed storage-request "
+        "overhead without unacceptable byte amplification.",
+        "coalesced-storage-v1", "exact-streaming-v1", "generation",
+        "committed_tokens_per_second", 0.05,
+        "reference_execution_equivalent", (),
+        "Kill if read calls do not fall 50%, byte amplification exceeds 5%, "
+        "or throughput gain is below 5%.",
+        minimum_repeats=3, minimum_new_tokens=16),
+    "h15-extent-qubo-residency": Hypothesis(
+        "h15-extent-qubo-residency", "Physical-extent QUBO residency",
+        "Searching bounded contiguous storage groups exposes a useful plan "
+        "that tensor-independent measured knapsack cannot select.",
+        "extent-qubo-v1", "profiled-knapsack-v1", "generation",
+        "committed_tokens_per_second", 0.05,
+        "reference_execution_equivalent",
+        ("replay_plan_state", "critical_path_profile"),
+        "Kill before GPU timing unless the frozen plan differs from control "
+        "and predicts at least 2% replay gain.",
+        minimum_repeats=3, minimum_new_tokens=16),
 }
 
 
 def registry_payload() -> dict:
-    return {
+    from .protocols import protocol_payload, validate_protocol_registry
+
+    validate_protocol_registry(HYPOTHESES)
+    payload = {
         "schema_version": 1,
         "profiles": [dataclasses.asdict(p) for p in PROFILES.values()],
         "hypotheses": [dataclasses.asdict(h) for h in HYPOTHESES.values()],
     }
+    payload.update(protocol_payload())
+    return payload
 
 
 @dataclasses.dataclass

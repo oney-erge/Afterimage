@@ -144,6 +144,15 @@ class CriticalPathProfile:
     @classmethod
     def from_traces(cls, traces: list[list[TraceEvent]],
                     critical_tolerance_s: float = 1e-6) -> "CriticalPathProfile":
+        modelled = sorted({event.tensor_key for events in traces for event in events
+                           if event.tensor_key and event.metadata.get("modelled")})
+        if modelled:
+            raise ValueError(
+                "trace contains modelled (not genuinely measured) prepare spans "
+                "for %d tensor(s), e.g. %s -- a critical-path profile requires "
+                "real per-tensor timing; re-record with storage_read_policy="
+                "'per_blob', or a reader that times each tensor individually" %
+                (len(modelled), ", ".join(modelled[:5])))
         totals: dict[str, TensorCost] = {}
         for events in traces:
             report = critical_path(events)

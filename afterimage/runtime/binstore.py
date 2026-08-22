@@ -107,6 +107,91 @@ class BinaryWeightReader:
         arr = np.frombuffer(data, dtype=ref["dtype"]).copy()
         return arr.reshape(ref["shape"])
 
+    def read_many(self, refs: list[dict], *, max_gap_bytes: int = 0,
+                  max_extent_bytes: int = 1 << 28,
+                  verify: bool = False) -> tuple[list[np.ndarray], int, int]:
+        """Read nearby blobs through bounded contiguous storage extents.
+
+        The ordinary hot path issues one seek/read pair per compressed array.
+        A layer contains many physically adjacent arrays, so that policy pays
+        repeated fixed request overhead even though ``weights.bin`` already
+        preserves model order.  This method merges adjacent requests without
+        changing a single stored or decoded bit.  It returns arrays in the
+        caller's original order plus the actual read-call and byte counts.
+
+        A blob larger than ``max_extent_bytes`` remains one indivisible read;
+        the bound only prevents *merging* additional blobs into that extent.
+
+        Memory contract -- deliberately different from ``read()``: each
+        returned array is a non-owning ``np.frombuffer`` view over one shared
+        per-extent ``bytearray`` (``owndata=False``), and it is not aligned
+        to its dtype's itemsize whenever the blob's on-disk offset within the
+        extent isn't a multiple of that itemsize. Values are exact and the
+        buffer is writable either way; measured, ``torch.from_numpy`` accepts
+        an unaligned writable array without raising for every dtype this
+        store uses. But do not assume ``owndata`` or alignment here the way
+        ``read()`` guarantees them -- multiple returned arrays can alias the
+        same underlying buffer, so mutating one can corrupt another.
+        """
+        if max_gap_bytes < 0:
+            raise ValueError("max_gap_bytes must be non-negative")
+        if max_extent_bytes < 1:
+            raise ValueError("max_extent_bytes must be positive")
+        if not refs:
+            return [], 0, 0
+
+        ordered = sorted(enumerate(refs), key=lambda item: int(item[1]["offset"]))
+        extents: list[dict] = []
+        for original_index, ref in ordered:
+            start = int(ref["offset"])
+            end = start + int(ref["nbytes"])
+            if end < start:
+                raise ValueError("blob extent overflows its offset")
+            if extents:
+                previous = extents[-1]
+                gap = start - previous["end"]
+                merged_end = max(previous["end"], end)
+                if (gap >= 0 and gap <= max_gap_bytes
+                        and merged_end - previous["start"] <= max_extent_bytes):
+                    previous["end"] = merged_end
+                    previous["items"].append((original_index, ref))
+                    continue
+            extents.append({"start": start, "end": end,
+                            "items": [(original_index, ref)]})
+
+        output: list[np.ndarray | None] = [None] * len(refs)
+        bytes_read = 0
+        for extent in extents:
+            start = extent["start"]
+            nbytes = extent["end"] - start
+            self._fh.seek(start)
+            data = bytearray(nbytes)
+            got_bytes = self._fh.readinto(data)
+            if got_bytes != nbytes:
+                raise ValueError(
+                    "short read at offset %d: wanted %d bytes, got %d" %
+                    (start, nbytes, got_bytes))
+            bytes_read += nbytes
+            view = memoryview(data)
+            for original_index, ref in extent["items"]:
+                relative = int(ref["offset"]) - start
+                blob = view[relative:relative + int(ref["nbytes"])]
+                if verify:
+                    got = zlib.crc32(blob)
+                    want = ref.get("crc32", 0)
+                    if got != want:
+                        raise ValueError(
+                            "checksum mismatch at offset %d (%d bytes): store is "
+                            "corrupted -- got crc32=%d, manifest says %d" %
+                            (ref["offset"], ref["nbytes"], got, want))
+                # bytearray-backed memoryviews are writable, so torch.from_numpy
+                # can safely consume these arrays without the second full copy
+                # that erased the fixed-request benefit in the first H14 screen.
+                array = np.frombuffer(blob, dtype=ref["dtype"])
+                output[original_index] = array.reshape(ref["shape"])
+
+        return output, len(extents), bytes_read  # type: ignore[return-value]
+
     def read_row(self, base_offset: int, row_index: int, row_nbytes: int,
                 dtype: str) -> np.ndarray:
         """Reads exactly one row of a row-major 2D blob, without touching

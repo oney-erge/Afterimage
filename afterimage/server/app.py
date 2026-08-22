@@ -190,9 +190,11 @@ def experiment_definition(hypothesis_id: str) -> dict:
     hypothesis = HYPOTHESES.get(hypothesis_id)
     if hypothesis is None:
         raise HTTPException(404, "no such hypothesis: %r" % hypothesis_id)
+    from afterimage.protocols import protocol_for
     return {"hypothesis": dataclasses.asdict(hypothesis),
             "candidate": dataclasses.asdict(PROFILES[hypothesis.candidate_profile]),
-            "control": dataclasses.asdict(PROFILES[hypothesis.control_profile])}
+            "control": dataclasses.asdict(PROFILES[hypothesis.control_profile]),
+            "protocol": dataclasses.asdict(protocol_for(hypothesis_id))}
 
 
 class ExperimentRunRequest(BaseModel):
@@ -396,13 +398,36 @@ def start_experiment(hypothesis_id: str, req: ExperimentRunRequest) -> dict:
             raise HTTPException(
                 400, "H1 evaluation must run with tracing off; collect the profile "
                 "in separate control runs because CUDA trace synchronization is intrusive")
-    if hypothesis_id == "h10-replay-cem":
+    if hypothesis_id in (
+            "h10-replay-cem", "h13-qubo-residency",
+            "h15-extent-qubo-residency"):
         plan_path = pathlib.Path(req.config_overrides["replay_plan_state"])
         profile_path = pathlib.Path(req.config_overrides["critical_path_profile"])
         if not plan_path.exists() or not profile_path.exists():
             raise HTTPException(
-                400, "H10 requires existing replay_plan_state and "
-                "critical_path_profile files")
+                400, "%s requires existing replay_plan_state and "
+                "critical_path_profile files" % hypothesis_id)
+        # The Placement family's shared L1 prerequisite (REGULATED_TEST_PLAN
+        # section "Protocol by hypothesis family") is that the frozen plan
+        # actually differs from its control -- a search that returns its own
+        # seed cannot support or falsify anything about the search method,
+        # only about the seed. H13 and H15 previously both failed exactly
+        # this way (repair() silently reconstructing the control; see
+        # docs/HYPOTHESIS_LINEAGE.md), so the gate is enforced here for all
+        # three plan-search hypotheses, not only H15.
+        from afterimage.runtime.replay_planner import ReplayResidencyPlan
+        plan = ReplayResidencyPlan.load(plan_path)
+        if not plan.report.treatment_diverged:
+            raise HTTPException(
+                400, "%s mechanism gate requires a frozen plan that differs "
+                "from its control (report.treatment_diverged); a search that "
+                "returns its seed provides no evidence about the search "
+                "method" % hypothesis_id)
+        if (hypothesis_id == "h15-extent-qubo-residency"
+                and plan.report.optimized_over_control < 0.02):
+            raise HTTPException(
+                400, "H15 mechanism gate additionally requires at least 2% "
+                "predicted replay gain over control")
     if hypothesis.runner == "generation" and not req.model_id:
         raise HTTPException(400, "generation experiments require model_id")
     if hypothesis.runner == "generation" and req.repeats < hypothesis.minimum_repeats:

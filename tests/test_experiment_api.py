@@ -14,12 +14,16 @@ from afterimage.server.app import (
 def test_experiment_registry_and_ui_are_exposed():
     client = TestClient(app)
     payload = client.get("/api/experiments").json()
-    assert len(payload["hypotheses"]) == 12
+    assert len(payload["hypotheses"]) == 16
     assert {row["id"] for row in payload["hypotheses"]} >= {
         "h0-joint-oracle-gap", "h8-model-based-rl",
         "h9-ram-overlay-head", "h10-replay-cem",
-        "h11-neural-utility-spec"}
+        "h11-neural-utility-spec", "h12-bayesian-prefetch",
+        "h13-qubo-residency", "h14-coalesced-storage",
+        "h15-extent-qubo-residency"}
     assert "Experiment Lab" in client.get("/").text
+    definition = client.get("/api/experiments/h12-bayesian-prefetch").json()
+    assert definition["protocol"]["id"] == "adaptive-prefetch"
 
 
 def test_h2_refuses_an_unfrozen_or_missing_calibration_state():

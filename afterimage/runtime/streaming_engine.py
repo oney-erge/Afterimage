@@ -74,6 +74,9 @@ class StreamStats:
     prefetch_hits: int = 0
     prefetch_misses: int = 0
     prefetch_wait_seconds: float = 0.0
+    prefetch_peak_inflight_bytes: int = 0
+    storage_read_calls: int = 0
+    storage_extent_bytes: int = 0
     mips_certified: int = 0
     mips_fallbacks: int = 0
     mips_rows_evaluated: int = 0
@@ -91,6 +94,9 @@ class StreamStats:
         self.prefetch_hits = 0
         self.prefetch_misses = 0
         self.prefetch_wait_seconds = 0.0
+        self.prefetch_peak_inflight_bytes = 0
+        self.storage_read_calls = 0
+        self.storage_extent_bytes = 0
         self.mips_certified = 0
         self.mips_fallbacks = 0
         self.mips_rows_evaluated = 0
@@ -353,6 +359,20 @@ class StreamingLosslessModel:
                 "expert_codec=%r requires an XOR-reference-aware expert store; "
                 "the dense v2 store must not silently substitute independent "
                 "tensors" % self.config.expert_codec)
+        if self.config.require_pinned_ram:
+            # Fail closed here, before any store/model loading, rather than
+            # deep inside _materialize_resident's pin_memory() OOM handler --
+            # that handler only fires on an actual pin failure partway
+            # through materialization, so a construction-time check is the
+            # only way an H9-style regulated run can prove its host can pin
+            # the full RAM tier before spending any time on it.
+            from .memory_preflight import pinned_memory_preflight
+            preflight = pinned_memory_preflight(int(self.config.ram_budget_gb * 1e9))
+            if not preflight.success:
+                raise RuntimeError(
+                    "require_pinned_ram is set but the pinned-RAM preflight "
+                    "failed: %s (requested %.3f GB)" %
+                    (preflight.reason, preflight.requested_bytes / 1e9))
         self.store = pathlib.Path(store_dir)
         self.manifest = json.loads((self.store / "manifest.json").read_text())
         self._check_store_integrity()
@@ -389,8 +409,11 @@ class StreamingLosslessModel:
         self._prefetch_readers = (
             [BinaryWeightReader(self.store / "weights.bin") for _ in range(n_prefetch_readers)]
             if self.prefetch else [])
-        self._prefetch_cache: dict[int, dict] = {}
+        self._prefetch_cache: dict[int, tuple[dict, int, int]] = {}
         self._prefetch_threads: dict[int, threading.Thread] = {}
+        self._prefetch_started_at: dict[int, float] = {}
+        self._prefetch_lead_layers: dict[int, int] = {}
+        self._prefetch_inflight_bytes: dict[int, int] = {}
         self._prefetch_lock = threading.Lock()
 
         self._tier = self._compute_tier_assignment(self.config)
@@ -451,7 +474,7 @@ class StreamingLosslessModel:
             self._clear_startup_trace()
         if self.prefetch:
             for ahead in range(1, self._prefetch_controller.choose_depth() + 1):
-                self._start_prefetch(ahead - 1)
+                self._start_prefetch(ahead - 1, lead_layers=ahead - 1)
 
     def _clear_startup_trace(self) -> None:
         """Start the measured DAG without dependencies on discarded events.
@@ -630,7 +653,8 @@ class StreamingLosslessModel:
                     "at least 90%% measured coverage is required to avoid silently "
                     "falling back to traffic estimates. Missing examples: %s" %
                     (100.0 * coverage, ", ".join(missing[:5])))
-        if cfg.placement_policy == "replay_cem":
+        if cfg.placement_policy in (
+                "replay_cem", "replay_qubo", "replay_extent_qubo"):
             from .replay_planner import ReplayResidencyPlan
             frozen = ReplayResidencyPlan.load(cfg.replay_plan_state)
             plan = frozen.to_tier_plan(
@@ -668,16 +692,26 @@ class StreamingLosslessModel:
 
     # -- store access ----------------------------------------------------
 
-    def _read_tensor_arrays(self, key: str) -> tuple[dict, float]:
+    def _read_tensor_arrays(self, key: str) -> tuple[dict, float, int, int]:
         meta = self.manifest["tensors"][key]
+        named_refs = list(meta["blobs"].items())
         t0 = time.perf_counter()
-        arrays = {name: self._reader.read(ref) for name, ref in meta["blobs"].items()}
+        if self.config.storage_read_policy == "coalesced_extents":
+            decoded, read_calls, extent_bytes = self._reader.read_many(
+                [ref for _, ref in named_refs],
+                max_gap_bytes=self.config.storage_extent_max_gap_bytes,
+                max_extent_bytes=self.config.storage_extent_max_bytes)
+            arrays = {name: array for (name, _), array in zip(named_refs, decoded)}
+        else:
+            arrays = {name: self._reader.read(ref) for name, ref in named_refs}
+            read_calls = len(named_refs)
+            extent_bytes = sum(int(ref["nbytes"]) for _, ref in named_refs)
         end = time.perf_counter()
         event_id = self.trace.record("read", "storage-main", t0, end, tensor_key=key,
                                      nbytes=int(meta["comp_bytes"]))
         if event_id:
             self._last_read_event[key] = event_id
-        return arrays, end - t0
+        return arrays, end - t0, read_calls, extent_bytes
 
     def _decode_tensor(self, key: str, arrays: dict) -> torch.Tensor:
         meta = self.manifest["tensors"][key]
@@ -760,9 +794,11 @@ class StreamingLosslessModel:
         prefetch did not already do the read (resident materialization at
         startup, and any disk-tier layer tensor the background thread has
         not finished reading yet)."""
-        arrays, io_s = self._read_tensor_arrays(key)
+        arrays, io_s, read_calls, extent_bytes = self._read_tensor_arrays(key)
         self.stats.bytes_read += self.manifest["tensors"][key]["comp_bytes"]
         self.stats.io_seconds += io_s
+        self.stats.storage_read_calls += read_calls
+        self.stats.storage_extent_bytes += extent_bytes
         return self._decode_tensor(key, arrays)
 
     # -- per-parameter storage swap ---------------------------------------
@@ -893,13 +929,14 @@ class StreamingLosslessModel:
                     self._set_param(self.model, key, self._load_tensor(key))
                 elif tier == "ram":
                     if self.ram_tier_format == "compressed":
-                        # H1: cache the COMPRESSED bytes (fits ~1.45x more
+                        # docs/archive/PROPOSAL.md's own H1 (unrelated to the
+                        # current H1 critical-path-residency hypothesis):
+                        # cache the COMPRESSED bytes (fits ~1.45x more
                         # tensors in ram_budget_gb) instead of a decoded
                         # pinned tensor -- the tradeoff is a real GPU decode
                         # on every token instead of a memcpy. See
-                        # EngineConfig.ram_tier_format and
-                        # docs/PROPOSAL.md H1.
-                        arrays, _ = self._read_tensor_arrays(key)
+                        # EngineConfig.ram_tier_format.
+                        arrays, _, _, _ = self._read_tensor_arrays(key)
                         self._ram_cache[key] = arrays
                     else:
                         # Decode through one transient GPU tensor, copy it to
@@ -921,6 +958,12 @@ class StreamingLosslessModel:
                             # degradation must remain observable.
                             if "out of memory" not in str(exc).lower():
                                 raise
+                            if self.config.require_pinned_ram:
+                                raise RuntimeError(
+                                    "pinned RAM is required by this configuration, "
+                                    "but pin_memory failed for %s; pageable fallback "
+                                    "is disabled by the experiment mechanism gate" % key
+                                ) from exc
                             cached = cpu_tensor
                             self._ram_cache_pageable_keys.add(key)
                             warnings.warn(
@@ -997,31 +1040,85 @@ class StreamingLosslessModel:
                      layer_idx + 1, self.n_layers,
                      self.stats.bytes_read / 1e9, elapsed, eta), flush=True)
 
-    def _read_layer_tensor_arrays(self, idx: int, reader: BinaryWeightReader) -> dict:
+    def _read_layer_tensor_arrays(
+            self, idx: int, reader: BinaryWeightReader) -> tuple[dict, int, int]:
         """Reads only this layer's DISK-tier tensors -- vram/ram-tier ones
         are never re-read from disk after _materialize_resident, so
         prefetching them would be pure waste."""
         layer = self.layers[idx]
-        result = {}
+        layer_keys: list[str] = []
         for pname, _ in layer.named_parameters():
             key = "model.layers.%d.%s" % (idx, pname)
             if key not in self.manifest["tensors"]:
                 continue
             if self._tier.get(key, "disk") != "disk":
                 continue
+            layer_keys.append(key)
+
+        result: dict[str, tuple[dict, float]] = {}
+        if not layer_keys:
+            return result, 0, 0
+
+        if self.config.storage_read_policy == "coalesced_extents":
+            # An extent merges several tensors' blobs into one physical
+            # read, so no per-tensor timing is directly observable -- only
+            # the whole extent's wall time is real. Apportioning it by byte
+            # share is a MODELLED estimate, not a measurement, and must say
+            # so: a critical-path profile built from unmarked synthetic
+            # spans would look identical to one built from genuinely timed
+            # per_blob reads, silently reintroducing the traffic-density
+            # proxy H1 exists to replace.
+            requests = [(key, name, ref)
+                       for key in layer_keys
+                       for name, ref in self.manifest["tensors"][key]["blobs"].items()]
+            read_start = time.perf_counter()
+            decoded, read_calls, extent_bytes = reader.read_many(
+                [ref for _, _, ref in requests],
+                max_gap_bytes=self.config.storage_extent_max_gap_bytes,
+                max_extent_bytes=self.config.storage_extent_max_bytes)
+            read_end = time.perf_counter()
+
+            grouped: dict[str, dict] = {}
+            key_bytes: dict[str, int] = {}
+            for (key, name, ref), array in zip(requests, decoded):
+                grouped.setdefault(key, {})[name] = array
+                key_bytes[key] = key_bytes.get(key, 0) + int(ref["nbytes"])
+            total_blob_bytes = max(sum(key_bytes.values()), 1)
+            cursor = read_start
+            for key, arrays in grouped.items():
+                io_s = (read_end - read_start) * key_bytes[key] / total_blob_bytes
+                key_end = min(read_end, cursor + io_s)
+                event_id = self.trace.record(
+                    "read", "storage-%d" % id(reader), cursor, key_end,
+                    tensor_key=key, nbytes=key_bytes[key],
+                    metadata={"modelled": True})
+                if event_id:
+                    self._last_read_event[key] = event_id
+                result[key] = (arrays, io_s)
+                cursor = key_end
+            return result, read_calls, extent_bytes
+
+        # per_blob: each tensor is its own real seek+read, so time every
+        # tensor's reads individually -- these spans are genuine
+        # measurements and critical_path.py / CriticalPathProfile may treat
+        # them as such.
+        read_calls = 0
+        extent_bytes = 0
+        for key in layer_keys:
             meta = self.manifest["tensors"][key]
             t0 = time.perf_counter()
             arrays = {name: reader.read(ref) for name, ref in meta["blobs"].items()}
-            end = time.perf_counter()
-            event_id = self.trace.record("read", "storage-%d" % id(reader), t0, end,
-                                         tensor_key=key,
-                                         nbytes=int(meta["comp_bytes"]))
+            t1 = time.perf_counter()
+            read_calls += len(meta["blobs"])
+            extent_bytes += int(meta["comp_bytes"])
+            event_id = self.trace.record("read", "storage-%d" % id(reader), t0, t1,
+                                         tensor_key=key, nbytes=int(meta["comp_bytes"]))
             if event_id:
                 self._last_read_event[key] = event_id
-            result[key] = (arrays, end - t0)
-        return result
+            result[key] = (arrays, t1 - t0)
+        return result, read_calls, extent_bytes
 
-    def _start_prefetch(self, idx: int) -> None:
+    def _start_prefetch(self, idx: int, *, lead_layers: int = 1) -> None:
         """Kick off a background read of layer idx's disk-tier bytes.
 
         Uses one of a small POOL of BinaryWeightReaders (io_prefetch_depth
@@ -1052,32 +1149,58 @@ class StreamingLosslessModel:
         reader = self._prefetch_readers[idx % len(self._prefetch_readers)]
 
         def worker():
-            result = self._read_layer_tensor_arrays(idx, reader)
-            with self._prefetch_lock:
-                self._prefetch_cache[idx] = result
+            try:
+                result = self._read_layer_tensor_arrays(idx, reader)
+                with self._prefetch_lock:
+                    self._prefetch_cache[idx] = result
+            finally:
+                with self._prefetch_lock:
+                    self._prefetch_inflight_bytes.pop(idx, None)
 
         with self._prefetch_lock:
             if idx in self._prefetch_cache or idx in self._prefetch_threads:
                 return
             th = threading.Thread(target=worker, daemon=True)
             self._prefetch_threads[idx] = th
+            self._prefetch_started_at[idx] = time.perf_counter()
+            self._prefetch_lead_layers[idx] = max(0, int(lead_layers))
+            inflight = sum(
+                sum(int(ref["nbytes"])
+                    for ref in self.manifest["tensors"][key]["blobs"].values())
+                for key, tier in self._tier.items()
+                if tier == "disk" and key.startswith("model.layers.%d." % idx))
+            self._prefetch_inflight_bytes[idx] = inflight
+            self.stats.prefetch_peak_inflight_bytes = max(
+                self.stats.prefetch_peak_inflight_bytes,
+                sum(self._prefetch_inflight_bytes.values()))
         th.start()
 
     def _load_layer(self, idx: int) -> None:
         self.control.checkpoint()  # pause/cancel boundary: one layer at a time
+        demand_time = time.perf_counter()
         cached = None
         ready_before_wait = False
         prefetch_wait = 0.0
+        lead_s = 0.0
+        lead_layers = 0
         if self.prefetch:
             with self._prefetch_lock:
                 ready_before_wait = idx in self._prefetch_cache
                 th = self._prefetch_threads.pop(idx, None)
+                started_at = self._prefetch_started_at.pop(idx, None)
+                lead_layers = self._prefetch_lead_layers.pop(idx, 0)
+            if started_at is not None:
+                lead_s = max(0.0, demand_time - started_at)
             if th is not None:
                 wait_t0 = time.perf_counter()
                 th.join()
                 prefetch_wait = time.perf_counter() - wait_t0
             with self._prefetch_lock:
-                cached = self._prefetch_cache.pop(idx, None)
+                cached_batch = self._prefetch_cache.pop(idx, None)
+            if cached_batch is None:
+                cached, cached_read_calls, cached_extent_bytes = None, 0, 0
+            else:
+                cached, cached_read_calls, cached_extent_bytes = cached_batch
             # Fire the next `io_prefetch_depth` layers' reads NOW, before
             # decoding idx's own bytes, not after this whole method
             # returns. Per-layer GPU compute is a few tens of ms -- far too
@@ -1087,12 +1210,14 @@ class StreamingLosslessModel:
             # order of magnitude larger to hide inside.
             active_depth = self._prefetch_controller.choose_depth()
             for ahead in range(1, active_depth + 1):
-                self._start_prefetch(idx + ahead)
+                self._start_prefetch(idx + ahead, lead_layers=ahead)
 
             useful_bytes = sum(
                 int(self.manifest["tensors"][key]["comp_bytes"])
                 for key in (cached or {}))
             io_seconds = sum(float(item[1]) for item in (cached or {}).values())
+            self.stats.storage_read_calls += cached_read_calls
+            self.stats.storage_extent_bytes += cached_extent_bytes
             self.stats.prefetch_wait_seconds += prefetch_wait
             if ready_before_wait:
                 self.stats.prefetch_hits += 1
@@ -1101,7 +1226,8 @@ class StreamingLosslessModel:
             self._prefetch_controller.update(PrefetchObservation(
                 ready=ready_before_wait, wait_s=prefetch_wait,
                 useful_bytes=useful_bytes,
-                bandwidth_bytes_s=(useful_bytes / io_seconds if io_seconds > 0 else 0.0)))
+                bandwidth_bytes_s=(useful_bytes / io_seconds if io_seconds > 0 else 0.0),
+                lead_s=lead_s, lead_layers=lead_layers))
 
         layer = self.layers[idx]
         for pname, _ in layer.named_parameters():
@@ -1412,9 +1538,11 @@ class StreamingLosslessModel:
 
         def forward(x: torch.Tensor) -> torch.Tensor:
             self.control.checkpoint()
-            arrays, io_s = self._read_tensor_arrays(key)
+            arrays, io_s, read_calls, extent_bytes = self._read_tensor_arrays(key)
             self.stats.io_seconds += io_s
             self.stats.bytes_read += comp_bytes
+            self.stats.storage_read_calls += read_calls
+            self.stats.storage_extent_bytes += extent_bytes
             layer = self._compressed_layer(key, arrays)
 
             parts = []
@@ -1455,7 +1583,7 @@ class StreamingLosslessModel:
     @torch.no_grad()
     def draft_self_logits(self, input_ids: torch.Tensor, exit_layer: int) -> torch.Tensor:
         """Early-exit forward for self-speculative drafting
-        (docs/PROPOSAL_ADAPTIVE.md mechanism A): embeddings -> layers
+        (docs/archive/PROPOSAL_ADAPTIVE.md mechanism A): embeddings -> layers
         [0, exit_layer) -> model.norm -> lm_head, reusing the model's
         existing final norm and output head as the exit head. No new
         parameters, nothing trained -- the draft is literally the target
@@ -1604,7 +1732,7 @@ class StreamingLosslessModel:
                           draft_model=None, temperature: float = 1.0,
                           generator: torch.Generator | None = None):
         """generate_speculative, but with the two things
-        docs/PROPOSAL_ADAPTIVE.md proposes making adaptive:
+        docs/archive/PROPOSAL_ADAPTIVE.md proposes making adaptive:
 
           - EngineConfig.draft_mode="self": draft with THIS model's own
             first draft_exit_layer layers (draft_self_logits) instead of a
@@ -1623,7 +1751,7 @@ class StreamingLosslessModel:
         docstrings. At temperature<=0 specifically, verify.temperature_probs
         makes this provably reproduce generate_greedy's argmax sequence
         token-for-token, for ANY draft_mode/k/policy -- see its docstring
-        and docs/ADAPTIVE_TEST_PLAN.md §3.
+        and docs/archive/ADAPTIVE_TEST_PLAN.md §3.
 
         Returns (sequence, policy) -- the policy is returned (not just its
         k) so a caller can inspect state_dict() / log() without needing a
