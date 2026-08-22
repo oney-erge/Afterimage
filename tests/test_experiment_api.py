@@ -21,7 +21,7 @@ def test_experiment_registry_and_ui_are_exposed():
         "h11-neural-utility-spec", "h12-bayesian-prefetch",
         "h13-qubo-residency", "h14-coalesced-storage",
         "h15-extent-qubo-residency"}
-    assert "Experiment Lab" in client.get("/").text
+    assert "Research Lab" in client.get("/").text
     definition = client.get("/api/experiments/h12-bayesian-prefetch").json()
     assert definition["protocol"]["id"] == "adaptive-prefetch"
 
