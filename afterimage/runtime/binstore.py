@@ -36,7 +36,6 @@ import pathlib
 import zlib
 
 import numpy as np
-import torch
 
 
 @dataclasses.dataclass

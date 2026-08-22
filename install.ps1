@@ -59,5 +59,10 @@ Log "running hardware diagnosis"
 try { afterimage doctor } catch { Log "doctor reported issues (see above)" }
 
 Log "install complete."
+Log "Running the quickstart (compresses a small model, ~2 GB, and generates a"
+Log "few tokens) to prove this install actually works before you commit an"
+Log "hour and ~50 GB to a real model. Ctrl-C to skip it."
+try { afterimage quickstart --yes } catch { Log "quickstart did not finish (see above)" }
+
 Log "Launching the server (Ctrl-C to stop; re-run this script any time to relaunch)."
 afterimage serve

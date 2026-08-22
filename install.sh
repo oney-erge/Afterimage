@@ -67,5 +67,10 @@ log "running hardware diagnosis"
 afterimage doctor || true
 
 log "install complete."
+log "Running the quickstart (compresses a small model, ~2 GB, and generates a"
+log "few tokens) to prove this install actually works before you commit an"
+log "hour and ~50 GB to a real model. Ctrl-C to skip it."
+afterimage quickstart --yes || log "quickstart did not finish -- see the output above"
+
 log "Launching the server (Ctrl-C to stop; re-run this script any time to relaunch)."
 exec afterimage serve

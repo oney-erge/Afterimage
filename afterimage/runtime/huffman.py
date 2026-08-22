@@ -197,7 +197,6 @@ def decode_reference(packed: bytes, table: HuffmanTable, codes: dict[int, int],
     """Bit-by-bit CPU reference decoder -- deliberately NOT the LUT-based
     approach, so it can serve as an independent correctness oracle for both
     the CPU LUT decode and the GPU kernel."""
-    length_of = {codes[s]: ln for s, ln in zip(table.symbols, table.lengths)}
     rev = {ln: {} for ln in set(table.lengths)}
     for s, ln in zip(table.symbols, table.lengths):
         rev[ln][codes[s]] = s

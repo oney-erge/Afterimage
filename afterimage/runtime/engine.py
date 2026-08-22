@@ -26,7 +26,7 @@ from ..testing.toy_lm import ToyLM
 from .gate import GlobalController, JLGate
 from .sketch import AfterimageLayer
 from .tiers import Tier, TieredStore
-from .verify import sample_categorical, speculative_sample_step
+from .verify import speculative_sample_step
 
 
 class OffloadedBlock:
