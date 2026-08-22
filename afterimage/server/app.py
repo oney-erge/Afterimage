@@ -924,6 +924,7 @@ class ChatCompletionRequest(BaseModel):
     # for a lower VRAM floor (see EngineConfig.lm_head_slice_rows).
     draft_model: str | None = None
     spec_k: int = 8
+    spec_target_cache: bool = False
     lm_head_slice_rows: int = 0
 
 
@@ -955,6 +956,8 @@ def _stats_usage(sm, ids_len: int, completion_len: int) -> dict:
                               max(sm.stats.prefetch_hits + sm.stats.prefetch_misses, 1)),
         "spec_sweeps": sm.stats.spec_sweeps,
         "spec_accepted_tokens": sm.stats.spec_accepted_tokens,
+        "spec_cache_crops": sm.stats.spec_cache_crops,
+        "spec_cached_prefix_tokens": sm.stats.spec_cached_prefix_tokens,
     }
     import torch
     if torch.cuda.is_available():
@@ -970,7 +973,9 @@ def chat_completions(req: ChatCompletionRequest):
     cfg = EngineConfig(vram_cap_gb=req.vram_cap_gb, vram_budget_gb=req.vram_budget_gb,
                        ram_budget_gb=req.ram_budget_gb, progress=False,
                        draft_mode=("model" if req.draft_model else "none"),
-                       spec_k=req.spec_k, lm_head_slice_rows=req.lm_head_slice_rows)
+                       spec_k=req.spec_k,
+                       spec_target_cache=req.spec_target_cache,
+                       lm_head_slice_rows=req.lm_head_slice_rows)
     sm, tok = _engine_cache.get(req.model, cfg)
     draft = _engine_cache.get_draft(req.draft_model, sm.device) if req.draft_model else None
     prompt = _build_prompt(tok, req.messages)
