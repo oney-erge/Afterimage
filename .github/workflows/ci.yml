@@ -18,6 +18,25 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
       - run: python -m pip install --upgrade pip
-      - run: python -m pip install -e ".[dev]"
+      # [server] is required for the fastapi/TestClient-based experiment-API
+      # and job-control tests -- without it they silently skip via
+      # pytest.importorskip rather than actually running in CI.
+      - run: python -m pip install -e ".[dev,server]"
       - run: python -m compileall -q afterimage
       - run: python -m pytest -q
+
+  archive-tests:
+    # Phase-0 subspace-activation-cache branch (docs/archive/README.md):
+    # kept and still correct, excluded from the default run by pyproject's
+    # `-m "not archive"`, verified here on every push so "kept, not deleted"
+    # doesn't quietly rot.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -e ".[dev]"
+      - run: python -m pytest -q -m archive

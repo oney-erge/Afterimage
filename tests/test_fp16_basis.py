@@ -4,6 +4,10 @@ from afterimage.probe.closed_loop import calibrate_bases, closed_loop_error, ope
 from afterimage.probe.hooks import ActivationCapture
 
 
+
+import pytest
+
+pytestmark = pytest.mark.archive  # Phase-0 subspace-activation-cache branch, killed -- see docs/archive/README.md
 def test_fit_basis_works_with_half_precision_activations():
     """Regression test for a real crash: torch.linalg.svd does not implement
     half precision on either CUDA (cuSOLVER gesvdj) or CPU (LAPACK), and a

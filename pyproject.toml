@@ -28,6 +28,10 @@ afterimage = "afterimage.cli:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "--strict-markers -m 'not archive'"
+markers = [
+    "archive: Phase-0 subspace-activation-cache branch, killed per its own pre-registered gate (docs/archive/README.md); excluded from the default run",
+]
 
 [tool.setuptools.packages.find]
 include = ["afterimage*"]

@@ -6,6 +6,10 @@ from afterimage.runtime.resident import LayerInfo, plan_static_residency
 from afterimage.runtime.streamer import AsyncStreamer, stream_sequential
 from afterimage.runtime.tiers import TieredStore
 
+
+import pytest
+
+pytestmark = pytest.mark.archive  # Phase-0 subspace-activation-cache branch, killed -- see docs/archive/README.md
 FETCH_DELAY = 0.02
 COMPUTE_DELAY = 0.02
 N_LAYERS = 8

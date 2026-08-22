@@ -4,6 +4,10 @@ from afterimage.probe.closed_loop import calibrate_bases, closed_loop_error, ope
 from afterimage.testing.toy_model import ToyTransformer, narrow_session_inputs
 
 
+
+import pytest
+
+pytestmark = pytest.mark.archive  # Phase-0 subspace-activation-cache branch, killed -- see docs/archive/README.md
 def _setup(seed=0):
     torch.manual_seed(seed)
     model = ToyTransformer(d_model=24, d_ffn=64, n_layers=4, seed=seed)

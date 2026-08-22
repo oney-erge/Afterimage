@@ -8,3 +8,4 @@ dist/
 venv/
 *.npy
 /tmp_nvme/
+results/*.json.partial

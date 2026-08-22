@@ -5,6 +5,10 @@ from afterimage.runtime.sketch import AfterimageLayer
 from afterimage.runtime.tiers import Tier, TieredStore
 
 
+
+import pytest
+
+pytestmark = pytest.mark.archive  # Phase-0 subspace-activation-cache branch, killed -- see docs/archive/README.md
 def make_layer(tmp_path, d_in, d_out, max_rank, seed=0):
     torch.manual_seed(seed)
     W = torch.randn(d_out, d_in) / (d_in ** 0.5)

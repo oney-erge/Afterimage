@@ -7,6 +7,10 @@ from afterimage.runtime.tiers import TieredStore
 from afterimage.testing.toy_lm import ToyLM
 
 
+
+import pytest
+
+pytestmark = pytest.mark.archive  # Phase-0 subspace-activation-cache branch, killed -- see docs/archive/README.md
 def test_gb_per_token_improves_across_the_test_matrix(tmp_path):
     """A cut-down version of the test matrix in IMPLEMENTATION_PLAN.md #9:
     row A (sequential, no speculation, no cache) vs row F-equivalent

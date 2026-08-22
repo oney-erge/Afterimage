@@ -7,7 +7,7 @@ an HTTP request open for a multi-minute compression pass.
 
 Deliberately in-process, not a task queue: this project targets one
 consumer GPU running one job at a time, not a multi-worker deployment --
-see docs/MASTER_PLAN.md's product scope. A real multi-node deployment would
+see docs/archive/MASTER_PLAN.md's product scope. A real multi-node deployment would
 replace this with Celery/RQ/etc without changing JobControl or the engine
 at all, since JobControl already only depends on threading primitives.
 """
