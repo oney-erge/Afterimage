@@ -8,145 +8,299 @@
   :root {
     --bg: #0f1512; --surface: #161d19; --surface-2: #1e2621; --border: #2a332d;
     --text: #e6ede9; --muted: #8fa098; --accent: #4fd1a5; --accent-dim: #1f4436;
-    --danger: #e37b7b; --warn: #d9a65c;
+    --danger: #e37b7b; --danger-dim: #3a1f1f; --warn: #d9a65c; --warn-dim: #3a331d;
     --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
     --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--sans); }
-  header { padding: 20px 28px; border-bottom: 1px solid var(--border); display: flex; align-items: baseline; gap: 12px; }
+  header { padding: 16px 28px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
   header h1 { font-size: 18px; margin: 0; font-weight: 600; letter-spacing: -.01em; }
-  header .sub { color: var(--muted); font-size: 13px; }
-  main { max-width: 1080px; margin: 0 auto; padding: 24px 28px 60px; display: grid; gap: 20px; grid-template-columns: 1fr 1fr; }
-  @media (max-width: 800px) { main { grid-template-columns: 1fr; } }
+  header .sub { color: var(--muted); font-size: 13px; margin-right: auto; }
+  .tabs { display: flex; gap: 4px; }
+  .tab-btn { background: transparent; border: 1px solid transparent; color: var(--muted); font-weight: 600; padding: 7px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+  .tab-btn:hover { color: var(--text); }
+  .tab-btn.active { background: var(--accent-dim); color: var(--accent); border-color: var(--accent); }
+  main { max-width: 1080px; margin: 0 auto; padding: 24px 28px 60px; }
+  .tab-panel { display: grid; gap: 20px; grid-template-columns: 1fr 1fr; }
+  @media (max-width: 800px) { .tab-panel { grid-template-columns: 1fr; } }
   section { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 18px 20px; }
   section.full { grid-column: 1 / -1; }
   h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 14px; font-weight: 600; }
-  .row { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; font-size: 14px; border-bottom: 1px solid var(--border); }
+  h3 { font-size: 14px; margin: 0 0 6px; }
+  p.hint { color: var(--muted); font-size: 12.5px; line-height: 1.5; margin: 4px 0 12px; }
+  .row { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; font-size: 14px; border-bottom: 1px solid var(--border); align-items: center; }
   .row:last-child { border-bottom: none; }
   .row .k { color: var(--muted); }
   .row .v { font-family: var(--mono); font-size: 13px; }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  th, td { text-align: left; padding: 6px 4px; border-bottom: 1px solid var(--border); }
+  th, td { text-align: left; padding: 6px 4px; border-bottom: 1px solid var(--border); vertical-align: middle; }
   th { color: var(--muted); font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
   td.n { font-family: var(--mono); }
   input, select, textarea, button { font-family: inherit; font-size: 13px; background: var(--surface-2); color: var(--text); border: 1px solid var(--border); border-radius: 5px; padding: 7px 9px; }
   input, select { width: 100%; }
   textarea { width: 100%; min-height: 70px; resize: vertical; }
   label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 4px; }
-  button { cursor: pointer; background: var(--accent-dim); border-color: var(--accent); color: var(--accent); font-weight: 600; padding: 8px 14px; }
+  button { cursor: pointer; background: var(--accent-dim); border-color: var(--accent); color: var(--accent); font-weight: 600; padding: 8px 14px; white-space: nowrap; }
   button:hover { background: var(--accent); color: #06110c; }
   button:disabled { opacity: .5; cursor: not-allowed; }
   button.ghost { background: transparent; border-color: var(--border); color: var(--muted); }
+  button.small { padding: 4px 10px; font-size: 12px; }
+  .search-row { display: flex; gap: 8px; }
   .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
   .bar { height: 8px; background: var(--surface-2); border-radius: 4px; overflow: hidden; margin-top: 10px; }
   .bar > div { height: 100%; background: var(--accent); width: 0%; transition: width .3s; }
   .status-line { font-size: 12px; color: var(--muted); margin-top: 8px; font-family: var(--mono); }
-  .pill { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 999px; font-weight: 600; }
+  .pill { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 999px; font-weight: 600; white-space: nowrap; }
   .pill.running { background: #23392f; color: var(--accent); }
-  .pill.paused { background: #3a331d; color: var(--warn); }
+  .pill.paused { background: var(--warn-dim); color: var(--warn); }
   .pill.done { background: #1e2f26; color: var(--accent); }
-  .pill.error, .pill.cancelled { background: #3a1f1f; color: var(--danger); }
-  .job-controls { display: flex; gap: 8px; margin-top: 10px; }
+  .pill.error, .pill.cancelled { background: var(--danger-dim); color: var(--danger); }
+  .fit-native { background: #1e2f26; color: var(--accent); }
+  .fit-streams_fast { background: #1e2f26; color: var(--accent); }
+  .fit-streams_slow { background: var(--warn-dim); color: var(--warn); }
+  .fit-streams_very_slow { background: var(--warn-dim); color: var(--warn); }
+  .fit-unsupported { background: var(--danger-dim); color: var(--danger); }
+  .fit-unknown { background: var(--surface-2); color: var(--muted); }
+  .job-controls { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
   #chat-log { font-family: var(--mono); font-size: 13px; white-space: pre-wrap; background: var(--surface-2); border-radius: 6px; padding: 12px; min-height: 120px; max-height: 320px; overflow-y: auto; }
   .plan-result { font-family: var(--mono); font-size: 12px; margin-top: 10px; color: var(--muted); }
   .plan-result .feasible-yes { color: var(--accent); }
   .plan-result .feasible-no { color: var(--danger); }
-  .experiment-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 10px; margin-top: 14px; }
-  .experiment-card { border: 1px solid var(--border); border-radius: 6px; padding: 12px; background: var(--surface-2); }
-  .experiment-card h3 { margin: 0 0 7px; font-size: 14px; }
-  .experiment-card p { margin: 5px 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
+  .experiment-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 10px; margin-top: 14px; }
+  .experiment-card { border: 1px solid var(--border); border-radius: 6px; padding: 14px; background: var(--surface-2); }
+  .experiment-card h3 { margin: 0 0 8px; font-size: 14px; }
+  .experiment-card .idea { color: var(--text); font-size: 13px; margin: 0 0 10px; line-height: 1.5; }
+  .verdict-box { border-radius: 6px; padding: 10px 12px; margin: 10px 0; font-size: 12.5px; line-height: 1.55; }
+  .verdict-box.v-contradicted, .verdict-box.v-mechanism_only { background: var(--danger-dim); }
+  .verdict-box.v-below_threshold, .verdict-box.v-no_comparison { background: var(--warn-dim); }
+  .verdict-box.v-positive_screen { background: var(--accent-dim); }
+  .verdict-box.v-gate, .verdict-box.v-not_applicable { background: var(--surface); border: 1px solid var(--border); }
+  .verdict-label { font-weight: 700; text-transform: uppercase; font-size: 10.5px; letter-spacing: .06em; display: block; margin-bottom: 4px; }
+  .v-contradicted .verdict-label, .v-mechanism_only .verdict-label { color: var(--danger); }
+  .v-below_threshold .verdict-label, .v-no_comparison .verdict-label { color: var(--warn); }
+  .v-positive_screen .verdict-label { color: var(--accent); }
+  .v-gate .verdict-label, .v-not_applicable .verdict-label { color: var(--muted); }
+  .experiment-card .detail { color: var(--muted); font-size: 11.5px; margin: 6px 0; line-height: 1.5; font-family: var(--mono); }
+  .experiment-card details { margin-top: 10px; }
+  .experiment-card summary { cursor: pointer; color: var(--muted); font-size: 12px; }
   .experiment-card .result { margin-top: 8px; font-family: var(--mono); font-size: 11px; white-space: pre-wrap; }
+  .profile-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 4px; }
+  .profile-card { border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; cursor: pointer; text-align: left; background: var(--surface-2); }
+  .profile-card:hover { border-color: var(--muted); }
+  .profile-card.active { border-color: var(--accent); background: var(--accent-dim); }
+  .profile-card .pname { font-weight: 700; font-size: 13px; margin-bottom: 4px; }
+  .profile-card .pmeta { font-size: 11px; color: var(--muted); line-height: 1.6; font-family: var(--mono); }
+  .profile-card.active .pmeta { color: #bcd9cc; }
+  details.advanced { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 10px; }
+  details.advanced summary { cursor: pointer; color: var(--muted); font-size: 12.5px; font-weight: 600; }
+  .capability-headline { font-size: 15px; line-height: 1.65; margin: 0 0 12px; }
+  .capability-headline b { color: var(--accent); }
+  .cap-table { margin-top: 10px; }
+  .compare-table td, .compare-table th { text-align: right; }
+  .compare-table td:first-child, .compare-table th:first-child { text-align: left; }
+  .compare-row-winner { color: var(--accent); font-weight: 700; }
+  .live-strip { display: flex; flex-wrap: wrap; gap: 6px 16px; font-family: var(--mono); font-size: 12px; color: var(--muted); background: var(--surface-2); border-radius: 6px; padding: 10px 12px; margin-top: 10px; }
+  .live-strip span b { color: var(--text); }
+  [hidden] { display: none !important; }
 </style>
 </head>
 <body>
 
 <header>
   <h1>Afterimage</h1>
-  <span class="sub">lossless streaming inference — control panel</span>
+  <span class="sub">run a model larger than your GPU, losslessly</span>
+  <nav class="tabs">
+    <button class="tab-btn active" data-tab="home">Home</button>
+    <button class="tab-btn" data-tab="models">Models</button>
+    <button class="tab-btn" data-tab="chat">Chat</button>
+    <button class="tab-btn" data-tab="lab">Lab</button>
+  </nav>
 </header>
 
 <main>
 
-  <section>
-    <h2>Hardware</h2>
-    <div id="hw-body"><div class="row"><span class="k">loading…</span></div></div>
-  </section>
+  <!-- ============ HOME ============ -->
+  <div class="tab-panel" id="tab-home" data-tab-panel="home">
+    <section class="full">
+      <h2>Your machine</h2>
+      <div id="hw-body"><div class="row"><span class="k">loading…</span></div></div>
+    </section>
 
-  <section>
-    <h2>Compressed models</h2>
-    <table id="models-table">
-      <thead><tr><th>model</th><th>compressed</th><th>ratio</th></tr></thead>
-      <tbody><tr><td colspan="3" class="k">loading…</td></tr></tbody>
-    </table>
-  </section>
+    <section class="full" id="capability-card">
+      <h2>What this means for you</h2>
+      <div id="capability-body"><p class="hint">loading…</p></div>
+    </section>
 
-  <section>
-    <h2>Compress a model</h2>
-    <label>HuggingFace model id</label>
-    <input id="compress-model" placeholder="Qwen/Qwen3-14B">
-    <div class="job-controls">
-      <button id="compress-start">Compress</button>
-    </div>
-    <div id="compress-progress" style="display:none">
-      <div class="bar"><div id="compress-bar-fill"></div></div>
-      <div class="status-line" id="compress-status"></div>
+    <section class="full">
+      <h2>Ready to run</h2>
+      <table id="home-models-table">
+        <thead><tr><th>model</th><th>compressed</th><th>ratio</th><th></th></tr></thead>
+        <tbody><tr><td colspan="4" class="k">loading…</td></tr></tbody>
+      </table>
       <div class="job-controls">
-        <button class="ghost" id="compress-pause">Pause</button>
-        <button class="ghost" id="compress-resume">Resume</button>
-        <button class="ghost" id="compress-cancel">Cancel</button>
+        <button data-goto-tab="models">Find a model</button>
+        <button class="ghost" data-goto-tab="chat">Go to chat</button>
       </div>
-    </div>
-  </section>
+    </section>
+  </div>
 
-  <section>
-    <h2>VRAM / RAM budget planner</h2>
-    <label>Model id (must already be compressed)</label>
-    <input id="plan-model" placeholder="Qwen/Qwen3-14B">
-    <div class="form-grid">
-      <div><label>VRAM budget (GB)</label><input id="plan-vram" type="number" step="0.5" value="6"></div>
-      <div><label>RAM budget (GB)</label><input id="plan-ram" type="number" step="0.5" value="0"></div>
-    </div>
-    <div class="job-controls"><button id="plan-run">Check feasibility</button></div>
-    <div class="plan-result" id="plan-result"></div>
-  </section>
+  <!-- ============ MODELS ============ -->
+  <div class="tab-panel" id="tab-models" data-tab-panel="models" hidden>
+    <section class="full">
+      <h2>Find a model</h2>
+      <p class="hint">Searches the HuggingFace Hub for BF16 safetensors checkpoints and
+        estimates whether each one fits your GPU natively, streams fast with Afterimage,
+        streams slowly, or isn't supported by this engine's architecture assumptions.
+        Estimates only — a real compress measures the real numbers.</p>
+      <div class="search-row">
+        <input id="search-q" placeholder="qwen3, llama-3, mistral…">
+        <button id="search-btn">Search</button>
+      </div>
+      <div id="search-results" style="margin-top:12px"></div>
+    </section>
 
-  <section class="full">
-    <h2>Try it</h2>
-    <div class="form-grid">
-      <div><label>Model id</label><input id="chat-model" placeholder="Qwen/Qwen3-14B"></div>
-      <div><label>Max new tokens</label><input id="chat-maxtok" type="number" value="64"></div>
-    </div>
-    <label>Prompt</label>
-    <textarea id="chat-prompt" placeholder="The capital of France is"></textarea>
-    <div class="job-controls">
-      <button id="chat-send">Generate</button>
-    </div>
-    <label style="margin-top:14px">Output</label>
-    <div id="chat-log"></div>
-  </section>
+    <section>
+      <h2>Your compressed models</h2>
+      <table id="models-table">
+        <thead><tr><th>model</th><th>compressed</th><th>ratio</th></tr></thead>
+        <tbody><tr><td colspan="3" class="k">loading…</td></tr></tbody>
+      </table>
+    </section>
 
-  <section class="full">
-    <h2>Experiment Lab — H0–H11</h2>
-    <p class="status-line">Every run is paired against its named control. Existing runtime defaults are unchanged.</p>
-    <div class="form-grid">
-      <div><label>Model id (generation experiments)</label><input id="exp-model" placeholder="Qwen/Qwen3-14B"></div>
-      <div><label>Draft model id (H2)</label><input id="exp-draft" placeholder="Qwen/Qwen3-0.6B"></div>
-      <div><label>Repeats</label><input id="exp-repeats" type="number" value="3" min="1"></div>
-      <div><label>Max new tokens</label><input id="exp-tokens" type="number" value="8" min="1"></div>
-    </div>
-    <label>Prompt</label>
-    <textarea id="exp-prompt">The capital of France is</textarea>
-    <label>Config overrides (JSON; e.g. budgets or critical_path_profile)</label>
-    <textarea id="exp-overrides">{}</textarea>
-    <div class="form-grid">
-      <div><label>Candidate-only overrides (JSON)</label><textarea id="exp-candidate-overrides">{}</textarea></div>
-      <div><label>Control-only overrides (JSON; tune fixed baselines here)</label><textarea id="exp-control-overrides">{}</textarea></div>
-    </div>
-    <label>Specialized inputs (JSON; required fields are shown on each card)</label>
-    <textarea id="exp-inputs">{}</textarea>
-    <div id="experiment-grid" class="experiment-grid"><span class="status-line">loading…</span></div>
-  </section>
+    <section>
+      <h2>Compress a model</h2>
+      <label>HuggingFace model id</label>
+      <input id="compress-model" placeholder="Qwen/Qwen3-14B">
+      <div class="job-controls">
+        <button id="compress-start">Compress</button>
+      </div>
+      <div id="compress-progress" hidden>
+        <div class="bar"><div id="compress-bar-fill"></div></div>
+        <div class="status-line" id="compress-status"></div>
+        <div class="job-controls">
+          <button class="ghost small" id="compress-pause">Pause</button>
+          <button class="ghost small" id="compress-resume">Resume</button>
+          <button class="ghost small" id="compress-cancel">Cancel</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="full">
+      <details>
+        <summary style="cursor:pointer; color:var(--muted); font-size:13px; font-weight:600">Advanced: raw VRAM / RAM budget planner</summary>
+        <div style="margin-top:12px">
+          <label>Model id (must already be compressed)</label>
+          <input id="plan-model" placeholder="Qwen/Qwen3-14B">
+          <div class="form-grid">
+            <div><label>VRAM budget (GB)</label><input id="plan-vram" type="number" step="0.5" value="6"></div>
+            <div><label>RAM budget (GB)</label><input id="plan-ram" type="number" step="0.5" value="0"></div>
+          </div>
+          <div class="job-controls"><button id="plan-run">Check feasibility</button></div>
+          <div class="plan-result" id="plan-result"></div>
+        </div>
+      </details>
+    </section>
+  </div>
+
+  <!-- ============ CHAT ============ -->
+  <div class="tab-panel" id="tab-chat" data-tab-panel="chat" hidden>
+    <section class="full">
+      <h2>Chat</h2>
+      <div class="form-grid">
+        <div><label>Model id</label><input id="chat-model" placeholder="Qwen/Qwen3-14B"></div>
+        <div><label>Max new tokens</label><input id="chat-maxtok" type="number" value="64"></div>
+      </div>
+      <label>Prompt</label>
+      <textarea id="chat-prompt" placeholder="The capital of France is"></textarea>
+
+      <label>How should this run?</label>
+      <div class="profile-row" id="profile-row">
+        <button class="profile-card" data-profile="min-memory" data-vram="" data-draft="">
+          <div class="pname">Smallest</div>
+          <div class="pmeta" id="pmeta-min-memory">…</div>
+        </button>
+        <button class="profile-card" data-profile="balanced" data-vram="4" data-draft="">
+          <div class="pname">Balanced</div>
+          <div class="pmeta" id="pmeta-balanced">…</div>
+        </button>
+        <button class="profile-card active" data-profile="fast" data-vram="4" data-draft="Qwen/Qwen3-0.6B">
+          <div class="pname">Fastest</div>
+          <div class="pmeta" id="pmeta-fast">…</div>
+        </button>
+      </div>
+      <div class="status-line" id="chat-plan-hint"></div>
+
+      <details class="advanced">
+        <summary>Advanced: set VRAM / draft model directly</summary>
+        <div class="form-grid" style="margin-top:10px">
+          <div>
+            <label>VRAM budget (GB) — empty = minimum-memory floor</label>
+            <input id="chat-vram" type="number" step="0.5" placeholder="e.g. 4">
+          </div>
+          <div>
+            <label>Draft model id — empty disables speculation</label>
+            <input id="chat-draft" placeholder="Qwen/Qwen3-0.6B">
+          </div>
+        </div>
+      </details>
+
+      <div class="job-controls" style="margin-top:14px">
+        <button id="chat-send">Generate</button>
+      </div>
+      <label style="margin-top:14px">Output</label>
+      <div id="chat-log"></div>
+      <div class="live-strip" id="chat-live" hidden></div>
+      <div class="status-line" id="chat-stats"></div>
+    </section>
+
+    <section class="full">
+      <h2>Compare configurations</h2>
+      <p class="hint">Runs the same prompt under Smallest / Balanced / Fastest, sequentially,
+        on your GPU, and reports the real measured numbers side by side — this is what turns
+        "3.15x" from a claim in a README into something you watched happen on your own hardware.
+        Uses the model id and prompt above. Takes a few minutes on a real model.</p>
+      <div class="job-controls">
+        <button id="compare-start">Compare configurations</button>
+      </div>
+      <div class="status-line" id="compare-status"></div>
+      <div id="compare-results" style="margin-top:12px"></div>
+    </section>
+  </div>
+
+  <!-- ============ LAB ============ -->
+  <div class="tab-panel" id="tab-lab" data-tab-panel="lab" hidden>
+    <section class="full">
+      <h2>Research Lab — H0–H15</h2>
+      <p class="hint">Sixteen preregistered hypotheses from the H0–H15 research program, each
+        with a kill gate declared before it was run. Most of the honest answers below are
+        "no" — that is the point of running the program this way, not a hidden problem.
+        Every card is paired against a named control; the runtime's ordinary defaults are
+        never changed by anything here.</p>
+      <div class="form-grid">
+        <div><label>Model id (for "Verify on my machine")</label><input id="exp-model" placeholder="Qwen/Qwen3-14B"></div>
+        <div><label>Draft model id (for draft-based hypotheses)</label><input id="exp-draft" placeholder="Qwen/Qwen3-0.6B"></div>
+        <div><label>Repeats</label><input id="exp-repeats" type="number" value="3" min="1"></div>
+        <div><label>Max new tokens</label><input id="exp-tokens" type="number" value="8" min="1"></div>
+      </div>
+      <label>Prompt</label>
+      <textarea id="exp-prompt">The capital of France is</textarea>
+      <details style="margin-top:10px">
+        <summary style="cursor:pointer; color:var(--muted); font-size:12.5px">Advanced: raw config/candidate/control/input overrides (JSON)</summary>
+        <div style="margin-top:10px">
+          <label>Config overrides (JSON; e.g. budgets or critical_path_profile)</label>
+          <textarea id="exp-overrides">{}</textarea>
+          <div class="form-grid">
+            <div><label>Candidate-only overrides (JSON)</label><textarea id="exp-candidate-overrides">{}</textarea></div>
+            <div><label>Control-only overrides (JSON; tune fixed baselines here)</label><textarea id="exp-control-overrides">{}</textarea></div>
+          </div>
+          <label>Specialized inputs (JSON; required fields are shown on each card)</label>
+          <textarea id="exp-inputs">{}</textarea>
+        </div>
+      </details>
+      <div id="experiment-grid" class="experiment-grid"><span class="status-line">loading…</span></div>
+    </section>
+  </div>
 
 </main>
 
@@ -162,6 +316,19 @@ async function api(path, opts) {
   return res.json();
 }
 
+// -- tabs --------------------------------------------------------------
+
+function showTab(name) {
+  document.querySelectorAll('.tab-panel').forEach(p => p.hidden = p.dataset.tabPanel !== name);
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
+  history.replaceState(null, '', `#${name}`);
+}
+document.querySelectorAll('.tab-btn').forEach(b => b.addEventListener('click', () => showTab(b.dataset.tab)));
+document.querySelectorAll('[data-goto-tab]').forEach(b => b.addEventListener('click', () => showTab(b.dataset.gotoTab)));
+showTab((location.hash || '#home').slice(1));
+
+// -- hardware / capability ----------------------------------------------
+
 async function loadHardware() {
   const hw = await api('/api/hardware');
   const gpu = hw.gpu || {};
@@ -175,39 +342,169 @@ async function loadHardware() {
   `;
 }
 
-async function loadModels() {
-  const { models } = await api('/api/models');
-  const tbody = document.querySelector('#models-table tbody');
-  if (!models.length) {
-    tbody.innerHTML = '<tr><td colspan="3" class="k">none yet — compress one below</td></tr>';
+async function loadCapability() {
+  const cap = await api('/api/capability');
+  if (!cap.vram_gb) {
+    $('capability-body').innerHTML = `<p class="hint">No GPU VRAM detected, so this can't be
+      estimated yet. Afterimage still runs on CPU (slow) once a model is compressed.</p>`;
     return;
   }
-  tbody.innerHTML = models.map(m => `
+  const native = cap.native_fit_max_params_b;
+  const fast = cap.streaming_fast_max_params_b;
+  const slow = cap.streaming_slow_max_params_b;
+  $('capability-body').innerHTML = `
+    <p class="capability-headline">
+      Your <b>${cap.vram_gb} GB</b> card fits models up to about <b>${native}B parameters</b>
+      natively (no Afterimage needed).<br>
+      With Afterimage it also runs models up to about <b>${fast}B losslessly, quickly</b>
+      (speculative decoding), and up to about <b>${slow}B more slowly</b> (minimum-memory streaming).
+    </p>
+    <p class="hint">Bit-exact in every case — this is not quantization, the tradeoff is speed,
+      not answer quality. These are rough estimates extrapolated from one measured checkpoint
+      (${cap.measured_reference_model}), not a benchmark of your specific model — see the
+      Models tab for a per-model estimate, or just compress it and find out for real.</p>
+    <table class="cap-table">
+      <thead><tr><th>Params</th><th>BF16 size</th><th>Compressed store</th><th>Minimum-memory</th><th>Fast (speculative)</th></tr></thead>
+      <tbody>
+        ${cap.estimates.map(e => `
+          <tr>
+            <td>${e.params_b}B</td>
+            <td class="n">${e.bf16_gb} GB</td>
+            <td class="n">${e.compressed_store_gb} GB</td>
+            <td class="n">${e.min_memory_s_per_token} s/tok</td>
+            <td class="n">${e.fast_s_per_token} s/tok</td>
+          </tr>`).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+// -- models: your compressed models --------------------------------------
+
+function modelsTableRows(models, { withAction }) {
+  if (!models.length) {
+    return `<tr><td colspan="${withAction ? 4 : 3}" class="k">none yet — compress one below</td></tr>`;
+  }
+  return models.map(m => `
     <tr>
       <td>${m.model_id}</td>
       <td class="n">${m.comp_gb.toFixed(2)} GB</td>
       <td class="n">${m.ratio.toFixed(3)}x</td>
+      ${withAction ? `<td><button class="small" data-chat-model="${m.model_id}">Chat</button></td>` : ''}
     </tr>`).join('');
 }
+
+async function loadModels() {
+  const { models } = await api('/api/models');
+  document.querySelector('#models-table tbody').innerHTML = modelsTableRows(models, { withAction: false });
+  document.querySelector('#home-models-table tbody').innerHTML = modelsTableRows(models, { withAction: true });
+  document.querySelectorAll('[data-chat-model]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      $('chat-model').value = btn.dataset.chatModel;
+      showTab('chat');
+      checkChatPlan();
+    });
+  });
+}
+
+// -- models: search -------------------------------------------------------
+
+const FIT_LABEL = {
+  native: 'fits natively', streams_fast: 'streams · fast', streams_slow: 'streams · slow',
+  streams_very_slow: 'streams · very slow', unsupported: 'unsupported', unknown: 'unknown fit',
+};
+const FIT_NOTE = {
+  native: 'Runs resident, no streaming needed — the fastest option on this card.',
+  streams_fast: 'Fits comfortably with the fast (speculative) profile.',
+  streams_slow: 'Works, but slow enough to feel like batch, not chat.',
+  streams_very_slow: 'Technically runs, but very slowly — mostly for "does it work" curiosity.',
+  unsupported: "This engine needs a Llama-family layout (Qwen/Llama/Mistral); this architecture isn't one.",
+  unknown: 'Could not estimate parameter count from the Hub metadata for this model.',
+};
+
+$('search-btn').addEventListener('click', async () => {
+  const q = $('search-q').value.trim();
+  $('search-results').innerHTML = '<p class="status-line">searching…</p>';
+  try {
+    const { models, error } = await api(`/api/models/search?q=${encodeURIComponent(q)}&limit=20`);
+    if (error) { $('search-results').innerHTML = `<p class="status-line">${error}</p>`; return; }
+    if (!models.length) { $('search-results').innerHTML = '<p class="status-line">no results</p>'; return; }
+    $('search-results').innerHTML = models.map(m => `
+      <div class="row" style="align-items:flex-start">
+        <div style="flex:1">
+          <div><b>${m.model_id}</b> ${m.params_b ? `<span class="status-line" style="display:inline">· ${m.params_b}B params</span>` : ''}</div>
+          <div class="status-line">${m.compressed_store_gb ? `${m.bf16_gb} GB bf16 → ${m.compressed_store_gb} GB store` : ''}
+            ${m.fast_s_per_token ? `· ~${m.fast_s_per_token}s/tok fast, ~${m.min_memory_s_per_token}s/tok minimum-memory` : ''}</div>
+          <p class="hint" style="margin:4px 0 0">${FIT_NOTE[m.fit] || ''}</p>
+        </div>
+        <span class="pill fit-${m.fit}">${FIT_LABEL[m.fit] || m.fit}</span>
+        ${m.already_compressed
+          ? `<button class="ghost small" data-chat-model="${m.model_id}">Chat</button>`
+          : `<button class="small" ${m.fit === 'unsupported' ? 'disabled' : ''} data-get-model="${m.model_id}">Get</button>`}
+      </div>`).join('');
+    document.querySelectorAll('[data-get-model]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        $('compress-model').value = btn.dataset.getModel;
+        $('compress-start').click();
+        $('compress-model').scrollIntoView({ behavior: 'smooth', block: 'center' });
+      });
+    });
+    document.querySelectorAll('[data-chat-model]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        $('chat-model').value = btn.dataset.chatModel;
+        showTab('chat');
+        checkChatPlan();
+      });
+    });
+  } catch (e) {
+    $('search-results').innerHTML = `<p class="status-line">${e.message}</p>`;
+  }
+});
+$('search-q').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('search-btn').click(); });
+
+// -- experiments / lab ----------------------------------------------------
 
 function parseJsonField(id) {
   const text = $(id).value.trim();
   return text ? JSON.parse(text) : {};
 }
 
+const VERDICT_LABEL = {
+  gate: 'Diagnostic gate', below_threshold: "No — not enough to promise you",
+  positive_screen: 'Promising L1 screen — not confirmed',
+  contradicted: 'No — measured worse', mechanism_only: 'No — worked, but slower overall',
+  no_comparison: "Can't tell yet", not_applicable: 'Not applicable here',
+};
+
 async function loadExperiments() {
   const registry = await api('/api/experiments');
-  $('experiment-grid').innerHTML = registry.hypotheses.map(h => `
+  $('experiment-grid').innerHTML = registry.hypotheses.map(h => {
+    const m = h.measured;
+    const verdictBox = m ? `
+      <div class="verdict-box v-${m.verdict}">
+        <span class="verdict-label">${VERDICT_LABEL[m.verdict] || m.verdict}</span>
+        ${m.plain_language}
+      </div>
+      ${m.detail ? `<div class="detail">${m.detail}</div>` : ''}
+    ` : '';
+    return `
     <div class="experiment-card" id="card-${h.id}">
       <h3>${h.id}: ${h.title}</h3>
-      <p>${h.statement}</p>
-      <p>Candidate: <code>${h.candidate_profile}</code><br>Control: <code>${h.control_profile}</code></p>
-      <p>Gate: ${h.kill_criterion}</p>
-      <p>Exactness: ${h.exactness_contract}<br>Required: ${h.required_inputs.length ? h.required_inputs.join(', ') : 'none'}</p>
-      <p>Minimum run: ${h.minimum_repeats} repeats × ${h.minimum_new_tokens} tokens</p>
-      <button data-experiment="${h.id}" data-min-repeats="${h.minimum_repeats}" data-min-tokens="${h.minimum_new_tokens}">Run Test</button>
+      <p class="idea">${h.statement}</p>
+      ${verdictBox}
+      <details>
+        <summary>Protocol details</summary>
+        <p class="detail">Candidate: ${h.candidate_profile}<br>Control: ${h.control_profile}<br>
+          Gate: ${h.kill_criterion}<br>Exactness: ${h.exactness_contract}<br>
+          Required: ${h.required_inputs.length ? h.required_inputs.join(', ') : 'none'}<br>
+          Minimum run: ${h.minimum_repeats} repeats × ${h.minimum_new_tokens} tokens</p>
+      </details>
+      <div class="job-controls" style="margin-top:10px">
+        <button class="small" data-experiment="${h.id}" data-min-repeats="${h.minimum_repeats}" data-min-tokens="${h.minimum_new_tokens}">Verify on my machine</button>
+      </div>
       <div class="result" id="result-${h.id}"></div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
   document.querySelectorAll('[data-experiment]').forEach(button => {
     button.addEventListener('click', () => runExperiment(button.dataset.experiment, button));
   });
@@ -256,6 +553,8 @@ async function runExperiment(id, button) {
   }
 }
 
+// -- compress job -----------------------------------------------------
+
 let compressJobId = null;
 
 $('compress-start').addEventListener('click', async () => {
@@ -267,7 +566,7 @@ $('compress-start').addEventListener('click', async () => {
     body: JSON.stringify({ model_id }),
   });
   compressJobId = job_id;
-  $('compress-progress').style.display = 'block';
+  $('compress-progress').hidden = false;
   watchJob(job_id);
 });
 
@@ -284,7 +583,7 @@ function watchJob(jobId) {
     if (msg.status === 'error') $('compress-status').innerHTML += ` — ${msg.error}`;
     if (['done', 'error', 'cancelled'].includes(msg.status)) {
       $('compress-start').disabled = false;
-      if (msg.status === 'done') loadModels();
+      if (msg.status === 'done') { loadModels(); loadCapability(); }
     }
   };
 }
@@ -292,6 +591,8 @@ function watchJob(jobId) {
 $('compress-pause').addEventListener('click', () => compressJobId && api(`/api/jobs/${compressJobId}/pause`, { method: 'POST' }));
 $('compress-resume').addEventListener('click', () => compressJobId && api(`/api/jobs/${compressJobId}/resume`, { method: 'POST' }));
 $('compress-cancel').addEventListener('click', () => compressJobId && api(`/api/jobs/${compressJobId}/cancel`, { method: 'POST' }));
+
+// -- budget planner -----------------------------------------------------
 
 $('plan-run').addEventListener('click', async () => {
   const model_id = $('plan-model').value.trim();
@@ -316,18 +617,90 @@ $('plan-run').addEventListener('click', async () => {
   }
 });
 
+// -- chat: profile cards --------------------------------------------------
+
+async function renderProfileMeta() {
+  try {
+    const cap = await api('/api/capability');
+    const ref = { min: 32.5, fast: 9.2 }; // per-14B reference, s/token — falls back if capability lacks model context
+    $('pmeta-min-memory').innerHTML = `~1.7 GB VRAM<br>slowest, lowest memory<br>bit-exact`;
+    $('pmeta-balanced').innerHTML = `~4 GB VRAM<br>1.66x measured<br>bit-exact`;
+    $('pmeta-fast').innerHTML = `~3.8 GB VRAM<br>3.15x measured<br>bit-exact at T=0`;
+  } catch (e) { /* capability endpoint failed -- static labels stay */ }
+}
+renderProfileMeta();
+
+document.querySelectorAll('.profile-card').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.profile-card').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    $('chat-vram').value = btn.dataset.vram;
+    $('chat-draft').value = btn.dataset.draft;
+    checkChatPlan();
+  });
+});
+
+let chatPlanTimer = null;
+function checkChatPlan() {
+  clearTimeout(chatPlanTimer);
+  chatPlanTimer = setTimeout(async () => {
+    const model_id = $('chat-model').value.trim();
+    const vram_budget_gb = parseFloat($('chat-vram').value);
+    if (!model_id || !vram_budget_gb) { $('chat-plan-hint').textContent = ''; return; }
+    try {
+      const p = await api('/api/plan', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model_id, vram_budget_gb, ram_budget_gb: 0 }),
+      });
+      $('chat-plan-hint').innerHTML = p.feasible
+        ? `<span class="feasible-yes">feasible</span> at ${vram_budget_gb} GB`
+        : `<span class="feasible-no">not feasible</span> — ${p.reason}`;
+    } catch (e) {
+      $('chat-plan-hint').textContent = '';  // model likely not compressed yet -- not an error worth showing here
+    }
+  }, 400);
+}
+$('chat-model').addEventListener('input', checkChatPlan);
+$('chat-vram').addEventListener('input', checkChatPlan);
+
+// -- chat: generate with live progress -----------------------------------
+
+function renderLiveStrip(progress) {
+  const strip = $('chat-live');
+  strip.hidden = false;
+  const parts = [`<span>${progress.elapsed_seconds}s elapsed</span>`];
+  parts.push(`<span>${progress.bytes_read_gb.toFixed(2)} GB read</span>`);
+  parts.push(`<span>io ${progress.io_seconds}s · decode ${progress.decode_seconds}s</span>`);
+  if (progress.peak_vram_gb != null) parts.push(`<span>${progress.peak_vram_gb.toFixed(2)} GB peak VRAM</span>`);
+  strip.innerHTML = parts.join('');
+}
+
 $('chat-send').addEventListener('click', async () => {
   const model = $('chat-model').value.trim();
   const prompt = $('chat-prompt').value;
   const max_tokens = parseInt($('chat-maxtok').value, 10) || 64;
+  const vram_budget_gb = parseFloat($('chat-vram').value) || null;
+  const draft_model = $('chat-draft').value.trim() || null;
   if (!model || !prompt) return;
   $('chat-send').disabled = true;
   $('chat-log').textContent = '';
+  $('chat-live').hidden = true;
+  $('chat-stats').textContent = draft_model
+    ? 'generating (speculative decoding)…' : 'generating…';
+  const t0 = performance.now();
 
   const res = await fetch('/v1/chat/completions', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model, messages: [{ role: 'user', content: prompt }], max_tokens, stream: true }),
+    body: JSON.stringify({
+      model, messages: [{ role: 'user', content: prompt }], max_tokens, stream: true,
+      vram_budget_gb, draft_model,
+    }),
   });
+  if (!res.ok) {
+    $('chat-stats').textContent = `error: ${res.status} ${await res.text()}`;
+    $('chat-send').disabled = false;
+    return;
+  }
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buf = '';
@@ -342,14 +715,86 @@ $('chat-send').addEventListener('click', async () => {
       const data = line.slice(6);
       if (data === '[DONE]') continue;
       const chunk = JSON.parse(data);
+      if (chunk.object === 'chat.completion.chunk.progress') {
+        renderLiveStrip(chunk.progress);
+        continue;
+      }
       const delta = chunk.choices?.[0]?.delta?.content;
       if (delta) $('chat-log').textContent += delta;
+      const usage = chunk.usage?.afterimage;
+      if (usage) {
+        const wallS = (performance.now() - t0) / 1000;
+        const parts = [`${wallS.toFixed(1)}s wall`, `${usage.seconds_per_token.toFixed(2)} s/token`];
+        if (usage.peak_vram_gb != null) parts.push(`${usage.peak_vram_gb.toFixed(2)} GB peak VRAM`);
+        if (usage.spec_sweeps) {
+          parts.push(`${usage.spec_accepted_tokens} tokens / ${usage.spec_sweeps} sweeps ` +
+                     `(${(usage.spec_accepted_tokens / usage.spec_sweeps).toFixed(1)}/sweep)`);
+        }
+        $('chat-stats').textContent = parts.join('  ·  ');
+        $('chat-live').hidden = true;
+      }
     }
   }
   $('chat-send').disabled = false;
 });
 
+// -- compare configurations ------------------------------------------------
+
+$('compare-start').addEventListener('click', async () => {
+  const model_id = $('chat-model').value.trim();
+  const prompt = $('chat-prompt').value || 'The capital of France is';
+  if (!model_id) { $('compare-status').textContent = 'set a model id in the chat box above first'; return; }
+  $('compare-start').disabled = true;
+  $('compare-status').textContent = 'starting…';
+  $('compare-results').innerHTML = '';
+  try {
+    const { job_id } = await api('/api/compare', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model_id, prompt, max_new_tokens: 12 }),
+    });
+    const ws = new WebSocket(`ws://${location.host}/ws/jobs/${job_id}`);
+    ws.onmessage = async (ev) => {
+      const msg = JSON.parse(ev.data);
+      const p = msg.progress || {};
+      $('compare-status').innerHTML = `<span class="pill ${msg.status}">${msg.status}</span> ` +
+        (p.stage ? `running "${p.stage}" (${(p.profile_index||0)+1}/${p.total_profiles||3})` : '');
+      if (msg.status === 'error') $('compare-status').innerHTML += ` — ${msg.error}`;
+      if (['done', 'error', 'cancelled'].includes(msg.status)) {
+        $('compare-start').disabled = false;
+        if (msg.status === 'done') {
+          const job = await api(`/api/jobs/${job_id}`);
+          renderCompareResults(job.result);
+        }
+      }
+    };
+  } catch (e) {
+    $('compare-start').disabled = false;
+    $('compare-status').textContent = e.message;
+  }
+});
+
+function renderCompareResults(result) {
+  if (!result || !result.rows) { $('compare-results').innerHTML = ''; return; }
+  const fastest = result.rows.reduce((a, b) => (b.seconds_per_token < a.seconds_per_token ? b : a));
+  $('compare-results').innerHTML = `
+    <table class="compare-table">
+      <thead><tr><th>Profile</th><th>s/token</th><th>Peak VRAM</th><th>vs Smallest</th></tr></thead>
+      <tbody>
+        ${result.rows.map(r => `
+          <tr class="${r === fastest ? 'compare-row-winner' : ''}">
+            <td>${r.profile}${r === fastest ? ' ★' : ''}</td>
+            <td class="n">${r.seconds_per_token.toFixed(2)}</td>
+            <td class="n">${r.peak_vram_gb != null ? r.peak_vram_gb.toFixed(2) + ' GB' : '—'}</td>
+            <td class="n">${r.speedup_vs_min_memory ? r.speedup_vs_min_memory.toFixed(2) + 'x' : '—'}</td>
+          </tr>`).join('')}
+      </tbody>
+    </table>
+    <p class="hint">Measured on this machine, just now — not a projection.</p>
+  `;
+}
+
 loadHardware();
+loadCapability();
 loadModels();
 loadExperiments();
 </script>

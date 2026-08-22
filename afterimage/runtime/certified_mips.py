@@ -118,7 +118,6 @@ def certified_argmax(query: torch.Tensor, weights: torch.Tensor, index: MIPSInde
 
     best_index = -1
     best_lower = -float("inf")
-    best_upper = -float("inf")
     unevaluated_upper = -float("inf")
     rows_evaluated = 0
     blocks_pruned = 0
@@ -131,12 +130,10 @@ def certified_argmax(query: torch.Tensor, weights: torch.Tensor, index: MIPSInde
         scores = part @ q
         errors = (arithmetic_error + gamma64) * (part.abs() @ q.abs())
         lowers = scores - errors
-        uppers = scores + errors
         local = int(torch.argmax(lowers))
         if float(lowers[local]) > best_lower:
             best_index = block.row_start + local
             best_lower = float(lowers[local])
-            best_upper = float(uppers[local])
         rows_evaluated += block.row_end - block.row_start
 
     # Competing evaluated rows need to be bounded too, not only pruned blocks.

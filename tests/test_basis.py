@@ -3,6 +3,10 @@ import torch
 from afterimage.runtime.basis import OnlineBasis
 
 
+
+import pytest
+
+pytestmark = pytest.mark.archive  # Phase-0 subspace-activation-cache branch, killed -- see docs/archive/README.md
 def test_project_zero_rank_returns_full_residual():
     b = OnlineBasis(dim=16, max_rank=8)
     x = torch.randn(16)

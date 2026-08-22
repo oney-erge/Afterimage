@@ -11,6 +11,10 @@ from afterimage.probe.approximations import (
 )
 
 
+
+import pytest
+
+pytestmark = pytest.mark.archive  # Phase-0 subspace-activation-cache branch, killed -- see docs/archive/README.md
 def _setup(d_out=40, d_in=64, n=300, seed=0):
     torch.manual_seed(seed)
     W = torch.randn(d_out, d_in)

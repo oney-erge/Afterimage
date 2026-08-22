@@ -1,0 +1,9 @@
+{
+  "allocation_attempted": false,
+  "cuda_available": true,
+  "memlock_hard_bytes": 67108864,
+  "memlock_soft_bytes": 67108864,
+  "reason": "hard memlock limit is below the requested pinned allocation",
+  "requested_bytes": 1600000000,
+  "success": false
+}

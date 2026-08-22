@@ -23,6 +23,20 @@ import json
 @dataclasses.dataclass
 class EngineConfig:
     """
+    Every field below is real and load-bearing -- nothing here is scaffolding
+    for a future feature. But most runs only ever touch a handful of them:
+
+        vram_budget_gb, ram_budget_gb, draft_mode, spec_k,
+        lm_head_slice_rows, quantize
+
+    Those six are documented in docs/CONFIGURATION.md and are what
+    `afterimage run`'s core argument group exposes. Everything else below
+    belongs to the opt-in H0-H15 research layer (docs/RESEARCH_METHODS.md) --
+    placement/prefetch/representation/expert-codec policies, critical-path
+    profiles, replay plans, and the tracing/experiment plumbing they need.
+    They default to the exact behaviour this engine had before that layer
+    existed, so leaving them alone is always safe.
+
     quantize
         None   -- strictly lossless (DEFAULT). Output is bit-identical to the
                   original bf16 model: verified on real models by comparing
@@ -80,6 +94,18 @@ class EngineConfig:
         original single-thread-ahead design; deeper values give slower NVMe
         more queued work at the cost of more RAM held as in-flight buffers.
 
+    storage_read_policy
+        "per_blob" (default) preserves the existing seek/read per stored
+        array. "coalesced_extents" merges physically adjacent arrays into
+        bounded reads before exact decoding. It changes request geometry and
+        temporary host-buffer size, never tensor values or model arithmetic.
+        "tensor_extents" applies the bounded merge within one tensor only.
+        The tensor remains the prefetch scheduling and timing unit, avoiding
+        the layer-wide serialization measured for H14 while still amortizing
+        fixed requests for its adjacent metadata blobs.
+        storage_extent_max_bytes bounds a merged request and
+        storage_extent_max_gap_bytes bounds otherwise-unused gap bytes read.
+
     decode_slice_elems
         Weights decoded per bounded GPU slice. Decoding a tensor in
         chunk-ranges rather than all at once is what keeps peak VRAM to
@@ -108,8 +134,10 @@ class EngineConfig:
         so every subsequent token pays only a memcpy to GPU.
         "compressed" -- cache the COMPRESSED bytes instead (plain, unpinned
         host memory). Fits ~1.45x more tensors in the same ram_budget_gb
-        (docs/PROPOSAL.md H1), at the cost of a real GPU Huffman decode on
-        every token instead of a memcpy.
+        (docs/archive/PROPOSAL.md's own H1 -- unrelated to the current H1
+        critical-path-residency hypothesis in docs/RESEARCH_METHODS.md), at
+        the cost of a real GPU Huffman decode on every token instead of a
+        memcpy.
 
         ENVIRONMENT NOTE, found while measuring this on the real 14B:
         "decoded" first calls pin_memory(), which page-locks host RAM via
@@ -118,6 +146,11 @@ class EngineConfig:
         and uses correctness-preserving pageable RAM; results expose the
         affected keys because transfer performance is no longer the intended
         pinned-RAM experiment. Check `ulimit -l` before interpreting speed.
+
+    require_pinned_ram
+        False preserves the correctness-first pageable fallback. True turns a
+        failed pin into a hard mechanism-gate error, which regulated H9 tests
+        use so pageable memory can never masquerade as the pinned treatment.
 
     lm_head_slice_rows
         Rows of lm_head computed per block, or 0 (default) to materialize
@@ -168,7 +201,7 @@ class EngineConfig:
         "self" -- generate_adaptive drafts using THIS model's own first
         `draft_exit_layer` layers, reusing the existing model.norm/lm_head
         as the exit head (LayerSkip-style self-speculation,
-        docs/PROPOSAL_ADAPTIVE.md mechanism A). No new parameters, nothing
+        docs/archive/PROPOSAL_ADAPTIVE.md mechanism A). No new parameters, nothing
         trained: the draft literally IS the target, run shallow.
 
     draft_exit_layer
@@ -200,11 +233,17 @@ class EngineConfig:
         distribution for any k -- a bad choice costs a slow sweep, never a
         wrong token. See runtime/spec_policy.py's module docstring.
 
+    spec_target_cache
+        Reuse the target model's exact KV prefix between speculative sweeps.
+        After verification, the cache is cropped to the accepted prefix minus
+        its last token; the next sweep feeds that token plus the new proposal.
+        False preserves the historical full-prefix recomputation control.
+
     pin_draft_layers
         Only meaningful with draft_mode="self". When True, the residency
         planner treats layers [0, draft_exit_layer) as used (spec_k + 1)
         times per sweep instead of once, and ranks them accordingly (see
-        vram_planner's `uses` field and docs/PROPOSAL_ADAPTIVE.md mechanism
+        vram_planner's `uses` field and docs/archive/PROPOSAL_ADAPTIVE.md mechanism
         C). Requires vram_budget_gb to be set: there is no tiering decision
         to influence under the legacy fixed-residency policy. Default False
         because self-drafting WITHOUT pinning re-streams the draft layers
@@ -232,13 +271,19 @@ class EngineConfig:
         addition to the measured latency. "replay_cem" loads a whole-set plan
         learned offline by cross-entropy search against event-DAG replays. It
         captures placement interactions but is never allowed to explore on a
-        live generation request.
+        live generation request. "replay_qubo" loads the same validated frozen
+        artifact contract after a classical annealer searches a pairwise QUBO
+        surrogate of event-DAG interference. "replay_extent_qubo" preserves
+        that v1 method while loading a separately built plan whose action
+        variables are bounded contiguous storage extents rather than tensors.
 
     prefetch_policy
         "fixed" (default) preserves io_prefetch_depth exactly. "pi" and
         "mpc" use queue/starvation feedback to select a depth in
         [0, io_prefetch_max_depth]. Both alter scheduling only, never bytes or
-        tensor values.
+        tensor values. "bayes_probit" fits posterior distributions for layer
+        read time and observed prefetch lead time, then chooses the smallest
+        depth whose probit chance constraint meets prefetch_target_ready.
 
     execution_policy
         Request-boundary selection among complete, validated method profiles.
@@ -270,16 +315,21 @@ class EngineConfig:
     ram_budget_gb: float | None = None
     vram_cap_gb: float | None = None
     io_prefetch_depth: int = 1
+    storage_read_policy: str = "per_blob"
+    storage_extent_max_bytes: int = 1 << 28
+    storage_extent_max_gap_bytes: int = 0
     decode_slice_elems: int = 1 << 25
     empty_cache_every: int = 0
     progress: bool = False
     ram_tier_format: str = "decoded"
+    require_pinned_ram: bool = False
     lm_head_slice_rows: int = 0
 
     draft_mode: str = "none"
     draft_exit_layer: int | None = None
     spec_k: int = 8
     spec_k_policy: str = "fixed"
+    spec_target_cache: bool = False
     pin_draft_layers: bool = False
     spec_policy_state: str | None = None
     spec_policy_learn: bool = True
@@ -317,6 +367,16 @@ class EngineConfig:
             raise ValueError(
                 "io_prefetch_depth must be >= 0 (0 disables prefetch), got %d"
                 % self.io_prefetch_depth)
+        if self.storage_read_policy not in (
+                "per_blob", "coalesced_extents", "tensor_extents"):
+            raise ValueError(
+                "storage_read_policy must be 'per_blob', 'coalesced_extents' "
+                "or 'tensor_extents', "
+                "got %r" % self.storage_read_policy)
+        if self.storage_extent_max_bytes < 1:
+            raise ValueError("storage_extent_max_bytes must be positive")
+        if self.storage_extent_max_gap_bytes < 0:
+            raise ValueError("storage_extent_max_gap_bytes must be non-negative")
         if self.decode_slice_elems < 1:
             raise ValueError("decode_slice_elems must be >= 1, got %d"
                              % self.decode_slice_elems)
@@ -326,6 +386,10 @@ class EngineConfig:
                 "three-tier planner ranks VRAM residency first and RAM "
                 "residency second, so a RAM budget with no VRAM budget is "
                 "an incompletely-specified plan, not a sensible default")
+        if self.require_pinned_ram and self.ram_budget_gb is None:
+            raise ValueError("require_pinned_ram requires ram_budget_gb")
+        if self.require_pinned_ram and self.ram_tier_format != "decoded":
+            raise ValueError("require_pinned_ram requires ram_tier_format='decoded'")
         if self.ram_tier_format not in ("decoded", "compressed"):
             raise ValueError(
                 "ram_tier_format must be 'decoded' or 'compressed', got %r"
@@ -361,24 +425,27 @@ class EngineConfig:
                 "residency policy")
         if self.placement_policy not in (
                 "traffic_density", "profiled_knapsack", "critical_path",
-                "replay_cem"):
+                "replay_cem", "replay_qubo", "replay_extent_qubo"):
             raise ValueError("unknown placement_policy %r" % self.placement_policy)
         if (self.placement_policy in ("profiled_knapsack", "critical_path")
                 and not self.critical_path_profile):
             raise ValueError(
                 "placement_policy=%r requires critical_path_profile with measured "
                 "per-tensor costs" % self.placement_policy)
-        if self.placement_policy == "replay_cem" and not self.replay_plan_state:
+        if (self.placement_policy in (
+                "replay_cem", "replay_qubo", "replay_extent_qubo")
+                and not self.replay_plan_state):
             raise ValueError(
-                "placement_policy='replay_cem' requires replay_plan_state built "
-                "from separate calibration traces")
+                "placement_policy=%r requires replay_plan_state built from "
+                "separate calibration traces" % self.placement_policy)
         if self.placement_policy != "traffic_density" and self.vram_budget_gb is None:
             raise ValueError(
                 "placement_policy=%r requires vram_budget_gb -- without a budget "
                 "there is no placement decision to optimize" % self.placement_policy)
-        if self.prefetch_policy not in ("fixed", "pi", "mpc"):
-            raise ValueError("prefetch_policy must be 'fixed', 'pi' or 'mpc', got %r"
-                             % self.prefetch_policy)
+        if self.prefetch_policy not in ("fixed", "pi", "mpc", "bayes_probit"):
+            raise ValueError(
+                "prefetch_policy must be 'fixed', 'pi', 'mpc' or "
+                "'bayes_probit', got %r" % self.prefetch_policy)
         if self.io_prefetch_max_depth < 0:
             raise ValueError("io_prefetch_max_depth must be >= 0")
         if (self.prefetch_policy != "fixed"
@@ -405,8 +472,10 @@ class EngineConfig:
                 and self.ram_tier_format != "decoded"):
             raise ValueError("lm_head_policy='ram_overlay' requires decoded RAM")
         if (self.lm_head_policy == "ram_overlay"
-                and self.placement_policy == "replay_cem"):
-            raise ValueError("ram_overlay and replay_cem are separate v1 experiments")
+                and self.placement_policy in (
+                    "replay_cem", "replay_qubo", "replay_extent_qubo")):
+            raise ValueError(
+                "ram_overlay and replay residency are separate v1 experiments")
         if self.mips_index_ram_limit_gb <= 0:
             raise ValueError("mips_index_ram_limit_gb must be positive")
         if self.expert_codec not in ("independent", "xor_reference"):

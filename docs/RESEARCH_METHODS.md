@@ -1,8 +1,13 @@
-# Configurable Research Program: H0-H8
+# Configurable Research Program: H0-H15
 
 Status: implemented research harness. The first bounded hardware screen is
 reported in [BOUNDED_RESEARCH_REPORT_2026-08-21.md](BOUNDED_RESEARCH_REPORT_2026-08-21.md);
-it does not satisfy the confirmatory repeat counts below.
+it does not satisfy the confirmatory repeat counts below. H0-H8 are the
+original program described in the sections that follow; H9-H15 extend it
+without changing them -- see section 15 and
+[NOVEL_METHODS_2026-08-21.md](NOVEL_METHODS_2026-08-21.md) for their designs,
+and [HYPOTHESIS_LINEAGE.md](HYPOTHESIS_LINEAGE.md) for every hypothesis's
+source and current verdict in one table.
 Survey cutoff: 21 August 2026.
 
 This document turns the research plan into falsifiable, opt-in experiments. The
@@ -161,7 +166,7 @@ Generate raw steady-state traces without changing the default planner:
 ```bash
 afterimage run MODEL PROMPT --vram-budget-gb 4 \
   --trace-output traces/control-01.json --max-new-tokens 32
-afterimage profile-trace traces/control-*.json \
+afterimage research profile-trace traces/control-*.json \
   --out profiles/MODEL-critical-path.json \
   --manifest STORE/manifest.json
 ```
@@ -368,4 +373,38 @@ Their literature boundaries, falsifiable gates, commands, and ordering are in
 implemented but unconfirmed; they remain experimental until held-out paired GPU
 measurements pass those gates.
 
-Run `afterimage experiments --json` for the machine-readable H0-H11 registry.
+## H12-H13 and regulated evidence levels
+
+H12 adds Bayesian probit prefetch depth: posterior read and lead-window
+distributions choose the smallest depth satisfying a ready-by-demand chance
+constraint. H13 fits a pairwise event-DAG QUBO and solves it with a classical
+annealer before freezing the validated residency plan. Both are exact
+scheduling/placement methods; neither skips dense layers or changes weights.
+
+Tests are no longer interpreted through one universal prompt/token matrix.
+`afterimage/protocols.py` maps every hypothesis to L0 invariant, L1 mechanism,
+L2 regulated-screen and L3 confirmation requirements. The full staged plan and
+current evidence are in
+[REGULATED_TEST_PLAN_2026-08-21.md](REGULATED_TEST_PLAN_2026-08-21.md).
+
+## H14-H15 -- storage layout as a residency action
+
+H14 (`storage_read_policy="coalesced_extents"`) merges physically adjacent
+compressed blobs into bounded contiguous reads before decoding, cutting fixed
+per-request storage overhead. H15 (`placement_policy="replay_extent_qubo"`)
+extends H13's QUBO search so its binary variables are bounded storage extents
+rather than individual tensors, coupling physical read geometry to residency.
+
+Both are implemented and measured. H14's mechanism gate passed cleanly (read
+calls fell 89%, byte amplification stayed at 0%) and its performance gate
+failed hard: **27.7% slower**, because a large contiguous read serialises
+against decode instead of overlapping with it -- a real negative result about
+this engine's I/O/decode overlap, not an unfinished feature. H15's fresh extent
+calibration evaluated 81 physical groups and 369 candidates but still returned
+the profiled control with 100% overlap and 0% gain. H13 and H15 therefore remain
+stopped at the action-divergence gate. Full derivation:
+[HYPOTHESIS_LINEAGE.md](HYPOTHESIS_LINEAGE.md).
+
+Run `afterimage research experiments --json` for the machine-readable H0-H15
+registry, or `afterimage research test-plan HYPOTHESIS --json` for its regulated
+protocol.

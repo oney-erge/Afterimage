@@ -161,6 +161,30 @@ def test_neural_utility_learns_censored_acceptance_without_tail_labels():
     # Only the accepted first position and first rejection are observable;
     # the confident-looking tail must not be treated as either label.
     assert policy.n_observations == 80
+    assert policy.state_dict()["brier_score"] is not None
+    assert policy.state_dict()["positive_rate"] == pytest.approx(0.5)
+
+
+def test_neural_utility_exposes_why_stopping_is_rare_under_realistic_costs():
+    """draft_token_s << target_sweep_s for an offloaded streamed target (a
+    ~28ms draft step against a ~14s target sweep is typical, see
+    docs/HYPOTHESIS_LINEAGE.md). The break-even survival probability for
+    stopping is therefore structurally tiny -- this must be visible via
+    last_required_survival, not just an unexplained absence of stops."""
+    policy = NeuralUtilityPolicy(k_max=8, minimum_observations=1)
+    policy.n_observations = 10
+    policy.draft_token_s = 0.0284
+    policy.target_sweep_s = 13.70
+    confident = torch.tensor([0.9, 0.1])
+    draft_probs = [confident] * 4
+    stop = policy.should_stop(draft_probs)
+    assert not stop  # realistic acceptance never survives this low a bar
+    assert policy.last_required_survival is not None
+    assert policy.last_required_survival < 0.02
+    without_tokens, without_seconds = policy._expected_tokens_and_seconds(
+        draft_probs[:-1])
+    expected = (without_tokens * policy.draft_token_s) / without_seconds
+    assert policy.last_required_survival == pytest.approx(expected)
 
 
 def test_neural_utility_state_round_trip_and_cost_aware_stop(tmp_path):

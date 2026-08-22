@@ -11,6 +11,7 @@ import dataclasses
 import json
 import math
 import pathlib
+import statistics
 from typing import Callable, Iterable
 
 import numpy as np
@@ -23,6 +24,8 @@ class PrefetchObservation:
     useful_bytes: int = 0
     wasted_bytes: int = 0
     bandwidth_bytes_s: float = 0.0
+    lead_s: float = 0.0
+    lead_layers: int = 0
 
 
 class FixedPrefetchController:
@@ -37,6 +40,9 @@ class FixedPrefetchController:
 
     def update_compute(self, _seconds: float) -> None:
         return None
+
+    def state_dict(self) -> dict:
+        return {"policy": "fixed", "depth": self.depth}
 
 
 class PIPrefetchController:
@@ -68,6 +74,10 @@ class PIPrefetchController:
 
     def update_compute(self, _seconds: float) -> None:
         return None
+
+    def state_dict(self) -> dict:
+        return {"policy": "pi", "depth": self.depth,
+                "ready_rate": self.ready_rate, "integral": self.integral}
 
 
 class MPCPrefetchController:
@@ -115,6 +125,133 @@ class MPCPrefetchController:
         a = self.ewma
         self.compute_s = (1 - a) * self.compute_s + a * max(0.0, float(seconds))
 
+    def state_dict(self) -> dict:
+        return {"policy": "mpc", "depth": self.depth,
+                "wait_s": self.wait_s, "layer_bytes": self.layer_bytes,
+                "bandwidth_bytes_s": self.bandwidth,
+                "compute_s": self.compute_s}
+
+
+class _LogNormalPosterior:
+    """Normal-inverse-gamma posterior over one log-duration.
+
+    The predictive distribution is technically Student-t.  The controller
+    deliberately uses a normal quantile (a probit rule) after a small burn-in:
+    it is cheap, inspectable, and its predictive variance still includes both
+    observation noise and uncertainty in the posterior mean.
+    """
+
+    def __init__(self, prior_variance: float = 0.25):
+        self.count = 0
+        self.mu = 0.0
+        self.kappa = 1e-6
+        self.alpha = 2.0
+        self.beta = float(prior_variance)
+
+    def update(self, value: float) -> None:
+        if not math.isfinite(value) or value <= 0:
+            return
+        x = math.log(value)
+        old_kappa = self.kappa
+        new_kappa = old_kappa + 1.0
+        delta = x - self.mu
+        self.mu = (old_kappa * self.mu + x) / new_kappa
+        self.beta += 0.5 * old_kappa * delta * delta / new_kappa
+        self.kappa = new_kappa
+        self.alpha += 0.5
+        self.count += 1
+
+    @property
+    def predictive_variance(self) -> float:
+        return max(
+            1e-9,
+            self.beta * (self.kappa + 1.0) /
+            (max(self.alpha - 1.0, 1e-9) * self.kappa),
+        )
+
+    def state_dict(self) -> dict:
+        return {"count": self.count, "log_mean": self.mu,
+                "predictive_variance": self.predictive_variance}
+
+
+class BayesianProbitPrefetchController:
+    """Chance-constrained prefetch depth from measured latency distributions.
+
+    Let R be a layer's storage-read time and C the observed lead time per
+    decoder layer.  On the log scale the controller models R and C with
+    independent normal-inverse-gamma posteriors, then chooses the smallest d
+    satisfying the probit approximation
+
+        P(R <= d C) >= target_ready.
+
+    It never predicts which layer is needed: dense execution order is known
+    exactly.  Probability is used only to decide how early an exact future
+    read should start.
+    """
+
+    def __init__(self, initial_depth: int, max_depth: int,
+                 target_ready: float = 0.85, minimum_observations: int = 4):
+        self.max_depth = max(0, int(max_depth))
+        self.initial_depth = max(0, min(self.max_depth, int(initial_depth)))
+        self.depth = self.initial_depth
+        self.target_ready = float(target_ready)
+        self.minimum_observations = max(2, int(minimum_observations))
+        self.read = _LogNormalPosterior()
+        self.window = _LogNormalPosterior()
+        self.last_ready_probability: float | None = None
+        self.calibration_count = 0
+        self.calibration_brier_sum = 0.0
+        self.empirical_ready_count = 0
+
+    def choose_depth(self) -> int:
+        if self.max_depth == 0:
+            self.depth = 0
+            return 0
+        if (self.read.count < self.minimum_observations
+                or self.window.count < self.minimum_observations):
+            self.depth = max(1, self.initial_depth)
+            return self.depth
+        mean = self.read.mu - self.window.mu
+        variance = self.read.predictive_variance + self.window.predictive_variance
+        sigma = math.sqrt(max(variance, 1e-12))
+        z = statistics.NormalDist().inv_cdf(self.target_ready)
+        required = math.exp(min(50.0, mean + z * sigma))
+        self.depth = max(1, min(self.max_depth, int(math.ceil(required))))
+        standardized = (math.log(self.depth) - mean) / sigma
+        self.last_ready_probability = statistics.NormalDist().cdf(standardized)
+        return self.depth
+
+    def update(self, observation: PrefetchObservation) -> None:
+        if self.last_ready_probability is not None:
+            outcome = 1.0 if observation.ready else 0.0
+            self.calibration_count += 1
+            self.empirical_ready_count += int(observation.ready)
+            self.calibration_brier_sum += (
+                self.last_ready_probability - outcome) ** 2
+        if observation.bandwidth_bytes_s > 0 and observation.useful_bytes > 0:
+            self.read.update(observation.useful_bytes /
+                             observation.bandwidth_bytes_s)
+        if observation.lead_layers > 0 and observation.lead_s > 0:
+            self.window.update(observation.lead_s / observation.lead_layers)
+
+    def update_compute(self, _seconds: float) -> None:
+        return None
+
+    def state_dict(self) -> dict:
+        return {
+            "policy": "bayes_probit", "depth": self.depth,
+            "target_ready": self.target_ready,
+            "last_ready_probability": self.last_ready_probability,
+            "calibration_count": self.calibration_count,
+            "brier_score": (self.calibration_brier_sum / self.calibration_count
+                            if self.calibration_count else None),
+            "empirical_ready_rate": (
+                self.empirical_ready_count / self.calibration_count
+                if self.calibration_count else None),
+            "read_posterior": self.read.state_dict(),
+            "lead_window_posterior": self.window.state_dict(),
+        }
+
 
 def build_prefetch_controller(policy: str, *, initial_depth: int, max_depth: int,
                               target_ready: float = 0.85, kp: float = 2.0,
@@ -125,6 +262,9 @@ def build_prefetch_controller(policy: str, *, initial_depth: int, max_depth: int
         return PIPrefetchController(initial_depth, max_depth, target_ready, kp, ki)
     if policy == "mpc":
         return MPCPrefetchController(initial_depth, max_depth)
+    if policy == "bayes_probit":
+        return BayesianProbitPrefetchController(
+            initial_depth, max_depth, target_ready)
     raise ValueError("unknown prefetch policy %r" % policy)
 
 

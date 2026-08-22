@@ -6,6 +6,8 @@ import torch
 from afterimage.probe.entropy import analyze_tensor, compressed_bytes
 
 
+
+pytestmark = pytest.mark.archive  # Phase-0 subspace-activation-cache branch, killed -- see docs/archive/README.md
 def test_rejects_non_float16_dtypes():
     with pytest.raises(TypeError):
         analyze_tensor(torch.randn(10, 10))  # float32

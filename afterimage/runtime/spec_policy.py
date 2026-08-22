@@ -1,5 +1,5 @@
 """Adaptive control over speculative draft length (and, for self-draft, when
-to stop drafting) -- docs/PROPOSAL_ADAPTIVE.md mechanism B.
+to stop drafting) -- docs/archive/PROPOSAL_ADAPTIVE.md mechanism B.
 
 Every policy here answers exactly one question -- "how many tokens should
 the next draft chain try for?" -- and is judged purely on wall-clock speed,
@@ -399,11 +399,16 @@ class NeuralUtilityPolicy(SpecPolicy):
         self.w2 = rng.normal(0.0, 0.08, size=hidden)
         self.b2 = math.log(0.6 / 0.4)
         self.n_observations = 0
+        self.brier_sum = 0.0
+        self.positive_labels = 0
         self.draft_token_s = 0.001
         self.target_sweep_s = 1.0
         self.decision_stops = 0
         self.decision_continues = 0
         self.last_stop_position: int | None = None
+        self.last_required_survival: float | None = None
+        self.min_required_survival: float | None = None
+        self.max_required_survival: float | None = None
 
     def choose_k(self) -> int:
         return self.k_max
@@ -439,7 +444,7 @@ class NeuralUtilityPolicy(SpecPolicy):
             self.w1 -= self.learning_rate * grad_w1
             self.b1 -= self.learning_rate * grad_b1
 
-    def _expected_utility(self, draft_probs: list) -> float:
+    def _expected_tokens_and_seconds(self, draft_probs: list) -> tuple[float, float]:
         survival = 1.0
         accepted = 0.0
         for position, prob in enumerate(draft_probs):
@@ -449,16 +454,37 @@ class NeuralUtilityPolicy(SpecPolicy):
             accepted += survival
         expected_tokens = 1.0 + accepted
         expected_seconds = self.target_sweep_s + len(draft_probs) * self.draft_token_s
-        return expected_tokens / max(expected_seconds, 1e-9)
+        return expected_tokens, expected_seconds
+
+    def _expected_utility(self, draft_probs: list) -> float:
+        tokens, seconds = self._expected_tokens_and_seconds(draft_probs)
+        return tokens / max(seconds, 1e-9)
 
     def should_stop(self, draft_probs: list) -> bool:
         if (len(draft_probs) <= self.k_min
                 or self.n_observations < self.minimum_observations):
             self.decision_continues += 1
             return False
-        with_current = self._expected_utility(draft_probs)
-        without_current = self._expected_utility(draft_probs[:-1])
-        stop = with_current <= without_current
+        without_tokens, without_seconds = self._expected_tokens_and_seconds(
+            draft_probs[:-1])
+        with_tokens, with_seconds = self._expected_tokens_and_seconds(draft_probs)
+        # The break-even survival probability for the token just drafted,
+        # given the currently learned costs: stopping only helps once the
+        # network's predicted survival falls below this value. Because
+        # draft_token_s is measured in tens of milliseconds against a
+        # target_sweep_s measured in seconds for an offloaded target, this
+        # threshold is structurally tiny (commonly under 2%) -- exposed here
+        # so "zero stop decisions" is diagnosable instead of a mystery. See
+        # docs/HYPOTHESIS_LINEAGE.md's H11 correction.
+        required = min(1.0, max(
+            0.0, without_tokens * self.draft_token_s / max(without_seconds, 1e-9)))
+        self.last_required_survival = required
+        self.min_required_survival = (required if self.min_required_survival is None
+                                      else min(self.min_required_survival, required))
+        self.max_required_survival = (required if self.max_required_survival is None
+                                      else max(self.max_required_survival, required))
+        stop = (with_tokens / max(with_seconds, 1e-9)
+               <= without_tokens / max(without_seconds, 1e-9))
         if stop:
             self.decision_stops += 1
             self.last_stop_position = len(draft_probs) - 1
@@ -478,6 +504,9 @@ class NeuralUtilityPolicy(SpecPolicy):
             else:
                 break  # tail after the first rejection is censored
             x = self._features(confidences[position], entropies[position], position)
+            prediction = self._predict(x)
+            self.brier_sum += (prediction - label) ** 2
+            self.positive_labels += int(label)
             self._fit_one(x, label)
             self.n_observations += 1
             if label == 0.0:
@@ -496,11 +525,20 @@ class NeuralUtilityPolicy(SpecPolicy):
             "w1": self.w1.tolist(), "b1": self.b1.tolist(),
             "w2": self.w2.tolist(), "b2": self.b2,
             "n_observations": self.n_observations,
+            "brier_score": (self.brier_sum / self.n_observations
+                            if self.n_observations else None),
+            "brier_sum": self.brier_sum,
+            "positive_labels": self.positive_labels,
+            "positive_rate": (self.positive_labels / self.n_observations
+                              if self.n_observations else None),
             "draft_token_s": self.draft_token_s,
             "target_sweep_s": self.target_sweep_s,
             "decision_stops": self.decision_stops,
             "decision_continues": self.decision_continues,
             "last_stop_position": self.last_stop_position,
+            "last_required_survival": self.last_required_survival,
+            "min_required_survival": self.min_required_survival,
+            "max_required_survival": self.max_required_survival,
         }
 
     def load_state_dict(self, state: dict) -> None:
@@ -513,6 +551,8 @@ class NeuralUtilityPolicy(SpecPolicy):
         self.w2 = np.asarray(state.get("w2", self.w2), dtype=np.float64)
         self.b2 = float(state.get("b2", self.b2))
         self.n_observations = int(state.get("n_observations", 0))
+        self.brier_sum = float(state.get("brier_sum", 0.0))
+        self.positive_labels = int(state.get("positive_labels", 0))
         self.draft_token_s = float(state.get("draft_token_s", self.draft_token_s))
         self.target_sweep_s = float(state.get("target_sweep_s", self.target_sweep_s))
         # Decision counters describe this evaluation, not the calibration

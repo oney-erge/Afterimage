@@ -28,7 +28,7 @@ def _normalise(value: str) -> str:
     return re.sub(r"\s+", " ", value.casefold()).strip()
 
 
-PROMPT_SUITE_VERSION = "bounded-chat-v1"
+PROMPT_SUITE_VERSION = "bounded-chat-v2"
 
 # Evaluation and calibration are deliberately disjoint.  The calibration
 # prompts are used only to build a critical-path profile and a frozen
@@ -70,6 +70,42 @@ PROMPT_CASES = (
         "Every glippet is blue. No blue object is transparent. Can a glippet "
         "be transparent? Answer only yes or no.",
         ("no",),
+    ),
+    PromptCase(
+        "copy-nonce", "exact_copy", "calibration",
+        "Repeat exactly this identifier and nothing else: K7M-42Q-Z9.",
+        ("K7M-42Q-Z9",),
+    ),
+    PromptCase(
+        "json-status", "structured_output", "calibration",
+        "Output one minified JSON object with status equal to ok and count "
+        "equal to 3. Do not add prose.",
+        ('{"status":"ok","count":3}',),
+    ),
+    PromptCase(
+        "code-squares", "code", "calibration",
+        "Fill the blank and output only the Python expression: "
+        "squares = ___  # square every x in values",
+        ("[x * x for x in values]", "[x*x for x in values]"),
+    ),
+    PromptCase(
+        "logic-ravens", "counterfactual_logic", "calibration",
+        "All ravens in a sanctuary are black. Mira is a white bird in that "
+        "sanctuary. Must Mira be a raven? Answer only yes or no.",
+        ("no",),
+    ),
+    PromptCase(
+        "retrieval-tulip", "long_context_retrieval", "calibration",
+        "The delta ledger assigns 1182 to maple, 9407 to tulip, and 6630 to "
+        "cedar. A later audit lists invoice totals 94, 207, and 811, none of "
+        "which are ledger identifiers. Return only tulip's four-digit code.",
+        ("9407",),
+    ),
+    PromptCase(
+        "transform-sequence", "symbolic_transformation", "calibration",
+        "Reverse the order of these comma-separated tokens without changing "
+        "their spelling. Output tokens only: amber,cobalt,ivory",
+        ("ivory,cobalt,amber",),
     ),
 )
 

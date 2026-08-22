@@ -9,7 +9,7 @@ def test_suite_has_disjoint_diverse_splits():
     evaluation = prompt_cases("evaluation")
     calibration = prompt_cases("calibration")
     assert len(evaluation) == 4
-    assert len(calibration) == 2
+    assert len(calibration) == 8
     assert {case.id for case in evaluation}.isdisjoint(case.id for case in calibration)
     assert len({case.semantic_bucket for case in evaluation}) == len(evaluation)
     assert len({case.id for case in PROMPT_CASES}) == len(PROMPT_CASES)

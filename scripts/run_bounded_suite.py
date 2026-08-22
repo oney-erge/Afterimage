@@ -68,7 +68,7 @@ METHODS = {
         "afterimage",
         {"vram_budget_gb": 1.80, "ram_budget_gb": 1.60,
          "decode_slice_elems": 1 << 20, "io_prefetch_depth": 2,
-         "lm_head_policy": "ram_overlay"},
+         "lm_head_policy": "ram_overlay", "require_pinned_ram": True},
         "reference_execution_equivalent", 24.0),
     "full-head-control": Method(
         "full-head-control", "Afterimage legacy streaming with resident full head",
@@ -88,7 +88,14 @@ METHODS = {
         "mpc-prefetch", "Afterimage one-step MPC prefetch", "afterimage",
         {"vram_budget_gb": 4.00, "decode_slice_elems": 1 << 22,
          "io_prefetch_depth": 2, "io_prefetch_max_depth": 8,
-         "prefetch_policy": "mpc"}, "reference_execution_equivalent", 20.0),
+        "prefetch_policy": "mpc"}, "reference_execution_equivalent", 20.0),
+    "bayes-prefetch": Method(
+        "bayes-prefetch", "Afterimage Bayesian probit prefetch", "afterimage",
+        {"vram_budget_gb": 4.00, "decode_slice_elems": 1 << 22,
+         "io_prefetch_depth": 2, "io_prefetch_max_depth": 8,
+         "prefetch_target_ready": 0.90,
+         "prefetch_policy": "bayes_probit"},
+        "reference_execution_equivalent", 20.0),
     "profiled-knapsack": Method(
         "profiled-knapsack", "Afterimage measured-cost residency", "afterimage",
         {"vram_budget_gb": 4.00, "decode_slice_elems": 1 << 22,
@@ -103,6 +110,26 @@ METHODS = {
         "replay-cem", "Afterimage digital-twin CEM residency", "afterimage",
         {"vram_budget_gb": 4.00, "decode_slice_elems": 1 << 22,
          "io_prefetch_depth": 2, "placement_policy": "replay_cem"},
+        "reference_execution_equivalent", 20.0),
+    "replay-qubo": Method(
+        "replay-qubo", "Afterimage event-interference QUBO residency", "afterimage",
+        {"vram_budget_gb": 4.00, "decode_slice_elems": 1 << 22,
+         "io_prefetch_depth": 2, "placement_policy": "replay_qubo"},
+        "reference_execution_equivalent", 20.0),
+    "coalesced-storage": Method(
+        "coalesced-storage", "Afterimage bounded contiguous storage reads",
+        "afterimage",
+        {"vram_budget_gb": 4.00, "decode_slice_elems": 1 << 22,
+         "io_prefetch_depth": 2,
+         "storage_read_policy": "coalesced_extents",
+         "storage_extent_max_bytes": 1 << 28,
+         "storage_extent_max_gap_bytes": 0},
+        "reference_execution_equivalent", 20.0),
+    "replay-extent-qubo": Method(
+        "replay-extent-qubo", "Afterimage physical-extent QUBO residency",
+        "afterimage",
+        {"vram_budget_gb": 4.00, "decode_slice_elems": 1 << 22,
+         "io_prefetch_depth": 2, "placement_policy": "replay_extent_qubo"},
         "reference_execution_equivalent", 20.0),
     "certified-mips": Method(
         "certified-mips", "Afterimage certified greedy MIPS head", "afterimage",
@@ -298,7 +325,8 @@ def engine_for(method: Method, *, critical_profile: str | None = None,
     values = dict(method.overrides)
     if values.get("placement_policy") in {"profiled_knapsack", "critical_path"}:
         values["critical_path_profile"] = critical_profile
-    if values.get("placement_policy") == "replay_cem":
+    if values.get("placement_policy") in {
+            "replay_cem", "replay_qubo", "replay_extent_qubo"}:
         values["replay_plan_state"] = replay_plan
     if method.id in {"spec-hazard", "spec-neural"}:
         values["spec_policy_state"] = spec_state
@@ -311,14 +339,37 @@ def engine_for(method: Method, *, critical_profile: str | None = None,
 def run_afterimage(method: Method, rendered: list[dict], n_tokens: int,
                    deadline: float, draft_model=None, critical_profile: str | None = None,
                    replay_plan: str | None = None,
-                   spec_state: str | None = None) -> tuple[list[dict], dict]:
+                   spec_state: str | None = None,
+                   burn_in_rendered: list[dict] | None = None,
+                   burn_in_tokens: int = 0) -> tuple[list[dict], dict]:
     init_t0 = time.perf_counter()
     engine, cfg = engine_for(method, critical_profile=critical_profile,
                              replay_plan=replay_plan, spec_state=spec_state)
     init_s = time.perf_counter() - init_t0
     tokenizer = rendered[0]["tokenizer"]
     rows = []
+    burn_in = []
     try:
+        for burn_index, item in enumerate(burn_in_rendered or []):
+            if burn_in_tokens < 1 or time.perf_counter() >= deadline:
+                break
+            ids = tokenizer(item["prompt"], return_tensors="pt").input_ids.cuda()
+            cache = drop_caches()
+            engine.stats.reset()
+            t0 = time.perf_counter()
+            sequence = engine.generate_greedy(
+                ids, max_new_tokens=burn_in_tokens, use_cache=True)
+            torch.cuda.synchronize()
+            burn_in.append({
+                "case_id": item["case"].id,
+                "wall_seconds": time.perf_counter() - t0,
+                "output_tokens": sequence.shape[1] - ids.shape[1],
+                "cache_drop_succeeded": cache[0],
+                "prefetch_controller_state": (
+                    engine._prefetch_controller.state_dict()
+                    if hasattr(engine._prefetch_controller, "state_dict") else None),
+            })
+            del sequence, ids
         for case_index, item in enumerate(rendered):
             if time.perf_counter() >= deadline:
                 break
@@ -353,9 +404,15 @@ def run_afterimage(method: Method, rendered: list[dict], n_tokens: int,
                 "prefetch_hits": stats.prefetch_hits,
                 "prefetch_misses": stats.prefetch_misses,
                 "prefetch_wait_seconds": stats.prefetch_wait_seconds,
+                "prefetch_peak_inflight_bytes": stats.prefetch_peak_inflight_bytes,
+                "storage_read_calls": stats.storage_read_calls,
+                "storage_extent_bytes": stats.storage_extent_bytes,
                 "pageable_ram_fallback_keys": sorted(
                     engine._ram_cache_pageable_keys),
                 "final_prefetch_depth": engine._prefetch_controller.choose_depth(),
+                "prefetch_controller_state": (
+                    engine._prefetch_controller.state_dict()
+                    if hasattr(engine._prefetch_controller, "state_dict") else None),
                 "spec_sweeps": stats.spec_sweeps,
                 "spec_accepted_tokens": stats.spec_accepted_tokens,
                 "tokens_per_target_sweep": len(generated) / max(stats.spec_sweeps, 1),
@@ -380,6 +437,7 @@ def run_afterimage(method: Method, rendered: list[dict], n_tokens: int,
         gc.collect()
         torch.cuda.empty_cache()
     return rows, {"initialization_seconds": init_s,
+                  "burn_in": burn_in,
                   "mips_index_build_seconds": index_build_s,
                   "mips_index_bytes": index_bytes,
                   "resolved_config": cfg.to_dict()}
@@ -446,39 +504,111 @@ def prepare_spec_state(tokenizer, draft_model, temp_dir: pathlib.Path,
     method = METHODS[method_id]
     engine, cfg = engine_for(method, spec_state=str(state_path), learning=True)
     calibration = []
+    cases = prompt_cases("calibration")
+    if method_id == "spec-neural" and len(cases) >= 4:
+        training_cases, gate_cases = cases[:-2], cases[-2:]
+        minimum_observations = 200
+    else:
+        training_cases, gate_cases = cases, ()
+        minimum_observations = 0
+    round_index = 0
+    last_observations = 0
     try:
-        for index, case in enumerate(prompt_cases("calibration")):
-            if time.perf_counter() >= deadline:
-                raise TimeoutError("time budget expired during speculation calibration")
-            item = calibration_item(tokenizer, case)
-            ids = tokenizer(item["prompt"], return_tensors="pt").input_ids.cuda()
-            cache = drop_caches()
-            engine.stats.reset()
-            t0 = time.perf_counter()
-            generator = torch.Generator(device="cuda").manual_seed(2000 + index)
-            sequence, policy = engine.generate_adaptive(
-                ids, max_new_tokens=n_tokens, draft_model=draft_model,
-                temperature=0.0, generator=generator)
-            torch.cuda.synchronize()
-            wall = time.perf_counter() - t0
-            generated = sequence.shape[1] - ids.shape[1]
-            calibration.append({
-                "case_id": case.id, "wall_seconds": wall,
-                "output_tokens": generated,
-                "seconds_per_token": wall / max(generated, 1),
-                "tokens_per_target_sweep": generated / max(engine.stats.spec_sweeps, 1),
-                "policy_state": policy.state_dict(),
-                "cache_drop_succeeded": cache[0],
-            })
-            del ids, sequence
+        while True:
+            for case_index, case in enumerate(training_cases):
+                if time.perf_counter() >= deadline:
+                    break
+                item = calibration_item(tokenizer, case)
+                ids = tokenizer(item["prompt"], return_tensors="pt").input_ids.cuda()
+                cache = drop_caches()
+                engine.stats.reset()
+                t0 = time.perf_counter()
+                generator = torch.Generator(device="cuda").manual_seed(
+                    2000 + round_index * len(training_cases) + case_index)
+                sequence, policy = engine.generate_adaptive(
+                    ids, max_new_tokens=n_tokens, draft_model=draft_model,
+                    temperature=0.0, generator=generator)
+                torch.cuda.synchronize()
+                wall = time.perf_counter() - t0
+                generated = sequence.shape[1] - ids.shape[1]
+                state = policy.state_dict()
+                last_observations = int(state.get("n_observations", 0))
+                calibration.append({
+                    "round": round_index, "case_id": case.id,
+                    "wall_seconds": wall, "output_tokens": generated,
+                    "seconds_per_token": wall / max(generated, 1),
+                    "tokens_per_target_sweep": (
+                        generated / max(engine.stats.spec_sweeps, 1)),
+                    "policy_state": state,
+                    "cache_drop_succeeded": cache[0],
+                })
+                del ids, sequence
+                if minimum_observations and last_observations >= minimum_observations:
+                    break
+            round_index += 1
+            if (not minimum_observations
+                    or last_observations >= minimum_observations
+                    or time.perf_counter() >= deadline):
+                break
     finally:
         engine.close()
         del engine
         gc.collect()
         torch.cuda.empty_cache()
     payload = json.loads(state_path.read_text())
+
+    gate_trials = []
+    if gate_cases and time.perf_counter() < deadline:
+        gate_engine, _ = engine_for(
+            method, spec_state=str(state_path), learning=False)
+        try:
+            for case_index, case in enumerate(gate_cases):
+                if time.perf_counter() >= deadline:
+                    break
+                item = calibration_item(tokenizer, case)
+                ids = tokenizer(item["prompt"], return_tensors="pt").input_ids.cuda()
+                cache = drop_caches()
+                gate_engine.stats.reset()
+                generator = torch.Generator(device="cuda").manual_seed(9000 + case_index)
+                sequence, policy = gate_engine.generate_adaptive(
+                    ids, max_new_tokens=n_tokens, draft_model=draft_model,
+                    temperature=0.0, generator=generator)
+                state = policy.state_dict()
+                gate_trials.append({
+                    "case_id": case.id,
+                    "output_tokens": sequence.shape[1] - ids.shape[1],
+                    "decision_stops": int(state.get("decision_stops", 0)),
+                    "decision_continues": int(state.get("decision_continues", 0)),
+                    "last_stop_position": state.get("last_stop_position"),
+                    "cache_drop_succeeded": cache[0],
+                })
+                del ids, sequence
+        finally:
+            gate_engine.close()
+            del gate_engine
+            gc.collect()
+            torch.cuda.empty_cache()
+
+    stops = sum(row["decision_stops"] for row in gate_trials)
+    continues = sum(row["decision_continues"] for row in gate_trials)
+    opportunities = stops + continues
+    action_rate = stops / opportunities if opportunities else 0.0
+    mechanism_gate = {
+        "minimum_observations": minimum_observations,
+        "calibration_observations": int(
+            payload.get("state", {}).get("n_observations", last_observations)),
+        "gate_opportunities": opportunities,
+        "decision_stops": stops,
+        "decision_continues": continues,
+        "action_divergence_rate": action_rate,
+        "required_action_divergence_rate": 0.10,
+        "passed": (not minimum_observations or (
+            int(payload.get("state", {}).get("n_observations", 0))
+            >= minimum_observations and action_rate >= 0.10)),
+    }
     return {"path": str(state_path), "state": payload,
             "sha256": sha256_json(payload), "calibration_trials": calibration,
+            "gate_trials": gate_trials, "mechanism_gate": mechanism_gate,
             "resolved_config": cfg.to_dict()}
 
 
@@ -538,6 +668,12 @@ def main() -> int:
     parser.add_argument("--case-ids", default=None,
                         help="comma-separated evaluation case IDs; default is all")
     parser.add_argument("--time-budget-minutes", type=float, default=58.0)
+    parser.add_argument(
+        "--ram-overlay-vram-budget-gb", type=float, default=None,
+        help="override the matched VRAM budget for exact-min and ram-overlay-head")
+    parser.add_argument(
+        "--ram-overlay-host-budget-gb", type=float, default=None,
+        help="override the pinned-host budget and allocation gate for ram-overlay-head")
     parser.add_argument("--out", required=True)
     args = parser.parse_args()
 
@@ -548,6 +684,23 @@ def main() -> int:
         parser.error("unknown methods: %s" % ", ".join(unknown))
     if args.max_new_tokens < 1:
         parser.error("--max-new-tokens must be positive")
+    if args.ram_overlay_vram_budget_gb is not None:
+        if args.ram_overlay_vram_budget_gb <= 0:
+            parser.error("--ram-overlay-vram-budget-gb must be positive")
+        for method_id in ("exact-min", "ram-overlay-head"):
+            method = METHODS[method_id]
+            METHODS[method_id] = dataclasses.replace(
+                method,
+                overrides={**method.overrides,
+                           "vram_budget_gb": args.ram_overlay_vram_budget_gb})
+    if args.ram_overlay_host_budget_gb is not None:
+        if args.ram_overlay_host_budget_gb <= 0:
+            parser.error("--ram-overlay-host-budget-gb must be positive")
+        method = METHODS["ram-overlay-head"]
+        METHODS["ram-overlay-head"] = dataclasses.replace(
+            method,
+            overrides={**method.overrides,
+                       "ram_budget_gb": args.ram_overlay_host_budget_gb})
 
     out = pathlib.Path(args.out).resolve()
     if out.exists():
@@ -583,6 +736,8 @@ def main() -> int:
         "schema_version": 1,
         "status": "running",
         "exploratory": True,
+        "evidence_level": "L1_mechanism_screen",
+        "protocol_schema_version": 1,
         "confirmatory_protocol_satisfied": False,
         "prompt_suite_version": PROMPT_SUITE_VERSION,
         "prompt_suite": [dataclasses.asdict(case) for case in prompt_cases("all")],
@@ -595,6 +750,10 @@ def main() -> int:
         "draft_model": DRAFT_MODEL,
         "store": STORE,
         "selected_methods": selected,
+        "ram_overlay_matched_vram_budget_gb": (
+            METHODS["ram-overlay-head"].overrides["vram_budget_gb"]),
+        "ram_overlay_host_budget_gb": (
+            METHODS["ram-overlay-head"].overrides["ram_budget_gb"]),
         "environment": environment_manifest(repo_root, tokenizer),
         "calibration_artifacts": {},
         "methods": [],
@@ -602,14 +761,25 @@ def main() -> int:
     }
     checkpoint(partial, result)
 
+    pin_preflight = None
+    if "ram-overlay-head" in selected:
+        from afterimage.runtime.memory_preflight import pinned_memory_preflight
+        pin_preflight = pinned_memory_preflight(
+            int(METHODS["ram-overlay-head"].overrides["ram_budget_gb"] * 1e9),
+            attempt_allocation=True)
+        result["calibration_artifacts"]["pinned_memory_preflight"] = (
+            dataclasses.asdict(pin_preflight))
+        checkpoint(partial, result)
+
     draft_model = None
     critical = None
-    replay = None
+    replay_plans = {}
     spec_states = {}
     with tempfile.TemporaryDirectory(prefix="afterimage-bounded-") as temp_name:
         temp_dir = pathlib.Path(temp_name)
         if any(name in selected for name in (
-                "critical-path", "profiled-knapsack", "replay-cem")):
+                "critical-path", "profiled-knapsack", "replay-cem",
+                "replay-qubo", "replay-extent-qubo")):
             log("\nCALIBRATION: critical-path profile")
             try:
                 critical = prepare_critical_profile(tokenizer, temp_dir, deadline)
@@ -622,28 +792,55 @@ def main() -> int:
                                            "traceback": traceback.format_exc()})
             checkpoint(partial, result)
 
-        if "replay-cem" in selected and critical is not None:
-            log("\nCALIBRATION: replay-CEM whole-set plan")
-            try:
-                from afterimage.runtime.critical_path import TraceRecorder
-                from afterimage.runtime.replay_planner import optimize_replay_residency
-                manifest = json.loads(
-                    (pathlib.Path(STORE) / "manifest.json").read_text(encoding="utf-8"))
-                traces = [TraceRecorder.load(path) for path in critical["trace_paths"]]
-                replay_plan = optimize_replay_residency(
-                    manifest, traces, vram_budget_gb=4.0,
-                    decode_slice_elems=1 << 22, iterations=8,
-                    population=40, seed=0)
-                replay_path = temp_dir / "replay_cem_plan.json"
-                replay_plan.save(replay_path)
-                replay = {"path": str(replay_path),
-                          "plan": dataclasses.asdict(replay_plan)}
-                result["calibration_artifacts"]["replay_cem"] = replay["plan"]
-            except Exception as exc:
-                result["failures"].append({"phase": "replay_cem_calibration",
-                                           "error": repr(exc),
-                                           "traceback": traceback.format_exc()})
-            checkpoint(partial, result)
+        if critical is not None and any(
+                method_id in selected for method_id in (
+                    "replay-cem", "replay-qubo", "replay-extent-qubo")):
+            from afterimage.runtime.critical_path import TraceRecorder
+            from afterimage.runtime.replay_planner import (
+                optimize_extent_qubo_residency, optimize_qubo_residency,
+                optimize_replay_residency,
+            )
+            manifest = json.loads(
+                (pathlib.Path(STORE) / "manifest.json").read_text(encoding="utf-8"))
+            traces = [TraceRecorder.load(path) for path in critical["trace_paths"]]
+            for method_id in ("replay-cem", "replay-qubo", "replay-extent-qubo"):
+                if method_id not in selected:
+                    continue
+                log("\nCALIBRATION: %s whole-set plan" % method_id)
+                try:
+                    if method_id == "replay-qubo":
+                        replay_plan = optimize_qubo_residency(
+                            manifest, traces, vram_budget_gb=4.0,
+                            decode_slice_elems=1 << 22,
+                            pairwise_candidates=24, restarts=8,
+                            sweeps=2000, seed=0)
+                    elif method_id == "replay-extent-qubo":
+                        replay_plan = optimize_extent_qubo_residency(
+                            manifest, traces, vram_budget_gb=4.0,
+                            decode_slice_elems=1 << 22,
+                            max_extent_bytes=1 << 28, max_gap_bytes=0,
+                            max_tensors_per_extent=8,
+                            pairwise_candidates=24, restarts=8,
+                            sweeps=2000, seed=0)
+                    else:
+                        replay_plan = optimize_replay_residency(
+                            manifest, traces, vram_budget_gb=4.0,
+                            decode_slice_elems=1 << 22, iterations=8,
+                            population=40, seed=0)
+                    replay_path = temp_dir / (method_id.replace("-", "_") + "_plan.json")
+                    replay_plan.save(replay_path)
+                    replay_plans[method_id] = {
+                        "path": str(replay_path),
+                        "plan": dataclasses.asdict(replay_plan),
+                    }
+                    result["calibration_artifacts"][method_id.replace("-", "_")] = (
+                        replay_plans[method_id]["plan"])
+                except Exception as exc:
+                    result["failures"].append({
+                        "phase": method_id.replace("-", "_") + "_calibration",
+                        "error": repr(exc), "traceback": traceback.format_exc(),
+                    })
+                checkpoint(partial, result)
 
         for method_id in selected:
             method = METHODS[method_id]
@@ -651,14 +848,39 @@ def main() -> int:
                 result["failures"].append({"method": method_id,
                                            "error": "not started: time budget exhausted"})
                 continue
+            if (method_id == "ram-overlay-head"
+                    and (pin_preflight is None or not pin_preflight.success)):
+                result["failures"].append({
+                    "method": method_id,
+                    "error": "not started: pinned-memory mechanism gate failed",
+                    "mechanism_gate": (dataclasses.asdict(pin_preflight)
+                                       if pin_preflight is not None else None),
+                })
+                continue
             if method_id in {"critical-path", "profiled-knapsack"} and critical is None:
                 result["failures"].append({"method": method_id,
                                            "error": "not started: calibration failed"})
                 continue
-            if method_id == "replay-cem" and replay is None:
+            if method_id in {
+                    "replay-cem", "replay-qubo", "replay-extent-qubo"
+                    } and method_id not in replay_plans:
                 result["failures"].append({"method": method_id,
                                            "error": "not started: replay plan failed"})
                 continue
+            if method_id in {"replay-qubo", "replay-extent-qubo"}:
+                report = replay_plans[method_id]["plan"]["report"]
+                if (not report["treatment_diverged"]
+                        or report["optimized_over_control"] < 0.02):
+                    result["failures"].append({
+                        "method": method_id,
+                        "error": "not started: QUBO plan mechanism gate failed",
+                        "mechanism_gate": {
+                            "treatment_diverged": report["treatment_diverged"],
+                            "optimized_over_control": report["optimized_over_control"],
+                            "required_replay_gain": 0.02,
+                        },
+                    })
+                    continue
             if method_id in {"spec-fixed", "spec-hazard", "spec-neural",
                              "chunked-spec"} and draft_model is None:
                 from afterimage.runtime.streaming_engine import load_draft_model
@@ -681,6 +903,15 @@ def main() -> int:
                                                "traceback": traceback.format_exc()})
                     checkpoint(partial, result)
                     continue
+                if (method_id == "spec-neural"
+                        and not spec_states[method_id]["mechanism_gate"]["passed"]):
+                    result["failures"].append({
+                        "method": method_id,
+                        "error": "not started: neural action-divergence gate failed",
+                        "mechanism_gate": spec_states[method_id]["mechanism_gate"],
+                    })
+                    checkpoint(partial, result)
+                    continue
 
             log("\nMETHOD: %s" % method.title)
             entry = {"method_id": method.id, "title": method.title,
@@ -695,7 +926,8 @@ def main() -> int:
                         method, rendered, args.max_new_tokens, deadline,
                         draft_model=draft_model,
                         critical_profile=critical["path"] if critical else None,
-                        replay_plan=replay["path"] if replay else None,
+                        replay_plan=(replay_plans[method_id]["path"]
+                                     if method_id in replay_plans else None),
                         spec_state=(spec_states[method_id]["path"]
                                     if method_id in spec_states else None))
                 entry["rows"] = rows

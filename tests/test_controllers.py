@@ -1,4 +1,5 @@
 from afterimage.runtime.controllers import (
+    BayesianProbitPrefetchController,
     KnapsackSemiBandit, LinearProfileBandit, ModelBasedProfileController,
     MPCPrefetchController, PIPrefetchController, PrefetchObservation,
     PageHinkley, SemiBanditItem,
@@ -18,6 +19,36 @@ def test_mpc_prefetch_returns_feasible_depth():
                                    bandwidth_bytes_s=200_000_000))
     ctl.update_compute(0.1)
     assert 0 <= ctl.choose_depth() <= 6
+
+
+def test_bayesian_probit_prefetch_uses_latency_uncertainty_and_stays_bounded():
+    ctl = BayesianProbitPrefetchController(
+        initial_depth=2, max_depth=8, target_ready=0.90)
+    # Reads take about three layer windows. Small variation keeps the
+    # posterior non-degenerate and exercises the actual probit constraint.
+    for i in range(12):
+        read_s = 0.060 + (i % 3 - 1) * 0.002
+        window_s = 0.020 + (i % 2) * 0.001
+        ctl.update(PrefetchObservation(
+            ready=False, useful_bytes=60_000_000,
+            bandwidth_bytes_s=60_000_000 / read_s,
+            lead_s=window_s * 2, lead_layers=2))
+    assert 3 <= ctl.choose_depth() <= 8
+    state = ctl.state_dict()
+    assert state["read_posterior"]["count"] == 12
+    assert state["last_ready_probability"] >= 0.90
+    ctl.update(PrefetchObservation(ready=True))
+    calibrated = ctl.state_dict()
+    assert calibrated["calibration_count"] == 1
+    assert 0.0 <= calibrated["brier_score"] <= 1.0
+
+
+def test_bayesian_probit_prefetch_keeps_initial_depth_during_burn_in():
+    ctl = BayesianProbitPrefetchController(2, 6, target_ready=0.95)
+    ctl.update(PrefetchObservation(
+        True, useful_bytes=1_000, bandwidth_bytes_s=100_000,
+        lead_s=0.02, lead_layers=1))
+    assert ctl.choose_depth() == 2
 
 
 def test_linear_profile_bandit_learns_contextual_rewards():

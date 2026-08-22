@@ -1,187 +1,227 @@
-# Afterimage
+<p align="center">
+  <img src="docs/assets/afterimage-logo.png" width="160" alt="Afterimage logo">
+</p>
 
-**Run models larger than your GPU's VRAM with exact compressed streaming and
-explicit memory/speed tradeoffs.**
+<h1 align="center">Afterimage</h1>
 
-Afterimage entropy-codes bf16 model weights (lossless, ~1.45x — the
-information-theoretic ceiling for bf16 is ~1.51x) and streams them
-layer-by-layer from a compressed on-disk store, the same algorithm AirLLM
-uses. It adds three things on top: spending spare VRAM on residency,
-speculative decoding, and an optional non-lossless mode that shrinks the
-VRAM floor by about 43% in the current bounded run.
+<p align="center"><strong>Run BF16 models too big for your GPU, at full precision.</strong></p>
 
-> Status: a working engine, measured against AirLLM on real hardware,
-> including where it does **not** win. The current multi-prompt result is
-> [the bounded research report](docs/BOUNDED_RESEARCH_REPORT_2026-08-21.md).
+<p align="center">
+  <a href="https://github.com/iodriller/Afterimage/actions/workflows/ci.yml"><img src="https://github.com/iodriller/Afterimage/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="Apache-2.0"></a>
+  <a href="pyproject.toml"><img src="https://img.shields.io/badge/python-3.10%2B-3776AB" alt="Python 3.10+"></a>
+  <a href="docs/ALL_HYPOTHESES_AND_BASELINES.md"><img src="https://img.shields.io/badge/evidence-H0--H15-4fd1a5" alt="H0-H15 evidence"></a>
+</p>
 
----
+<p align="center">
+  <a href="#quick-start">Quick start</a> ·
+  <a href="docs/ALL_HYPOTHESES_AND_BASELINES.md">Results</a> ·
+  <a href="docs/ARCHITECTURE.md">Architecture</a> ·
+  <a href="docs/CONFIGURATION.md">Configuration</a> ·
+  <a href="docs/RESEARCH_METHODS.md">Research</a>
+</p>
 
-## Measured, not projected
+Afterimage compresses your model's weights losslessly and streams them through
+your GPU a layer at a time. A 29.5 GB model runs on an 8 GB card, bit-for-bit
+identical to the original. No quantization, no accuracy loss.
 
-Qwen3-14B (29.5 GB bf16), RTX 3080 Laptop (8 GB VRAM), WSL2/CUDA, cold page
-cache, four semantic prompt types × four tokens, **every system on the same
-peak-VRAM counter**:
+Turn on speculative decoding with a small draft model and it's 3x faster than
+streaming alone, and faster than Hugging Face's own Accelerate offload at the
+same memory. Every number below is a real run on real hardware, not a
+projection.
 
-| Configuration | VRAM | s/token | Lossless | vs AirLLM |
-|---|---|---|---|---|
-| **AirLLM 3.1.0** (reference) | 1.58 GB | 28.86 | yes | 1.00x |
-| Afterimage, minimum-memory exact | 1.72 GB | 32.51 | yes | **0.89x** |
-| Afterimage, + 4 GB residency | 3.93 GB | 17.36 | yes | **1.66x** |
-| Afterimage, + fixed speculation | 3.81 GB | **9.15** | yes at T=0 | **3.15x** |
-| Afterimage, chunked head (opt-in, approximate) | **0.90 GB** | 29.61 | no | −43% VRAM, parity band |
+It comes with a CLI, a web UI, an OpenAI-compatible server, and a Python API.
+There's also an opt-in research lab where sixteen speedup ideas get tested
+against named controls and reported honestly, wins and losses both. If the
+full model already fits in your GPU, a normal in-memory engine will be faster;
+Afterimage is for when it doesn't.
 
-**The honest headline: near AirLLM's memory floor, the exact path is about 11%
-slower on this screen.** Spending memory is useful: 1.66x with residency and
-3.15x with fixed speculation. The approximate chunked head uses 43% less VRAM
-at roughly parity speed. These are exploratory point estimates; see the
-[report](docs/BOUNDED_RESEARCH_REPORT_2026-08-21.md) for the protocol,
-hypothesis failures, novelty assessment, and raw files.
+## Results
 
----
+Qwen3-14B (29.536 GB BF16), RTX 3080 Laptop GPU (8 GB), WSL2/CUDA, cold page
+cache, four prompt families × four forced greedy tokens:
 
-## How speculative decoding gets 3.15x here, in plain terms
+| Configuration | Peak VRAM | Seconds/token | vs AirLLM | Exactness |
+|---|---:|---:|---:|---|
+| **Afterimage + fixed speculation** | 3.813 GB | **9.150** | **3.15x** | Greedy-token exact at T=0 |
+| Hugging Face Accelerate GPU/CPU/disk | 3.800 GB | 14.318 | 2.02x | Same BF16 checkpoint and token IDs |
+| Afterimage exact + 4 GB residency | 3.934 GB | 17.360 | 1.66x | Reference-execution equivalent |
+| **AirLLM 3.1.0** | **1.583 GB** | 28.861 | 1.00x | Same BF16 checkpoint and token IDs |
+| Afterimage chunked output head | **0.901 GB** | 29.606 | 0.97x | **Approximate** BF16 matmul |
+| Afterimage exact minimum-memory | 1.723 GB | 32.514 | 0.89x | Reference-execution equivalent |
 
-Normally, producing **one word** means reading the **entire 20 GB model**
-off disk. That's the whole cost — one trip to the library for one word.
+The honest reading:
 
-Speculative decoding: a small, fast model (Qwen3-0.6B, resident in 1.3 GB
-of VRAM) guesses the next several words cheaply. The big model then reads
-itself **once** and checks *all* of those guesses in that single pass —
-same one trip, but now it can confirm many words instead of one.
+- At the exact low-memory floor, **AirLLM wins**.
+- At about 4 GB without speculation, **Hugging Face Accelerate wins**.
+- With fixed speculation, **Afterimage wins this suite**: 1.56x Accelerate and
+  3.15x AirLLM at 3.813 GB.
+- The 0.901 GB Afterimage point is not lossless execution. Blocking the output
+  head changes BF16 reduction order even when the final token happens to agree.
 
-The check is exact: each guess is accepted with probability
-`min(1, target_prob / draft_prob)`; the moment one is rejected, the correct
-word is sampled from what's left over. This is provably the same output
-distribution the big model would have produced alone — **the small model's
-guesses can only change speed, never correctness.** A bad guess costs one
-wasted word; it can never produce a wrong one.
+See [all H0-H15 hypotheses, controls, results, external comparisons, and the
+ranked conclusion](docs/ALL_HYPOTHESES_AND_BASELINES.md). The raw JSON is in
+[`results/`](results/).
 
-That's the whole mechanism. No new compression, no approximation of the
-big model's math — just fewer full-model reads per word actually spoken.
+## Why Afterimage
 
----
+- **Run the original checkpoint.** The measured 29.5 GB BF16 model runs on an
+  8 GB GPU without weight quantization.
+- **Choose the tradeoff explicitly.** Set a VRAM and optional host-RAM budget;
+  infeasible exact plans fail before generation instead of silently degrading.
+- **Store and stream fewer bytes.** The Qwen3-14B store is 20.328 GB, a 1.453x
+  lossless reduction from 29.536 GB.
+- **Use spare memory productively.** Residency eliminates repeated reads;
+  speculation amortizes one streamed target pass over several committed tokens.
+- **Keep contracts visible.** Exact, greedy-token-exact, distribution-exact,
+  and approximate modes are labeled in configuration and benchmark output.
+- **Use it as a service.** The package exposes one-shot generation, job control,
+  an OpenAI-compatible endpoint, a web UI, and machine-readable experiment runs.
 
-## Install & run
+## Quick start
 
 ```bash
-./install.sh          # Linux / WSL2 — detects GPU, sets up venv or launches server
-```
-```powershell
-.\install.ps1          # Windows (native CUDA)
+git clone https://github.com/iodriller/Afterimage.git
+cd Afterimage
+./start
 ```
 
-Or by hand:
-```bash
-pip install -e ".[gpu,server]"
-afterimage doctor
-afterimage compress Qwen/Qwen3-14B         # one-time, ~6 min on 16 cores
-afterimage run Qwen/Qwen3-14B "The capital of France is"
-afterimage serve                            # FastAPI + web UI on :8420
-```
+That's the whole thing, on macOS, Linux, and WSL2. First run sets everything
+up and runs a small model end to end so you can see it work. Every run after
+that just starts the server. On Windows, double-click `start.bat` instead (or
+run `.\install.ps1`).
+
+Once it's running:
 
 ```bash
-docker compose up      # needs the NVIDIA Container Toolkit
+afterimage compress Qwen/Qwen3-14B
+afterimage run Qwen/Qwen3-14B \
+  "Explain why the sky appears blue in two sentences." \
+  --vram-budget-gb 4 --stats
 ```
 
-`afterimage serve` exposes an OpenAI-compatible `/v1/chat/completions`,
-plus native job control (`/api/compress`, `/api/jobs/{id}`, pause/resume/
-cancel, `/api/plan` for budget feasibility) and a web UI at `/`. Its
-**Experiment Lab** runs the versioned H0-H11 candidates against named controls
-without changing the normal engine defaults.
+Prefer Docker?
 
----
+```bash
+docker compose up
+```
 
-## Controlling residency and speed
+Docker GPU execution requires the NVIDIA Container Toolkit.
+
+### Add speculative decoding
+
+```bash
+afterimage run Qwen/Qwen3-14B \
+  "Write a short Python function that checks whether a number is prime." \
+  --vram-budget-gb 4 \
+  --draft-model Qwen/Qwen3-0.6B \
+  --spec-k 8 --stats
+```
+
+At temperature zero, speculative decoding commits the same greedy tokens as the
+target. At nonzero temperature it samples from the target distribution; the
+draft changes efficiency, not the target distribution.
+
+## Python API
 
 ```python
-from afterimage.runtime.config import EngineConfig
-from afterimage.runtime.streaming_engine import StreamingLosslessModel, load_draft_model
+from pathlib import Path
 
-cfg = EngineConfig(
-    vram_budget_gb=2.0,          # the dial. Refused up front if infeasible, not approximated.
-    ram_budget_gb=8.0,           # pinned host RAM as a second, faster-than-disk tier
-    draft_mode="model",          # "none" | "model" | "self" -- speculative decoding
-    spec_k=8,                    # draft chain length
-    lm_head_slice_rows=0,        # >0 shrinks the VRAM floor ~1.4GB -- NOT lossless, see below
+from transformers import AutoTokenizer
+
+from afterimage.runtime.config import EngineConfig
+from afterimage.runtime.streaming_engine import (
+    StreamingLosslessModel,
+    load_draft_model,
 )
-sm = StreamingLosslessModel("Qwen/Qwen3-14B", store_dir, device="cuda", config=cfg)
+
+config = EngineConfig(
+    vram_budget_gb=4.0,
+    ram_budget_gb=8.0,
+    draft_mode="model",
+    spec_k=8,
+)
+
+model = StreamingLosslessModel(
+    "Qwen/Qwen3-14B",
+    store_dir=Path.home() / ".afterimage/stores/Qwen__Qwen3-14B",
+    device="cuda",
+    config=config,
+)
 draft = load_draft_model("Qwen/Qwen3-0.6B", device="cuda")
-seq, _policy = sm.generate_adaptive(input_ids, max_new_tokens=64, draft_model=draft)
+tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-14B")
+input_ids = tokenizer("Explain entropy in one paragraph.", return_tensors="pt").input_ids.cuda()
+tokens, policy = model.generate_adaptive(
+    input_ids,
+    max_new_tokens=64,
+    draft_model=draft,
+)
 ```
 
-Every weight is used once per token under plain streaming, so "importance"
-can't rank residency — what differs is **bus traffic avoided per byte of
-VRAM spent** (`compressed_bytes / uncompressed_bytes`). A poorly-compressing
-tensor costs the most in re-streaming, so it's the best candidate to keep
-resident. `vram_planner.py` fills VRAM, then RAM, greedily by this ranking.
+## Server
 
-`EngineConfig.is_lossless` is `False` whenever `quantize="q8"` or
-`lm_head_slice_rows > 0` is set, and `describe()` says so explicitly. No
-run using either may be reported as bit-exact.
+```bash
+pip install -e ".[server]"
+afterimage serve --host 127.0.0.1 --port 8420
+```
 
----
+The server exposes `/v1/chat/completions`, compression job controls,
+pause/resume/cancel, budget feasibility, runtime statistics, and the H0-H15
+Experiment Lab.
 
-## What's built
+## Research lab
 
-Lossless bf16 compression at 96% of the Shannon ceiling; GPU Huffman decode
-via a Triton kernel; three-tier VRAM/RAM/disk residency planning; row-gathered
-embeddings; a KV cache verified bit-exact; speculative decoding (small draft
-model and self-drafting, both via `generate_adaptive`); an optional chunked
-`lm_head` that removes the VRAM floor at the cost of bit-exactness; pause/
-resume/cancel job control; an OpenAI-compatible server; Docker + installers
-for NVIDIA, AMD (untested on real hardware), and CPU fallback.
+Research methods are opt-in configurations and never replace the stable runtime
+defaults automatically.
 
-The opt-in research layer adds event-DAG critical-path placement, published
-AdaEDL stopping plus a new storage-cost-aware rejection-hazard policy,
-feedback-controlled prefetch, baseline-guarded profile selection, certified
-greedy MIPS with a full fallback, exact per-tensor representation planning,
-and expert-local XOR reference artifacts. These are implemented hypotheses,
-not benchmark claims. See [docs/RESEARCH_METHODS.md](docs/RESEARCH_METHODS.md).
+```bash
+afterimage research experiments --json
+afterimage research test-plan h9-ram-overlay-head --json
+afterimage research pin-preflight --gigabytes 0.35 --json
+afterimage research profile-trace TRACE.json --out PROFILE.json
+afterimage research optimize-residency TRACE.json \
+  --manifest STORE/manifest.json --vram-budget-gb 4 --out PLAN.json
+```
 
-**Tried and correctly killed, not hidden:** self-drafting with an
-*untrained* model (0% acceptance), a live bandit tuning draft length
-(never beat a tuned constant), CPU/GPU split decode (passed its isolated
-throughput gate, then made the engine 0.52x once integrated). Full
-reasoning for each: [docs/RESULTS_LOG.md](docs/RESULTS_LOG.md).
+Current research summary:
 
----
+- H9 is the strongest positive mechanism screen, but only at 0.6B on this WSL2
+  host because the 14B head exceeds its pinned-memory ceiling.
+- H1 is the strongest positive live 14B candidate, at +1.61% versus control.
+- H6 predicts a 38.56% preparation reduction and now has a scalable 441-tensor
+  planner, but still needs held-out live execution.
+- The remaining candidates are below gate, action-identical, or contradicted.
 
-## What will never be claimed
+No H1-H15 candidate has L3 confirmatory superiority evidence. Fixed speculation
+is a stable core configuration, not one of the failed adaptive candidates.
 
-- No lossless bf16 ratio above ~1.51x — proven impossible, not a current
-  limitation.
-- No "lossless" label on any run using `quantize="q8"` or
-  `lm_head_slice_rows > 0`.
-- No speed or memory number that wasn't measured on real hardware with a
-  cold cache, on the same counter as whatever it's compared against.
-- No "faster than AirLLM" claim without stating whether VRAM was matched.
+## Documentation
 
----
-
-## Prior research (archived, not deleted)
-
-An earlier phase explored a different idea: caching a linear layer's
-*outputs* for previously-seen activation directions. Real math, 67 tests,
-correctly killed after a real-model measurement came in 250-450x above the
-success threshold. Code kept and marked archived in its own docstrings.
-Full history: [docs/archive/](docs/archive/).
-
----
-
-## Documents
-
-| | |
+| Document | Purpose |
 |---|---|
-| [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md) | **start here** — every method, next to AirLLM, with the honest verdict on each |
-| [docs/RESULTS_LOG.md](docs/RESULTS_LOG.md) | append-only ledger of every measured run, including regressions and corrections |
-| [docs/LITERATURE.md](docs/LITERATURE.md) | research survey — lossless codecs, MoE offloading, adaptive/RL-for-speculation |
-| [docs/RESEARCH_METHODS.md](docs/RESEARCH_METHODS.md) | **H0-H11** — hypotheses, prior-art boundary, configuration, tests, and kill gates |
-| [docs/NOVEL_METHODS_2026-08-21.md](docs/NOVEL_METHODS_2026-08-21.md) | **new methods** — RAM overlay, digital-twin CEM, tiny survival network, and bounded tests |
-| [docs/BOUNDED_RESEARCH_REPORT_2026-08-21.md](docs/BOUNDED_RESEARCH_REPORT_2026-08-21.md) | **current evidence** — diverse prompt results, H0-H8 verdicts, comparison, and novelty audit |
-| [docs/archive/](docs/archive/) | superseded planning docs and early results, kept for traceability |
+| [All hypotheses and baselines](docs/ALL_HYPOTHESES_AND_BASELINES.md) | **Controlling results table, rankings, AirLLM/Accelerate comparisons, novelty assessment** |
+| [Architecture](docs/ARCHITECTURE.md) | Runtime, storage, memory-tier, speculation, and evidence diagrams |
+| [Configuration](docs/CONFIGURATION.md) | Stable profiles and advanced flags |
+| [How it works](docs/HOW_IT_WORKS.md) | Implementation walkthrough and AirLLM contrast |
+| [Research methods](docs/RESEARCH_METHODS.md) | H0-H15 definitions, controls, metrics, and kill gates |
+| [Hypothesis lineage](docs/HYPOTHESIS_LINEAGE.md) | Literature source and novelty boundary for each idea |
+| [Results log](docs/RESULTS_LOG.md) | Chronological corrections and raw-run interpretation |
+| [Contributing](CONTRIBUTING.md) | Development and verification workflow |
 
----
+## Status and limits
 
-## Name
+- Benchmarks are single-machine research evidence, not universal performance
+  claims. Effects below about 10% should be treated cautiously without paired
+  confirmation.
+- Exact low-VRAM generation is slow: a streamed 14B target reads or reconstructs
+  most weights for every target pass.
+- WSL2 limits available pinned system memory. H9's full 14B test needs native
+  Linux or another host that can genuinely pin at least 1.6 GB.
+- When the full model fits in GPU memory, use an in-memory engine such as vLLM,
+  TensorRT-LLM, or Transformers instead.
+- macOS runs CPU-only today; there's no CUDA, so the GPU decode kernels don't
+  run. A streamed 14B model on CPU is slow enough to be a demo, not a daily
+  tool. Apple Silicon's unified memory often means the model you want fits
+  directly anyway, which is the case Afterimage doesn't need to solve.
 
-"Afterimage" — what persists after the light has passed through.
+Apache-2.0. Contributions and reproducible counter-results are welcome.

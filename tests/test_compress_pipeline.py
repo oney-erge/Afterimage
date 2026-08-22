@@ -12,6 +12,8 @@ import pytest
 import torch
 from safetensors.torch import save_file
 
+pytest.importorskip("transformers")
+
 from afterimage.runtime.binstore import BinaryWeightReader
 from afterimage.runtime.compressed_store import CompressedLayer, decompress_layer_cpu_reference
 from afterimage.runtime.config import EngineConfig

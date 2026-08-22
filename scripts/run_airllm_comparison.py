@@ -25,8 +25,8 @@ def log(m: str) -> None:
     print(m, flush=True)
 
 
-# Measured on this rig -- see docs/EXECUTION_PLAN.md Stage A.4 and
-# docs/LOSSLESS_ENGINE.md Phase A. Not vendor specs.
+# Measured on this rig -- see docs/archive/EXECUTION_PLAN.md Stage A.4 and
+# docs/archive/LOSSLESS_ENGINE.md Phase A. Not vendor specs.
 NVME_GBPS = 2.0        # sustained O_DIRECT, 24 GB file, WSL2 ext4
 RAM_GBPS = 20.0        # host RAM over PCIe
 DECODE_GBPS = 16.87    # measured Triton v2 kernel, bf16 output

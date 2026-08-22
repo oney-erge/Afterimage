@@ -718,3 +718,125 @@ H6 lacked alternative artifacts; H7 was inapplicable to this dense checkpoint.
 
 Full analysis, literature boundary, caveats, and raw-file links:
 [BOUNDED_RESEARCH_REPORT_2026-08-21.md](BOUNDED_RESEARCH_REPORT_2026-08-21.md).
+
+---
+
+## H9-H15 exploratory screens (2026-08-21)
+
+One-prompt-class mechanism screens, not the five-repeat confirmatory protocol.
+Full narrative, literature boundary and gates:
+[NOVEL_METHODS_2026-08-21.md](NOVEL_METHODS_2026-08-21.md) (H9-H13),
+[RESEARCH_METHODS.md](RESEARCH_METHODS.md#h14-h15----storage-layout-as-a-residency-action)
+(H14-H15), and current evidence-level interpretation:
+[REGULATED_TEST_PLAN_2026-08-21.md](REGULATED_TEST_PLAN_2026-08-21.md).
+
+| ID | Method | Measured | Gate | Verdict |
+|---|---|---:|---:|---|
+| H9 | Pageable RAM overlay, 2 tokens | +1.9% throughput | 10% | below gate; pinning blocked by a 64 MB host memlock limit, so this is pageable RAM, not the intended pinned treatment |
+| H10 | Replay-CEM, 1 token | +2.1% | 8% | below gate; replay predicted only +0.6% over its best seeded control |
+| H11 | Neural utility, 8 tokens (screen1) | +4.4% direction | 8% | inconclusive: identical target sweeps and accepted-token counts in both arms |
+| H11 | Neural utility, 16 tokens (screen3) | +9.5% direction | 8% | failed L1: **zero stop decisions** recorded; timing cannot be credited to the network |
+| H12 | Bayesian probit prefetch | +2.23% paired median, 90% CI [-6.26%, +7.50%] | 5% | below gate; exposed wait was higher than fixed depth |
+| H13 | Event-interference QUBO residency | run-to-run only | 5% | `optimized_over_control=0`; the frozen plan was byte-identical to its `profiled_knapsack` seed |
+| H14 | Coalesced contiguous storage reads | **-27.7%** | 5% | mechanism gate passed (read calls -89%, 0% byte amplification); performance gate failed hard -- stop for futility |
+| H15 | Physical-extent QUBO residency | not measured | 2% (pre-GPU) | blocked at the mechanism gate: `treatment_diverged=false` |
+
+H9's 1.056 GB/token disk-read reduction and stable token IDs were real; the
+gate failure is an environment limit (see H9's own row), not a mechanism
+failure -- rerun only on a host that can actually pin ≥1.6 GB.
+
+H13 and H15 share one root cause, found and fixed after these screens: both
+QUBO planners' `repair()` step backfilled freed VRAM budget by
+`marginal(idx)/size(idx)` -- exactly `critical_path`'s and
+`profiled_knapsack`'s own ranking function. Every annealed candidate was
+therefore repaired back onto the deterministic control before scoring,
+regardless of what the anneal explored, so the search could never diverge
+from its own seed. Fixed in `afterimage/runtime/replay_planner.py` (`repair()`
+is now eviction-only); H13 and H15 need a fresh calibration + screen before
+either can be judged. Full derivation:
+[HYPOTHESIS_LINEAGE.md](HYPOTHESIS_LINEAGE.md).
+
+H11's "zero stop decisions" is not obviously a bug in the same sense: solving
+`should_stop`'s break-even condition against the state file's own measured
+costs (`draft_token_s≈0.028`, `target_sweep_s≈13.7`) gives a required
+survival probability under 2%, because a streamed target sweep costs roughly
+500x one draft step. Under that ratio, "keep drafting" is close to the
+economically correct answer regardless of confidence unless truly low-
+survival positions are actually sampled -- which two short calibration
+prompts may simply not have produced. `NeuralUtilityPolicy` now exposes
+`last_required_survival` / `min_required_survival` / `max_required_survival`
+in its state so this is diagnosable directly from a future run instead of
+looking like an unexplained null result.
+
+Raw files: `results/2026-08-21_h9_ram_overlay_*.json`,
+`results/2026-08-21_h10_replay_cem_*.json`,
+`results/2026-08-21_h11_neural_utility_*.json`,
+`results/2026-08-21_h12_h13_qwen3-14b_rtx3080_interrupted1.json`,
+`results/2026-08-21_h13_qubo_qwen3-14b_rtx3080_screen2.json`,
+`results/2026-08-21_h14_coalesced_storage_*.json`,
+`results/2026-08-21_h15_extent_qubo_qwen3-14b_rtx3080_gate1.json`.
+
+### Regulated/post-repair follow-up (controlling evidence)
+
+The preregistered follow-ups above were subsequently executed. This entry is
+append-only and supersedes the earlier forward-looking statements without
+rewriting their chronology.
+
+- **H11:** reached 200 training observations (Brier 0.115; 88% positive
+  labels), then stopped 0/47 times on two held-out regimes. The frozen policy
+  failed its 10% action-divergence gate; no latency comparison was run.
+- **H12:** two randomized four-family blocks, four tokens per cell, completed
+  in 36.8 minutes with a same-session AirLLM anchor. Bayesian prefetch was
+  5.89% slower paired (90% interval [-8.01%, +5.55%]), won 3/8 pairs, and
+  increased exposed wait 28.2%. Exact tokens and 780 posterior observations
+  show this is a performance/mechanism failure, not missing calibration.
+- **H13/H15 repair correction:** both planners were rerun from fresh traces
+  after repair became eviction-only. H13 evaluated 730 candidates; H15
+  evaluated 369 over 81 physical extents. Both still returned the control with
+  0% gain and 100% overlap, so the null result survives the repair fix and GPU
+  timing remains blocked.
+- **H14:** a second implementation removed constituent-array copies through
+  writable shared extent buffers. Exactness and the 89.1% call reduction held,
+  but paired performance still regressed 27.7%; the current approach is killed.
+- **H9:** a fail-closed preflight measured 64 MiB soft/hard memlock versus the
+  required 1.6 GB and skipped allocation. Pageable fallback is no longer
+  accepted as H9 evidence.
+
+Concise tables and raw links:
+[`FINAL_TEST_RESULTS_2026-08-21.md`](FINAL_TEST_RESULTS_2026-08-21.md).
+
+## 2026-08-22 final reevaluation and external baseline
+
+This append-only entry supersedes the H9 environment conclusion and fills the
+offline/artifact gaps without rewriting the earlier measurements.
+
+- **H9:** the shell memlock limit was raised to unlimited with a systemd scope.
+  CUDA-pinned allocations succeeded through 1.0 GB and failed above that, which
+  is consistent with NVIDIA's documented WSL2 pinned-memory limitation. The
+  intended full decoded-head treatment therefore ran on Qwen3-0.6B, whose
+  0.311 GB head fits: 1.279 versus 1.809 s/token, +41.4% throughput, 0.419 GB
+  matched peak VRAM, identical token IDs, and no pageable fallback. The 14B
+  scale question remains open because its head is 1.556 GB.
+- **H0/H3:** the 2.56% oracle gate was reproduced from the fixed/hazard result
+  rows. Four-fold held-out H3 replay reached 97.50% of oracle but chose exactly
+  the baseline reward, so it ran successfully and added 0%.
+- **H6:** the first real 441-tensor DP revealed a quadratic state-pruning and
+  path-copy bottleneck; both were repaired. A zero transfer field in the event
+  trace then exposed a cost-model error. After flooring RAM copies with a real
+  6.669 GB/s pinned H2D benchmark, the exact mixed plan predicts 15.011 versus
+  24.421 seconds of preparation (38.56% lower), at 3.959 GB VRAM and 7.986 GB
+  RAM. This passes only the offline prediction gate.
+- **H7:** eight real Qwen1.5-MoE-A2.7B expert tensors round-tripped exactly.
+  Forced XOR reference storage was 2.24% larger than independent zlib; the safe
+  chooser fell back and saved 0%.
+- **H8:** two real held-out replay/timing pairs produced 11.87% MAPE and -0.80
+  rank correlation. The selected policy improved only 0.33%, so the simulator
+  gate failed.
+- **Hugging Face Accelerate:** the 1.8 GB automatic map used no CUDA at all and
+  was preserved only as an excluded CPU diagnostic. At a 4.0 GB allowance the
+  map used 2 CUDA, 9 CPU, and 33 disk modules; the four-family BF16 result was
+  14.318 s/token at 3.800 GB with the same token IDs. It beats Afterimage
+  residency alone, while Afterimage fixed speculation remains 1.56x faster.
+
+Controlling report:
+[`ALL_HYPOTHESES_AND_BASELINES.md`](ALL_HYPOTHESES_AND_BASELINES.md).

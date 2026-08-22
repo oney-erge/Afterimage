@@ -1,5 +1,9 @@
 # Bounded research report — 21 August 2026
 
+> Historical first screen. The current controlling interpretation, including
+> later H0/H3/H6/H7/H8/H9 runs and the Accelerate baseline, is
+> [ALL_HYPOTHESES_AND_BASELINES.md](ALL_HYPOTHESES_AND_BASELINES.md).
+
 ## Outcome
 
 The richer benchmark changes the headline. On four held-out prompt types,
@@ -23,7 +27,10 @@ as a configurable falsification platform, but implementation is not novelty.
 - Hardware: RTX 3080 Laptop GPU, 8 GB; WSL2; PyTorch 2.6.0+cu124;
   Transformers 5.12.1; AirLLM 3.1.0.
 - Four evaluation prompts: factual answer, arithmetic, Python completion, and
-  long-context retrieval. Two disjoint prompts were reserved for calibration.
+  long-context retrieval. Two disjoint prompts were reserved for calibration
+  (`prompt_suite.py` version `bounded-chat-v1`, in effect for this run only;
+  it was later expanded to eight calibration prompts as `bounded-chat-v2` for
+  the H9-H15 screens -- the four evaluation prompts are unchanged).
 - Four forced greedy tokens per evaluation prompt. Linux page cache was dropped
   successfully before every timed cell. Every system used the same
   `torch.cuda.max_memory_allocated()` counter.
@@ -145,7 +152,11 @@ Do not invest next in RL. H0 found only 2.56% oracle headroom, and both feedback
 controllers regressed. The surprising full-head result suggests a better new
 hypothesis:
 
-> **H9 — layout-aware residency:** selecting contiguous on-disk segments and
+> **Layout-aware residency (proposed here as "H9" at the time of writing --
+> that slot was subsequently taken by the liveness-guided RAM overlay
+> hypothesis; the layout idea itself shipped as H14/H15. Read this block as
+> the forward-looking proposal that motivated H14/H15, not as a description
+> of the current H9):** selecting contiguous on-disk segments and
 > large execution phases, rather than independent tensors, reduces request
 > fragmentation and preserves sequential reads; at the same VRAM it beats both
 > traffic-density and noisy per-tensor critical-path placement.
@@ -156,6 +167,13 @@ should add `pread` count, request-size distribution, physical disk bytes, queue
 depth, and segment boundaries; compare fixed tensor, full-head, segment-knapsack,
 and segment+critical-path profiles at 2.68 and 4.0 GB; and require ≥8% held-out
 gain with identical tokens. It remains a hypothesis until measured.
+
+**Update, measured since:** H14 (coalesced contiguous storage reads) tested
+exactly this mechanism and found the opposite of what this section predicted
+-- 27.7% *slower*, because a large contiguous read serialises against decode
+instead of overlapping with it. See
+[RESEARCH_METHODS.md](RESEARCH_METHODS.md#h14-h15----storage-layout-as-a-residency-action)
+and [HYPOTHESIS_LINEAGE.md](HYPOTHESIS_LINEAGE.md).
 
 A second, higher-risk direction is fused decode-and-matmul over the exact
 compressed representation. Minimum-memory Afterimage loses to AirLLM because

@@ -12,28 +12,46 @@ dependencies = [
     "huggingface_hub>=0.20",
 ]
 
+[project.urls]
+Repository = "https://github.com/iodriller/Afterimage"
+Issues = "https://github.com/iodriller/Afterimage/issues"
+
 [project.optional-dependencies]
 gpu = ["torch>=2.2", "triton>=2.2"]
 server = ["fastapi>=0.110", "uvicorn[standard]>=0.29", "pydantic>=2.0", "websockets>=12.0"]
-bench = ["airllm"]
+bench = ["airllm", "accelerate>=1.0"]
 # Only needed for EngineConfig(cpu_decode_fraction=...) -- see its docstring
 # and docs/RESULTS_LOG.md before enabling it; currently measured to make
 # wall time flat-to-worse on the real 14B despite a JIT-compiled decoder
 # clearing its own isolated throughput gate.
 cpu_decode = ["numba>=0.58"]
-dev = ["pytest>=8.0", "pytest-benchmark>=4.0", "httpx>=0.27"]
+dev = ["pytest>=8.0", "pytest-benchmark>=4.0", "httpx>=0.27", "ruff>=0.6"]
 
 [project.scripts]
 afterimage = "afterimage.cli:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "--strict-markers -m 'not archive'"
+markers = [
+    "archive: Phase-0 subspace-activation-cache branch, killed per its own pre-registered gate (docs/archive/README.md); excluded from the default run",
+]
 
 [tool.setuptools.packages.find]
 include = ["afterimage*"]
 
 [tool.setuptools.package-data]
 "afterimage.server" = ["static/*"]
+afterimage = ["py.typed"]
+
+[tool.ruff]
+line-length = 92
+target-version = "py310"
+
+[tool.ruff.lint]
+# Starting narrow and unopinionated: unused imports/names and obvious bugs,
+# not a full style rewrite of an existing 15k-line codebase in one pass.
+select = ["F", "E9"]
 
 [build-system]
 requires = ["setuptools>=68"]

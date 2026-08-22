@@ -28,7 +28,6 @@ import copy
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 from ..testing.toy_lm import ToyLM
 

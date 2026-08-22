@@ -1,0 +1,9 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "Afterimage: Lossless Weight-Compressed Streaming Inference"
+type: software
+authors:
+  - alias: iodriller
+url: "https://github.com/iodriller/Afterimage"
+repository-code: "https://github.com/iodriller/Afterimage"
+license: Apache-2.0

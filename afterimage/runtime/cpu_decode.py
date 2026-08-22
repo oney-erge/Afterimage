@@ -2,8 +2,10 @@
 
 STATUS: this is NOT on the GPU inference path, and deliberately so.
 
-It was built to test docs/PROPOSAL.md H2 -- splitting entropy decode across
-CPU and GPU, on the reasoning that decode (~13 s/token) and disk I/O
+It was built to test docs/archive/PROPOSAL.md's own H2 (unrelated to the
+current H2 hazard-cost stopping hypothesis in docs/RESEARCH_METHODS.md) --
+splitting entropy decode across CPU and GPU, on the reasoning that decode
+(~13 s/token) and disk I/O
 (~14 s/token) were co-bottlenecks while 16 CPU cores sat idle. The isolated
 throughput gate PASSED clearly: the numba path below decodes a real 14B
 tensor at 1.33 GB/s across 16 threads, matching this engine's own in-situ
@@ -94,10 +96,11 @@ if _HAS_NUMBA:
 
 def decode_chunks_numba(enc: ChunkedEncoded, chunk_lo: int = 0,
                         chunk_hi: int | None = None) -> np.ndarray:
-    """The compiled fallback docs/PROPOSAL.md's H2 anticipated needing if the
-    numpy-vectorized path ("released into a C extension" per that doc) came
-    up short. Requires the optional `numba` dependency; raises clearly if
-    it's absent rather than silently falling back to a slower path."""
+    """The compiled fallback docs/archive/PROPOSAL.md's own H2 anticipated
+    needing if the numpy-vectorized path ("released into a C extension" per
+    that doc) came up short. Requires the optional `numba` dependency;
+    raises clearly if it's absent rather than silently falling back to a
+    slower path."""
     if not _HAS_NUMBA:
         raise RuntimeError("decode_chunks_numba requires the 'numba' package")
     chunk_hi = enc.n_chunks if chunk_hi is None else chunk_hi

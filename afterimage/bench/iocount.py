@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import dataclasses
 
-from ..runtime.tiers import Tier, TieredStore
+from ..runtime.tiers import TieredStore
 
 
 @dataclasses.dataclass

@@ -9,6 +9,10 @@ from afterimage.probe.spectra import (
 from afterimage.testing.toy_model import full_rank_inputs, narrow_session_inputs
 
 
+
+import pytest
+
+pytestmark = pytest.mark.archive  # Phase-0 subspace-activation-cache branch, killed -- see docs/archive/README.md
 def test_variance_and_functional_curves_agree_for_clean_low_rank_signal():
     """When there is no rogue-dimension effect (the linear map cares about
     the same directions that carry the variance), variance and functional
