@@ -13,6 +13,10 @@ The reevaluation on 2026-08-22:
 - kept fixed speculation's 3.15x AirLLM result separate from the H2/H11
   adaptive candidates that failed to beat it.
 
+The same controlling report now also includes H16-H18. H16/H17 regressed;
+H18 passed exact KV-rollback mechanics but stopped at its randomized L2
+futility gate. This snapshot remains only a pointer.
+
 Read the current controlling report:
 
 ## [All hypotheses, baselines, results, and ranking](ALL_HYPOTHESES_AND_BASELINES.md)

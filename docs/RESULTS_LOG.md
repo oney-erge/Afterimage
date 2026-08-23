@@ -10,6 +10,22 @@ and didn't notice," which has happened twice before in this project
 Baseline for comparison is always the most recent row *before* the change
 being evaluated, not row 1.
 
+## 2026-08-22 cross-family and scale campaign
+
+The complete interpretation, protocol, model revisions, invalid-run handling,
+and raw-artifact links are in
+[CROSS_MODEL_BENCHMARK_2026-08-22.md](CROSS_MODEL_BENCHMARK_2026-08-22.md).
+
+| Model | Best speed | Best exact low-VRAM point | Store ratio | Main conclusion |
+|---|---|---|---:|---|
+| Phi-4 Mini 3.8B | HF Accelerate, 1.327 s/tok at 3.770 GB | AirLLM, 7.984 s/tok at 1.458 GB | 1.485x | Resident execution dominates; Afterimage CEM is 2.84x AirLLM but 2.12x slower than HF. |
+| Qwen3-14B | Afterimage fixed speculation, 9.150 s/tok at 3.813 GB | AirLLM, 28.861 s/tok at 1.583 GB | 1.453x | Speculation is the only overall Afterimage speed win. |
+| Mistral Small 24B | HF Accelerate, 25.146 s/tok at 3.821 GB | AirLLM, 45.737 s/tok at 1.367 GB | 1.483x | Afterimage MIPS is 1.66x AirLLM at 2.915 GB, but trails HF by 9.52%. |
+
+Mistral paired scale screens: H12 −3.27% with failed mechanism; H14
+−26.08% despite 83.64% fewer reads; H17 −26.42% despite 54.22% fewer reads.
+All paired token IDs were exact. No candidate advances.
+
 ---
 
 ## Baseline (docs/PROPOSAL.md written against this)
@@ -840,3 +856,26 @@ offline/artifact gaps without rewriting the earlier measurements.
 
 Controlling report:
 [`ALL_HYPOTHESES_AND_BASELINES.md`](ALL_HYPOTHESES_AND_BASELINES.md).
+
+## 2026-08-22 H16-H18 interaction tests
+
+The three post-comparison hypotheses were implemented as separate profiles;
+none changed the stable fixed-speculation control.
+
+- **H16:** the critical-path/speculative resident action differed from control
+  at exactly the same 3.814 GB peak, but only 1/4 cells won. Candidate 8.836
+  versus control 8.350 s/token; paired median throughput effect -2.75%.
+- **H17:** tensor-scoped 8 MiB micro-extents cut calls 57.05% with 0.54%
+  physical-byte amplification and identical tokens. Candidate 19.747 versus
+  control 16.252 s/token; paired median -18.37%, 0/4 wins. The Python shared
+  buffer/view path remains the wrong level for the next I/O redesign.
+- **H18 L1:** exact KV rollback/crop was exercised and initially pointed +3.70%
+  by the paired median, below its 5% gate.
+- **H18 L2:** two randomized blocks × four families × eight tokens exercised
+  16 crops and 326 reused prefix tokens. Tokens matched and peak VRAM was
+  3.834 versus 3.815 GB. The paired median effect was -0.59%, 90% interval
+  [-4.62%, +1.09%], with 3/8 wins; the result stops for futility.
+
+Raw immutable results:
+[`H16/H17/H18 L1`](../results/2026-08-22_h16_h17_h18_qwen3-14b_rtx3080_l1.json),
+[`H18 L2`](../results/2026-08-22_h18_rollback_cached_spec_qwen3-14b_rtx3080_l2.json).

@@ -13,7 +13,7 @@ sources, not a priority or publication claim. H14-H15 (storage-extent
 residency) are documented in
 [RESEARCH_METHODS.md](RESEARCH_METHODS.md#h14-h15----storage-layout-as-a-residency-action)
 rather than here. [HYPOTHESIS_LINEAGE.md](HYPOTHESIS_LINEAGE.md) is the single
-table of every hypothesis's source, adaptation and current verdict, H0-H15.
+table of every hypothesis's source, adaptation and current verdict, H0-H18.
 
 ## Current exploratory screens
 

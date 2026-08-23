@@ -1,10 +1,37 @@
 import json
+import types
 
 from afterimage.cli import (
-    build_parser, cmd_experiments, cmd_optimize_residency, cmd_profile_trace,
-    cmd_test_plan,
+    _estimate_download_bytes, build_parser, cmd_experiments,
+    cmd_optimize_residency, cmd_profile_trace, cmd_test_plan,
 )
 from afterimage.runtime.critical_path import CriticalPathProfile, TraceRecorder
+
+
+def test_download_estimate_uses_transformers_index_not_duplicate_export(
+        tmp_path, monkeypatch):
+    index_path = tmp_path / "model.safetensors.index.json"
+    index_path.write_text(json.dumps({"weight_map": {
+        "a": "model-00001-of-00002.safetensors",
+        "b": "model-00002-of-00002.safetensors",
+    }}), encoding="utf-8")
+    siblings = [
+        types.SimpleNamespace(rfilename="model.safetensors.index.json", size=100),
+        types.SimpleNamespace(
+            rfilename="model-00001-of-00002.safetensors", size=11),
+        types.SimpleNamespace(
+            rfilename="model-00002-of-00002.safetensors", size=13),
+        types.SimpleNamespace(rfilename="consolidated.safetensors", size=24),
+    ]
+    monkeypatch.setattr(
+        "huggingface_hub.HfApi.model_info",
+        lambda self, model_id, files_metadata: types.SimpleNamespace(
+            siblings=siblings))
+    monkeypatch.setattr(
+        "huggingface_hub.hf_hub_download",
+        lambda model_id, filename: str(index_path))
+
+    assert _estimate_download_bytes("fake/duplicated") == 24
 
 
 def test_research_cli_parses_new_commands():
@@ -49,7 +76,7 @@ def test_profile_trace_cli_builds_profile(tmp_path):
 def test_experiments_cli_emits_machine_readable_registry(capsys):
     args = build_parser().parse_args(["research", "experiments", "--json"])
     assert args.func(args) == 0
-    assert len(json.loads(capsys.readouterr().out)["hypotheses"]) == 16
+    assert len(json.loads(capsys.readouterr().out)["hypotheses"]) == 19
 
 
 def test_test_plan_cli_emits_hypothesis_specific_stages(capsys):

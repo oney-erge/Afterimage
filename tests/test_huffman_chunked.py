@@ -17,6 +17,15 @@ def test_chunked_roundtrip_matches_original_exactly():
     assert np.array_equal(decoded, exponents.numpy())
 
 
+def test_chunked_roundtrip_accepts_uint8_without_int64_staging():
+    torch.manual_seed(10)
+    exponents = torch.randint(0, 256, (4099,), dtype=torch.uint8)
+    enc = encode_chunked(exponents, chunk_size=127, max_bits=16)
+    decoded = decode_chunked_cpu_reference(enc)
+
+    assert np.array_equal(decoded, exponents.numpy())
+
+
 def test_chunked_roundtrip_when_chunk_size_does_not_divide_evenly():
     torch.manual_seed(1)
     exponents = torch.randint(100, 140, (10007,))  # deliberately not a multiple of chunk_size

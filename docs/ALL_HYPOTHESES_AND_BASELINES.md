@@ -3,10 +3,11 @@
 **Last reevaluated:** 2026-08-22
 **Primary hardware:** NVIDIA RTX 3080 Laptop GPU, 8 GB
 **Primary model:** Qwen3-14B, original BF16 weights
+**Cross-family checks:** Phi-4 Mini 3.8B and Mistral Small 24B
 **Scope:** cold page cache, forced greedy decoding, four prompt families unless a row says otherwise
 
 This is the controlling results document. It covers every registered hypothesis
-H0-H15, the stable Afterimage configurations, AirLLM 3.1.0, and Hugging Face
+H0-H18, the stable Afterimage configurations, AirLLM 3.1.0, and Hugging Face
 Accelerate disk offload. A result is not called “failed” merely because an
 upstream gate prevented a meaningless timing comparison.
 
@@ -17,11 +18,18 @@ runs at 0.89x AirLLM. At about 4 GB, exact residency reaches 1.66x AirLLM but is
 0.82x the speed of Hugging Face Accelerate's 3.80 GB hybrid. Afterimage's best
 configuration is fixed speculative decoding: **9.150 s/token, 3.15x AirLLM and
 1.56x Accelerate at 3.813 GB**, with identical greedy token IDs in the tested
-suite. Of the new H0-H15 ideas, H9 is the strongest measured lead (+41.4%
+suite. Of the H0-H18 ideas, H9 is the strongest measured lead (+41.4%
 throughput at matched VRAM on a smaller model), H1 is the strongest positive
 14B live result (+1.61%), and H6 has the largest predicted 14B upside (38.56%)
-but still lacks a held-out live execution. No H1-H15 candidate has L3
-confirmatory superiority evidence.
+but still lacks a held-out live execution. H16/H17 regressed; H18's exact KV
+rollback worked but stopped for L2 futility at -0.59% paired throughput. No
+H1-H18 candidate has L3 confirmatory superiority evidence.
+
+The subsequent [cross-family and scale campaign](CROSS_MODEL_BENCHMARK_2026-08-22.md)
+does not change the Qwen ranking. It shows where it transfers: the lossless
+store stays at 1.45–1.49x across three families, H12/H14/H17 remain negative,
+and certified MIPS becomes the strongest 24B Afterimage point (1.66x AirLLM,
+9.52% behind Accelerate). AirLLM still wins the exact minimum-VRAM boundary.
 
 ## Stable systems and external baselines
 
@@ -43,7 +51,39 @@ Qwen3-14B's full BF16 output head is 1.556 GB before transient scratch. Computin
 the head in blocks reaches 0.901 GB, but changes BF16 matmul rounding. That is
 why “just match lower VRAM” is not a missing flag.
 
-## One large H0-H15 comparison table
+## Source and lineage for every hypothesis
+
+“Adapted” means the cited mechanism is established but its use in this exact
+compressed/offloaded path is Afterimage's composition. “Afterimage formulation”
+means no cited paper is being credited with the specific formulation. These are
+closest-prior links, not novelty or priority claims.
+
+| ID | Closest paper / repository source | What was taken, and what was not |
+|---|---|---|
+| H0 | [BanditSpec](https://arxiv.org/abs/2505.15141) | Borrowed the oracle-best-hyperparameter comparison; Afterimage uses it as a stop-before-RL research gate. |
+| H1 | [PyTorch Holistic Trace Analysis critical path](https://hta.readthedocs.io/en/latest/source/features/lightweight_critical_path_analysis.html) | Borrowed event-DAG critical-path analysis; counterfactual tensor-residency value is the Afterimage adaptation. |
+| H2 | [SpecDec++](https://arxiv.org/abs/2405.19715), [AdaEDL](https://arxiv.org/abs/2410.18351) | Borrowed threshold/acceptance-aware stopping; added censored survival and the measured cost of a streamed target sweep. |
+| H3 | [Conservative contextual linear bandits](https://arxiv.org/abs/1611.06426), [BanditSpec](https://arxiv.org/abs/2505.15141) | Borrowed safe contextual selection; actions are complete versioned Afterimage profiles. |
+| H4 | [Pythia](https://arxiv.org/abs/2109.12021) | Borrowed feedback-aware prefetch control; PI/MPC control of compressed-layer lookahead is the transfer. |
+| H5 | [Exact tree-based MIPS](https://arxiv.org/abs/1202.6101) | Borrowed branch-and-bound MIPS; floating-point certificates plus an exact full-head fallback are Afterimage-specific. |
+| H6 | [NicePIM](https://arxiv.org/abs/2305.19041) | Constrained per-component physical design is precedent; the multiple-choice exact-representation DP is an **Afterimage formulation**, not NicePIM's algorithm. |
+| H7 | [BitX / ZipLLM](https://arxiv.org/abs/2505.06252) | XOR-reference coding is prior work; expert-to-expert coding inside one MoE checkpoint is the transfer. |
+| H8 | [Digital-twin-assisted RL](https://arxiv.org/abs/2208.01781), [Sibyl](https://arxiv.org/abs/2205.07394) | Borrowed simulated/shadow policy evaluation for system actions; complete exact inference profiles are the Afterimage action space. |
+| H9 | [SuperNeurons](https://web.eecs.umich.edu/~mosharaf/Readings/SuperNeurons.pdf), [FlexGen](https://arxiv.org/abs/2303.06865) | Borrowed liveness reuse and tiered LLM placement; the late-live exact pinned output-head overlay is the candidate composition. |
+| H10 | [Cross-Entropy Method](https://doi.org/10.1023/A:1010091220143) | CEM is prior work; searching complete resident sets in an exact measured event-DAG replay is the adaptation. |
+| H11 | [Discrete-time neural survival](https://arxiv.org/abs/1805.00917), [SpecDec++](https://arxiv.org/abs/2405.19715) | Borrowed survival modelling and learned speculative stopping; the tiny cost-aware pooled model is the transfer. |
+| H12 | [ALERT](https://www.usenix.org/conference/atc20/presentation/wan), [probabilistic memory-latency regulation](https://drops.dagstuhl.de/opus/volltexte/2023/18033/pdf/LIPIcs-ECRTS-2023-4.pdf) | Borrowed chance-constrained timing; the posterior/probit prefetch-depth controller is the adaptation. |
+| H13 | [QUBO placement with classical annealing](https://arxiv.org/abs/2009.00140) | Borrowed the QUBO/annealing form; event-DAG counterfactual interaction coefficients are Afterimage's formulation. |
+| H14 | [Shriver et al. on prefetching, request cost, and overlap](https://www.usenix.org/legacy/publications/library/proceedings/usenix99/full_papers/shriver/shriver_html/index.html) | Borrowed contiguous-request amortization; the `weights.bin` layer-wide implementation is local and was contradicted. |
+| H15 | [QUBO placement](https://arxiv.org/abs/2009.00140), [H14 storage model](https://www.usenix.org/legacy/publications/library/proceedings/usenix99/full_papers/shriver/shriver_html/index.html) | Combines prior QUBO search with physical extents; the extent variable and exact repair/replay are local. |
+| H16 | [SpecExec](https://arxiv.org/abs/2406.02532), [HTA critical path](https://hta.readthedocs.io/en/latest/source/features/lightweight_critical_path_analysis.html) | Both ingredients are prior work; their frozen same-budget composition is Afterimage's test, not copied from another repository. |
+| H17 | [Shriver et al.](https://www.usenix.org/legacy/publications/library/proceedings/usenix99/full_papers/shriver/shriver_html/index.html) | Request batching/overlap is prior work; making the tensor the hard coalescing boundary is Afterimage's H14 repair. |
+| H18 | [Transformers `DynamicCache.crop`](https://github.com/huggingface/transformers/blob/main/src/transformers/cache_utils.py), [SpecInfer](https://arxiv.org/abs/2305.09781) | The runtime uses Transformers' exact cache-crop primitive and established speculative KV reuse; the offloaded-target rollback integration is local. |
+
+The fuller correction notes—including the earlier NicePIM over-attribution—are
+in [HYPOTHESIS_LINEAGE.md](HYPOTHESIS_LINEAGE.md).
+
+## One large H0-H18 comparison table
 
 “vs Air/HF” is only populated for a real end-to-end generation timing. Offline
 or mechanism rows are compared with their registered control instead of being
@@ -58,15 +98,18 @@ forced into a meaningless external speed ratio.
 | **5** | **H0** | Joint semantic/system oracle gap | Per-context oracle vs best global policy | L1 replay of fixed vs hazard speculation across four held-out families | 0.13537 tok/s oracle | 0.13199 tok/s global | **+2.56% ceiling** | N/A | N/A | Diagnostic; no memory change | Gate did its job: below 12%, so contextual/RL control has too little upside. |
 | **6** | **H3** | Baseline-guarded contextual bandit | LinUCB selection vs fixed global profile | Four-fold leave-one-family-out replay, run despite H0 | 0.52794 total reward | 0.52794 total reward | **0.00%**; 97.50% of oracle | N/A | N/A | Offline controller; exact profiles | Controller ran successfully but learned the baseline. Passes oracle-fidelity metric only because the oracle gap is tiny. Do not deploy. |
 | **7** | **H8** | Shadow model-based RL controller | Digital-twin choice vs contextual baseline | L1 shadow replay on two real held-out CEM/control timing pairs | 0.10932 reward | 0.10897 reward | **+0.33%**, but MAPE 11.87%, rank correlation -0.80 | N/A | N/A | Offline only | **Calibration gate failed** (requires MAPE ≤10%, rank ≥0.90). The RL simulator does not rank actions reliably. |
-| **8** | **H7** | Expert-local XOR reference coding | One base + seven XOR deltas vs independent compression | L1 artifact screen on eight real Qwen1.5-MoE-A2.7B layer-0 experts | 37.734 MB forced XOR | 36.909 MB independent | **-2.24% storage**; safe chooser saved 0% | N/A | N/A | Real BF16 tensors round-tripped bit-for-bit | Exact mechanism works; compression hypothesis is contradicted on this expert set. |
-| **9** | **H13** | Tensor QUBO residency | Pairwise QUBO vs profiled knapsack | L1 replay after greedy-refill repair; 730 candidates | 20.479 s replay | 20.479 s replay | 0%; 100% plan overlap | N/A | N/A | Exact frozen plan | No distinct treatment exists to time. Stop before GPU by design. |
-| **10** | **H15** | Physical-extent QUBO residency | Extent QUBO vs profiled knapsack | L1 replay; 369 candidates over 81 real extents | 20.479 s replay | 20.479 s replay | 0%; 100% overlap | N/A | N/A | Exact frozen plan | Same null action-space result as H13. |
-| **11** | **H11** | Tiny neural survival-utility stopping | Neural stopping vs tuned fixed `k=8` | L1 train/held-out action gate; 200 observations, 47 opportunities | 0 early stops | fixed `k=8` | No action divergence; apparent +9.5% timing is noise | N/A | N/A | Distribution exact | Current network learned the fixed policy. Do not use its timing as evidence. |
-| **12** | **H2** | Hazard-cost speculative stopping | Frozen hazard policy vs tuned fixed `k=8` | L1 four-family CUDA screen | **9.773 s/tok** | **9.150 s/tok** | **-6.4% throughput** | 2.95x | 1.47x | 3.814 GB; greedy IDs exact | Fixed speculation wins. This does **not** invalidate fixed speculation. |
-| **13** | **H12** | Bayesian probit prefetch | Chance-constrained depth vs fixed depth 2 | L2, eight randomized pairs, 780 posterior observations | 20.271 s/tok | 19.531 s/tok | **-5.89% paired**; 90% interval [-8.01%, +5.55%] | 1.49x same-session | ~0.71x descriptive | 3.934 GB; exact | Do not advance: wait rose 28.2% and only 3/8 pairs won. |
-| **14** | **H4** | Feedback prefetch (PI/MPC) | Adaptive depth vs tuned fixed depth | Two real CUDA screens | PI 21.253; MPC 35.031 s/tok | 20.040 s/tok | PI **-5.7%**; MPC **-42.8%** throughput | PI 1.41x; MPC 0.86x in screen | Both slower descriptively | 3.934 GB; exact | Direction was negative in both screens. Earlier PI run was -35.7%; magnitude changed, conclusion did not. |
-| **15** | **H5** | Certified greedy MIPS head | Certified branch-and-bound vs resident full head | L1 real 14B screen; 6.296 GB index | 20.065 s/tok | 13.949 s/tok | **-30.5% throughput**; only 0.084% rows pruned | 1.45x in matched cells | ~0.71x descriptive | 2.669 GB GPU + 6.296 GB CPU index; greedy exact | Kill current bounds/index. Certification overhead dominates. |
-| **16** | **H14** | Coalesced storage reads | Adjacent extent reads vs per-blob reads | L1, four randomized pairs | 26.527 s/tok | 19.578 s/tok | **-27.73% throughput** | ~1.13x descriptive | ~0.54x descriptive | 3.934 GB; exact | Mechanism passed—89.07% fewer calls, 0% extra bytes—but destroyed overlap. Stop this implementation. |
+| **8** | **H18** | Rollback-cached target verification | Exact target KV crop/reuse vs full-prefix fixed speculation | **L2**, eight randomized pairs × eight tokens | 4.640 s/tok | 4.574 s/tok | **-0.59% paired**; 90% interval [-4.62%, +1.09%] | N/A | N/A | 3.834 vs 3.815 GB; identical IDs; 16 crops/326 prefix tokens | Mechanism passed, performance stopped for futility. Only 3/8 pairs won; fixed speculation often finished in one sweep. |
+| **9** | **H16** | Speculation-conditioned critical-path residency | Distinct critical resident set + fixed speculation vs fixed speculation | L1, four families × four tokens | 8.836 s/tok | 8.350 s/tok | **-2.75% paired median**; 1/4 cells won | ~3.27x descriptive | ~1.62x descriptive | 3.814 GB matched; identical IDs; distinct plan | Combination did not compound. Stop current composition. |
+| **10** | **H7** | Expert-local XOR reference coding | One base + seven XOR deltas vs independent compression | L1 artifact screen on eight real Qwen1.5-MoE-A2.7B layer-0 experts | 37.734 MB forced XOR | 36.909 MB independent | **-2.24% storage**; safe chooser saved 0% | N/A | N/A | Real BF16 tensors round-tripped bit-for-bit | Exact mechanism works; compression hypothesis is contradicted on this expert set. |
+| **11** | **H13** | Tensor QUBO residency | Pairwise QUBO vs profiled knapsack | L1 replay after greedy-refill repair; 730 candidates | 20.479 s replay | 20.479 s replay | 0%; 100% plan overlap | N/A | N/A | Exact frozen plan | No distinct treatment exists to time. Stop before GPU by design. |
+| **12** | **H15** | Physical-extent QUBO residency | Extent QUBO vs profiled knapsack | L1 replay; 369 candidates over 81 real extents | 20.479 s replay | 20.479 s replay | 0%; 100% overlap | N/A | N/A | Exact frozen plan | Same null action-space result as H13. |
+| **13** | **H11** | Tiny neural survival-utility stopping | Neural stopping vs tuned fixed `k=8` | L1 train/held-out action gate; 200 observations, 47 opportunities | 0 early stops | fixed `k=8` | No action divergence; apparent +9.5% timing is noise | N/A | N/A | Distribution exact | Current network learned the fixed policy. Do not use its timing as evidence. |
+| **14** | **H2** | Hazard-cost speculative stopping | Frozen hazard policy vs tuned fixed `k=8` | L1 four-family CUDA screen | **9.773 s/tok** | **9.150 s/tok** | **-6.4% throughput** | 2.95x | 1.47x | 3.814 GB; greedy IDs exact | Fixed speculation wins. This does **not** invalidate fixed speculation. |
+| **15** | **H12** | Bayesian probit prefetch | Chance-constrained depth vs fixed depth 2 | L2, eight randomized pairs, 780 posterior observations | 20.271 s/tok | 19.531 s/tok | **-5.89% paired**; 90% interval [-8.01%, +5.55%] | 1.49x same-session | ~0.71x descriptive | 3.934 GB; exact | Do not advance: wait rose 28.2% and only 3/8 pairs won. |
+| **16** | **H4** | Feedback prefetch (PI/MPC) | Adaptive depth vs tuned fixed depth | Two real CUDA screens | PI 21.253; MPC 35.031 s/tok | 20.040 s/tok | PI **-5.7%**; MPC **-42.8%** throughput | PI 1.41x; MPC 0.86x in screen | Both slower descriptively | 3.934 GB; exact | Direction was negative in both screens. Earlier PI run was -35.7%; magnitude changed, conclusion did not. |
+| **17** | **H5** | Certified greedy MIPS head | Certified branch-and-bound vs resident full head | L1 real 14B screen; 6.296 GB index | 20.065 s/tok | 13.949 s/tok | **-30.5% throughput**; only 0.084% rows pruned | 1.45x in matched cells | ~0.71x descriptive | 2.669 GB GPU + 6.296 GB CPU index; greedy exact | Kill current bounds/index. Certification overhead dominates. |
+| **18** | **H17** | Tensor-scoped micro-extents | Per-tensor 8 MiB extents vs per-blob reads | L1, four families × four tokens | 19.747 s/tok | 16.252 s/tok | **-18.37% paired median**; 0/4 cells won | ~1.46x descriptive | ~0.73x descriptive | 3.934 GB; exact; 57.05% fewer calls; +0.54% bytes | The narrower boundary did not fix the Python buffer/view cost. Stop current path. |
+| **19** | **H14** | Coalesced storage reads | Adjacent extent reads vs per-blob reads | L1, four randomized pairs | 26.527 s/tok | 19.578 s/tok | **-27.73% throughput** | ~1.13x descriptive | ~0.54x descriptive | 3.934 GB; exact | Mechanism passed—89.07% fewer calls, 0% extra bytes—but destroyed overlap. Stop this implementation. |
 
 ## Ranking: what is actually worth using or pursuing
 
@@ -92,8 +135,21 @@ forced into a meaningless external speed ratio.
    small, but it is the cleanest positive 14B live signal.
 3. **H6**: materialize and execute the frozen mixed-representation plan. Its
    38.56% figure is a cost-model prediction, not a benchmark.
-4. For H14, use reusable registered buffers plus `preadv`, `io_uring`, or mmap
-   page-fault scheduling. Repeating the current large Python buffer is not useful.
+4. **Do not iterate further on Python `bytearray` coalescing.** H17 narrowed the
+   boundary to one tensor, cut calls 57.05%, and was still 18.37% slower by the
+   paired median. A new storage treatment must use reusable registered buffers
+   plus native `preadv`, `io_uring`, or mmap page-fault scheduling and preserve
+   consumer-ready completion order.
+5. **Do not advance H16 or H18 as general defaults.** H16 shows that two
+   individually sensible optimizations need not compound. H18 may be revisited
+   only for a separately preregistered long-context/many-sweep stratum; its
+   general eight-token L2 screen stopped for futility.
+
+H9's native-Linux scale test and H6's pinned 8 GB mixed plan cannot be executed
+faithfully on this WSL2 host: this is an environment requirement, not a missing
+Python package. H1's registered three-budget L3 requires more than the stated
+one-hour bounded-run ceiling at 14B latency. They remain explicit external-host
+or longer-run work, not silently relabeled as complete.
 
 Everything else is below gate, action-identical to its control, or contradicted
 by current evidence.
@@ -138,6 +194,15 @@ that every component is new:
 - H9's liveness-specific pinned output-head overlay is the most interesting new
   systems lead found here. The current result is too small-scale for a claim of
   general 14B superiority.
+- H16 is a new composition of two established ideas, but the distinct combined
+  treatment regressed; integration alone is not a performance contribution.
+- H17's tensor-scoped coalescing boundary was not found as an exact copied
+  Afterimage design, but its performance is contradicted and request batching
+  itself is old systems work.
+- H18's implementation calls Transformers' established `DynamicCache.crop` and
+  speculative runtimes already roll back KV state. The local contribution is
+  the fail-closed offloaded-target integration and evidence, not invention of
+  KV rollback; the L2 result is negative.
 
 The defensible contribution today is the integration: a lossless compressed
 store, explicit and fail-closed memory tiers, exact/approximate contracts,
@@ -178,15 +243,17 @@ format conversion.
 - [H12 regulated pairs](../results/2026-08-21_h12_bayesian_prefetch_qwen3-14b_rtx3080_l2.json)
 - [H13/H15 post-repair replay](../results/2026-08-21_h13_h15_qubo_qwen3-14b_rtx3080_postrepair_gate2.json)
 - [H14 coalesced-I/O screen](../results/2026-08-21_h14_coalesced_storage_qwen3-14b_rtx3080_l1_screen2.json)
+- [H16/H17/H18 common 14B screen](../results/2026-08-22_h16_h17_h18_qwen3-14b_rtx3080_l1.json)
+- [H18 randomized L2 screen](../results/2026-08-22_h18_rollback_cached_spec_qwen3-14b_rtx3080_l2.json)
 
 ## Reproduce the new runs
 
-Final repository verification after the reevaluation:
+Final repository verification after the cross-family campaign:
 
-- WSL/CUDA: **301 passed, 61 deselected** in 101.51 seconds; one upstream
+- WSL/CUDA: **317 passed, 61 deselected** in 112.25 seconds; one upstream
   Starlette/httpx deprecation warning;
-- Windows/CPU: **231 passed, 65 skipped, 61 deselected** in 39.66 seconds;
-- `python -m ruff check afterimage`, `compileall`, and `git diff --check` passed.
+- focused campaign/CLI regression suite: **12 passed** in 3.08 seconds;
+- changed-scope Ruff, `compileall`, and `git diff --check` passed.
 
 ```bash
 # Real pinned H9 mechanism test; systemd removes the shell's 64 MiB memlock cap.
@@ -210,6 +277,14 @@ pip install -e ".[bench]"
 python scripts/run_hf_offload_baseline.py \
   --gpu-memory 4000MB --cpu-memory 8GB --max-new-tokens 4 \
   --out results/HF_ACCELERATE.json
+
+# H16/H17/H18 common screen, then H18's randomized L2 follow-up.
+python scripts/run_bounded_suite.py \
+  --methods exact-resident,tensor-extents,spec-fixed,spec-critical,spec-cached \
+  --max-new-tokens 4 --time-budget-minutes 58 --out results/H16_H17_H18.json
+python scripts/run_regulated_pair.py \
+  --hypothesis H18 --blocks 2 --max-new-tokens 8 --skip-airllm \
+  --time-budget-minutes 40 --out results/H18_L2.json
 ```
 
 NVIDIA documents that pinned system memory availability is limited under WSL2:

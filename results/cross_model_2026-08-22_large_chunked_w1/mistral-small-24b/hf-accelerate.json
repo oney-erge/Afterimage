@@ -1,0 +1,122 @@
+{
+  "cache_regime": "cold page cache before every timed cell",
+  "completed_at_unix": 1787427482.6582181,
+  "cpu_memory_limit": "12GB",
+  "device_map": {
+    "lm_head": "disk",
+    "model.embed_tokens": 0,
+    "model.layers.0": 0,
+    "model.layers.1": "cpu",
+    "model.layers.10": "disk",
+    "model.layers.11": "disk",
+    "model.layers.12": "disk",
+    "model.layers.13": "disk",
+    "model.layers.14": "disk",
+    "model.layers.15": "disk",
+    "model.layers.16": "disk",
+    "model.layers.17": "disk",
+    "model.layers.18": "disk",
+    "model.layers.19": "disk",
+    "model.layers.2": "cpu",
+    "model.layers.20": "disk",
+    "model.layers.21": "disk",
+    "model.layers.22": "disk",
+    "model.layers.23": "disk",
+    "model.layers.24": "disk",
+    "model.layers.25": "disk",
+    "model.layers.26": "disk",
+    "model.layers.27": "disk",
+    "model.layers.28": "disk",
+    "model.layers.29": "disk",
+    "model.layers.3": "cpu",
+    "model.layers.30": "disk",
+    "model.layers.31": "disk",
+    "model.layers.32": "disk",
+    "model.layers.33": "disk",
+    "model.layers.34": "disk",
+    "model.layers.35": "disk",
+    "model.layers.36": "disk",
+    "model.layers.37": "disk",
+    "model.layers.38": "disk",
+    "model.layers.39": "disk",
+    "model.layers.4": "cpu",
+    "model.layers.5": "cpu",
+    "model.layers.6": "cpu",
+    "model.layers.7": "cpu",
+    "model.layers.8": "cpu",
+    "model.layers.9": "cpu",
+    "model.norm": "disk",
+    "model.rotary_emb": "disk"
+  },
+  "gpu_memory_limit": "4GB",
+  "initialization_seconds": 7.548274577000029,
+  "max_new_tokens": 2,
+  "method": "huggingface-accelerate-disk-offload",
+  "model": "mistralai/Mistral-Small-24B-Instruct-2501",
+  "offload_dir": "/root/afterimage/cross_model/hf_offload_mistral_small_24b",
+  "precision": "bfloat16",
+  "prompt_suite": [
+    {
+      "expected_any": [
+        "Au"
+      ],
+      "id": "fact-gold",
+      "semantic_bucket": "factual",
+      "split": "evaluation",
+      "user_text": "Answer with only the chemical symbol for gold."
+    },
+    {
+      "expected_any": [
+        "7319"
+      ],
+      "id": "retrieval-7319",
+      "semantic_bucket": "long_context_retrieval",
+      "split": "evaluation",
+      "user_text": "A maintenance note lists several identifiers. The amber cabinet is 2048, the cobalt cabinet is 5501, and the Orion access code is 7319. A later paragraph discusses inventory counts of 18, 42, and 96; none of those are access codes. What is the Orion access code? Answer with only the four digits."
+    }
+  ],
+  "rows": [
+    {
+      "cache_drop_error": null,
+      "cache_drop_succeeded": true,
+      "case_id": "fact-gold",
+      "expected_match": true,
+      "output_token_ids": [
+        19452,
+        2
+      ],
+      "peak_vram_gb": 3.80895744,
+      "seconds_per_token": 25.98265548300003,
+      "semantic_bucket": "factual",
+      "text": "Au",
+      "tokens_generated": 2,
+      "wall_seconds": 51.96531096600006
+    },
+    {
+      "cache_drop_error": null,
+      "cache_drop_succeeded": true,
+      "case_id": "retrieval-7319",
+      "expected_match": false,
+      "output_token_ids": [
+        1055,
+        1051
+      ],
+      "peak_vram_gb": 3.820843008,
+      "seconds_per_token": 24.309731888499982,
+      "semantic_bucket": "long_context_retrieval",
+      "text": "73",
+      "tokens_generated": 2,
+      "wall_seconds": 48.619463776999964
+    }
+  ],
+  "schema_version": 1,
+  "started_at_unix": 1787427367.4300377,
+  "status": "complete",
+  "summary": {
+    "all_cache_drops_succeeded": true,
+    "expected_match_rate": 0.5,
+    "median_cell_seconds_per_token": 25.146193685750006,
+    "peak_vram_gb": 3.820843008,
+    "seconds_per_token": 25.146193685750006
+  }
+}

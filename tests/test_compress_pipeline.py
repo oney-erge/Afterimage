@@ -6,8 +6,8 @@ AutoConfig.from_pretrained monkeypatched out, so it needs no network access
 and no GPU (decoding is checked via the CPU reference path).
 """
 import types
+import json
 
-import numpy as np
 import pytest
 import torch
 from safetensors.torch import save_file
@@ -191,3 +191,40 @@ def test_manifest_carries_schema_version_and_blob_checksums(tmp_path, monkeypatc
     for meta in manifest["tensors"].values():
         for ref in meta["blobs"].values():
             assert "crc32" in ref and ref["crc32"] != 0 or ref["nbytes"] == 0
+
+
+def test_transformers_index_excludes_duplicate_consolidated_export(
+        tmp_path, monkeypatch):
+    snap = tmp_path / "snap"
+    snap.mkdir()
+    weights = _fake_weights(seed=5)
+    items = list(weights.items())
+    save_file(dict(items[:2]), str(snap / "model-00001-of-00002.safetensors"))
+    save_file(dict(items[2:]), str(snap / "model-00002-of-00002.safetensors"))
+    save_file(weights, str(snap / "consolidated.safetensors"))
+    weight_map = {
+        key: ("model-00001-of-00002.safetensors" if index < 2
+              else "model-00002-of-00002.safetensors")
+        for index, key in enumerate(weights)
+    }
+    (snap / "model.safetensors.index.json").write_text(
+        json.dumps({"weight_map": weight_map}), encoding="utf-8")
+    download_kwargs = {}
+
+    def fake_download(model_id, **kwargs):
+        download_kwargs.update(kwargs)
+        return str(snap)
+
+    monkeypatch.setattr("huggingface_hub.snapshot_download", fake_download)
+    fake_cfg = types.SimpleNamespace(tie_word_embeddings=False)
+    monkeypatch.setattr(
+        "transformers.AutoConfig.from_pretrained", lambda model_id, **kw: fake_cfg)
+
+    manifest = compress_model_to_disk(
+        "fake/indexed", tmp_path / "store", config=EngineConfig(chunk_size=64),
+        max_workers=2)
+
+    assert set(manifest["tensors"]) == set(weights)
+    assert manifest["total_orig_bytes"] == sum(
+        tensor.numel() * tensor.element_size() for tensor in weights.values())
+    assert download_kwargs["ignore_patterns"] == ["consolidated*.safetensors"]

@@ -1,7 +1,7 @@
 # Configuration
 
 `EngineConfig` has about 40 fields, but only six of them matter for an
-ordinary run. The rest belong to the opt-in H0-H15 research layer (see
+ordinary run. The rest belong to the opt-in H0-H18 research layer (see
 [RESEARCH_METHODS.md](RESEARCH_METHODS.md)), default to the engine's
 original behaviour, and never need touching unless you're running an
 experiment. This page covers the six, plus supported models and the
@@ -39,7 +39,7 @@ requests, or check `/api/plan` for feasibility first.
 
 The other roughly 34 fields (placement policy, prefetch policy, storage
 read policy, representation policy, expert codec, critical-path profiles,
-replay plans, tracing) are the H0-H15 research mechanisms. None of them
+replay plans, tracing) are the H0-H18 research mechanisms. None of them
 has passed its gate yet, and none of them changes behaviour unless you set
 it explicitly. See [RESEARCH_METHODS.md](RESEARCH_METHODS.md) and
 [HYPOTHESIS_LINEAGE.md](HYPOTHESIS_LINEAGE.md) for what each one claims and

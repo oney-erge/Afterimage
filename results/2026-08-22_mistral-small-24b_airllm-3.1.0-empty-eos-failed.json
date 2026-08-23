@@ -1,0 +1,195 @@
+{
+  "cache_regime": "cold page cache before every timed cell",
+  "calibration_artifacts": {},
+  "calibration_case_ids": [
+    "summary-photosynthesis",
+    "logic-glippets",
+    "copy-nonce",
+    "json-status",
+    "code-squares",
+    "logic-ravens",
+    "retrieval-tulip",
+    "transform-sequence"
+  ],
+  "completed_at_unix": 1787430220.1504254,
+  "confirmatory_protocol_satisfied": false,
+  "draft_model": "Qwen/Qwen3-0.6B",
+  "elapsed_seconds": 58.680825772999995,
+  "environment": {
+    "cuda": "12.4",
+    "driver": "596.49",
+    "git_commit": "9e7f279fad1441f58b88a6fdbd72d343b09edf02",
+    "git_status": "M CONTRIBUTING.md\n M README.md\n M afterimage/baselines/b0_hf_offload.py\n M afterimage/cli.py\n M afterimage/experiments.py\n M afterimage/protocols.py\n M afterimage/runtime/compressed_store.py\n M afterimage/runtime/config.py\n M afterimage/runtime/gpu_decode.py\n M afterimage/runtime/huffman.py\n M afterimage/runtime/huffman_chunked.py\n M afterimage/runtime/representations.py\n M afterimage/runtime/streaming_engine.py\n M afterimage/server/app.py\n M afterimage/server/static/index.html\n M docs/ALL_HYPOTHESES_AND_BASELINES.md\n M docs/ARCHITECTURE.md\n M docs/BOUNDED_RESEARCH_REPORT_2026-08-21.md\n M docs/CONFIGURATION.md\n M docs/FINAL_TEST_RESULTS_2026-08-21.md\n M docs/HOW_IT_WORKS.md\n M docs/HYPOTHESIS_LINEAGE.md\n M docs/LITERATURE.md\n M docs/NOVEL_METHODS_2026-08-21.md\n M docs/REGULATED_TEST_PLAN_2026-08-21.md\n M docs/RESEARCH_METHODS.md\n M docs/RESULTS_LOG.md\n M docs/archive/PROPOSAL.md\n M docs/archive/ollama_capacity_results.json\n M docs/archive/phase0_real_results.json\n M docs/archive/shootout.json\n M pyproject.toml\n M results/2026-08-21_h12_bayesian_prefetch_qwen3-14b_rtx3080_l2.json\n M results/2026-08-21_h13_h15_qubo_qwen3-14b_rtx3080_postrepair_gate2.json\n M results/2026-08-21_h9_pinned_memory_preflight.json\n M results/2026-08-22_h9_pinned_overlay_qwen3-0.6b_rtx3080_l1.json\n M results/2026-08-22_hf_accelerate_cpu_disk_qwen3-14b_l1.json\n M results/2026-08-22_hf_accelerate_gpu_disk_qwen3-14b_rtx3080_full_l1.json\n M results/2026-08-22_offline_h0_h3_h6_h7_h8.json\n M results/2026-08-22_pinned_h2d_rtx3080.json\n M scripts/benchmark_pinned_h2d.py\n M scripts/run_bounded_suite.py\n M scripts/run_decode_throughput_v2.py\n M scripts/run_headtohead.py\n M scripts/run_hf_offload_baseline.py\n M scripts/run_offline_hypotheses.py\n M scripts/run_regulated_pair.py\n M tests/test_approximations.py\n M tests/test_baseline_comparison.py\n M tests/test_basis.py\n M tests/test_chunked_lm_head_gpu.py\n M tests/test_closed_loop.py\n M tests/test_compress_pipeline.py\n M tests/test_compressed_store.py\n M tests/test_config.py\n M tests/test_directio.py\n M tests/test_engine.py\n M tests/test_entropy.py\n M tests/test_experiment_api.py\n M tests/test_experiments.py\n M tests/test_fp16_basis.py\n M tests/test_gate.py\n M tests/test_huffman_chunked.py\n M tests/test_layout.py\n M tests/test_protocols.py\n M tests/test_regulated_runner.py\n M tests/test_representations.py\n M tests/test_research_cli.py\n M tests/test_sketch.py\n M tests/test_sketch_batch.py\n M tests/test_spec_target_cache.py\n M tests/test_spectra.py\n M tests/test_streamer.py\n M tests/test_streaming_engine_gpu.py\n M tests/test_workloads.py\n?? afterimage/bench/campaign.py\n?? configs/\n?? results/2026-08-22_h16_h17_h18_qwen3-14b_rtx3080_l1.json\n?? results/2026-08-22_h18_rollback_cached_spec_qwen3-14b_rtx3080_l2.json\n?? results/2026-08-22_mistral-small-24b_afterimage-broad-l1.json\n?? results/2026-08-22_mistral-small-24b_airllm-3.1.0-l1.disk-full.partial\n?? results/2026-08-22_phi4-mini_tied-stream-fix_smoke.json\n?? results/cross_model_2026-08-22_full/\n?? results/cross_model_2026-08-22_full_v2/\n?? results/cross_model_2026-08-22_large_chunked_w1/\n?? results/cross_model_2026-08-22_large_w1/\n?? results/cross_model_2026-08-22_preflight/\n?? scripts/run_cross_model_campaign.py\n?? tests/test_cross_model_campaign.py",
+    "gpu": "NVIDIA GeForce RTX 3080 Laptop GPU",
+    "gpu_total_bytes": 8589410304,
+    "host_memory": "total        used        free      shared  buff/cache   available\nMem:     20656578560  1534214144 16711741440     3739648  2661818368 19122364416\nSwap:     5368709120           0  5368709120",
+    "packages": {
+      "accelerate": "1.14.0",
+      "airllm": "3.1.0",
+      "numpy": "2.5.2",
+      "safetensors": "0.8.0",
+      "transformers": "5.12.1"
+    },
+    "platform": "Linux-6.18.33.2-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+    "python": "3.12.3 (main, Jun 19 2026, 12:46:00) [GCC 13.3.0]",
+    "tokenizer_commit": null,
+    "torch": "2.6.0+cu124"
+  },
+  "evaluation_case_ids": [
+    "fact-gold",
+    "retrieval-7319"
+  ],
+  "evidence_level": "L1_mechanism_screen",
+  "exploratory": true,
+  "failures": [
+    {
+      "error": "IndexError('index 0 is out of bounds for dimension 0 with size 0')",
+      "method": "airllm"
+    }
+  ],
+  "max_new_tokens": 2,
+  "methods": [
+    {
+      "declared_exactness": "reference_greedy",
+      "error": "IndexError('index 0 is out of bounds for dimension 0 with size 0')",
+      "method_id": "airllm",
+      "method_wall_seconds": 58.13965157300001,
+      "rows": [],
+      "summary": {
+        "completed_cases": 0
+      },
+      "title": "AirLLM 3.1.0",
+      "traceback": "Traceback (most recent call last):\n  File \"/mnt/c/for fun/Afterimage/scripts/run_bounded_suite.py\", line 986, in main\n    rows, metadata = run_airllm(method, rendered, args.max_new_tokens,\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/mnt/c/for fun/Afterimage/scripts/run_bounded_suite.py\", line 328, in run_airllm\n    output = model.generate(\n             ^^^^^^^^^^^^^^^\n  File \"/root/.venv/lib/python3.12/site-packages/airllm/airllm_base.py\", line 750, in generate\n    return self.model.generate(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/root/.venv/lib/python3.12/site-packages/torch/utils/_contextlib.py\", line 116, in decorate_context\n    return func(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^\n  File \"/root/.venv/lib/python3.12/site-packages/transformers/generation/utils.py\", line 2442, in generate\n    self._prepare_special_tokens(generation_config, kwargs_has_attention_mask, device=device)\n  File \"/root/.venv/lib/python3.12/site-packages/transformers/generation/utils.py\", line 2009, in _prepare_special_tokens\n    pad_token_tensor = eos_token_tensor[0]\n                       ~~~~~~~~~~~~~~~~^^^\nIndexError: index 0 is out of bounds for dimension 0 with size 0\n"
+    }
+  ],
+  "metric_definitions": {
+    "expected_match_rate": "fraction of cases whose bounded text completes the prompt's semantic expected prefix; this is a task score, not an execution-exactness score",
+    "token_agreement_vs_exact_min": "fraction of shared cases with an identical complete output token-id sequence to the exact-min Afterimage control"
+  },
+  "model": "mistralai/Mistral-Small-24B-Instruct-2501",
+  "prompt_suite": [
+    {
+      "expected_any": [
+        "Au"
+      ],
+      "id": "fact-gold",
+      "semantic_bucket": "factual",
+      "split": "evaluation",
+      "user_text": "Answer with only the chemical symbol for gold."
+    },
+    {
+      "expected_any": [
+        "102"
+      ],
+      "id": "arithmetic-17x6",
+      "semantic_bucket": "arithmetic",
+      "split": "evaluation",
+      "user_text": "Compute 17 multiplied by 6. Answer with only the integer."
+    },
+    {
+      "expected_any": [
+        "x * x",
+        "x*x",
+        "x ** 2",
+        "x**2"
+      ],
+      "id": "code-square",
+      "semantic_bucket": "code",
+      "split": "evaluation",
+      "user_text": "Fill the blank and output only the missing Python expression: def square(x): return ___"
+    },
+    {
+      "expected_any": [
+        "7319"
+      ],
+      "id": "retrieval-7319",
+      "semantic_bucket": "long_context_retrieval",
+      "split": "evaluation",
+      "user_text": "A maintenance note lists several identifiers. The amber cabinet is 2048, the cobalt cabinet is 5501, and the Orion access code is 7319. A later paragraph discusses inventory counts of 18, 42, and 96; none of those are access codes. What is the Orion access code? Answer with only the four digits."
+    },
+    {
+      "expected_any": [
+        "photosynthesis"
+      ],
+      "id": "summary-photosynthesis",
+      "semantic_bucket": "summarisation",
+      "split": "calibration",
+      "user_text": "Plants use light energy to convert carbon dioxide and water into sugars, releasing oxygen. Name this process with one word."
+    },
+    {
+      "expected_any": [
+        "no"
+      ],
+      "id": "logic-glippets",
+      "semantic_bucket": "logic",
+      "split": "calibration",
+      "user_text": "Every glippet is blue. No blue object is transparent. Can a glippet be transparent? Answer only yes or no."
+    },
+    {
+      "expected_any": [
+        "K7M-42Q-Z9"
+      ],
+      "id": "copy-nonce",
+      "semantic_bucket": "exact_copy",
+      "split": "calibration",
+      "user_text": "Repeat exactly this identifier and nothing else: K7M-42Q-Z9."
+    },
+    {
+      "expected_any": [
+        "{\"status\":\"ok\",\"count\":3}"
+      ],
+      "id": "json-status",
+      "semantic_bucket": "structured_output",
+      "split": "calibration",
+      "user_text": "Output one minified JSON object with status equal to ok and count equal to 3. Do not add prose."
+    },
+    {
+      "expected_any": [
+        "[x * x for x in values]",
+        "[x*x for x in values]"
+      ],
+      "id": "code-squares",
+      "semantic_bucket": "code",
+      "split": "calibration",
+      "user_text": "Fill the blank and output only the Python expression: squares = ___  # square every x in values"
+    },
+    {
+      "expected_any": [
+        "no"
+      ],
+      "id": "logic-ravens",
+      "semantic_bucket": "counterfactual_logic",
+      "split": "calibration",
+      "user_text": "All ravens in a sanctuary are black. Mira is a white bird in that sanctuary. Must Mira be a raven? Answer only yes or no."
+    },
+    {
+      "expected_any": [
+        "9407"
+      ],
+      "id": "retrieval-tulip",
+      "semantic_bucket": "long_context_retrieval",
+      "split": "calibration",
+      "user_text": "The delta ledger assigns 1182 to maple, 9407 to tulip, and 6630 to cedar. A later audit lists invoice totals 94, 207, and 811, none of which are ledger identifiers. Return only tulip's four-digit code."
+    },
+    {
+      "expected_any": [
+        "ivory,cobalt,amber"
+      ],
+      "id": "transform-sequence",
+      "semantic_bucket": "symbolic_transformation",
+      "split": "calibration",
+      "user_text": "Reverse the order of these comma-separated tokens without changing their spelling. Output tokens only: amber,cobalt,ivory"
+    }
+  ],
+  "prompt_suite_version": "bounded-chat-v2",
+  "protocol_schema_version": 1,
+  "ram_overlay_host_budget_gb": 1.6,
+  "ram_overlay_matched_vram_budget_gb": 1.8,
+  "schema_version": 1,
+  "selected_methods": [
+    "airllm"
+  ],
+  "status": "complete",
+  "store": "/root/afterimage/cross_model/store_mistral_small_24b",
+  "time_budget_minutes": 180.0
+}

@@ -105,7 +105,7 @@ flowchart LR
   L2 -.->|futility or regression| S["stop current candidate"]
 ```
 
-The current H0–H15 interpretation is summarized in the
+The current H0–H18 interpretation is summarized in the
 [README](../README.md#research-status-mixed-evidence-no-l3-confirmation), with
 the controlling measurements in
 [FINAL_TEST_RESULTS_2026-08-21.md](FINAL_TEST_RESULTS_2026-08-21.md).

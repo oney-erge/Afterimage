@@ -225,7 +225,7 @@
           <div class="pmeta" id="pmeta-balanced">…</div>
         </button>
         <button class="profile-card active" data-profile="fast" data-vram="4" data-draft="Qwen/Qwen3-0.6B">
-          <div class="pname">Fastest</div>
+          <div class="pname">Fastest (default)</div>
           <div class="pmeta" id="pmeta-fast">…</div>
         </button>
       </div>
@@ -236,11 +236,11 @@
         <div class="form-grid" style="margin-top:10px">
           <div>
             <label>VRAM budget (GB) — empty = minimum-memory floor</label>
-            <input id="chat-vram" type="number" step="0.5" placeholder="e.g. 4">
+            <input id="chat-vram" type="number" step="0.5" value="4" placeholder="e.g. 4">
           </div>
           <div>
             <label>Draft model id — empty disables speculation</label>
-            <input id="chat-draft" placeholder="Qwen/Qwen3-0.6B">
+            <input id="chat-draft" value="Qwen/Qwen3-0.6B" placeholder="Qwen/Qwen3-0.6B">
           </div>
         </div>
       </details>
@@ -271,8 +271,8 @@
   <!-- ============ LAB ============ -->
   <div class="tab-panel" id="tab-lab" data-tab-panel="lab" hidden>
     <section class="full">
-      <h2>Research Lab — H0–H15</h2>
-      <p class="hint">Sixteen preregistered hypotheses from the H0–H15 research program, each
+      <h2>Research Lab — H0–H18</h2>
+      <p class="hint">Nineteen preregistered hypotheses from the H0–H18 research program, each
         with a kill gate declared before it was run. Most of the honest answers below are
         "no" — that is the point of running the program this way, not a hidden problem.
         Every card is paired against a named control; the runtime's ordinary defaults are
@@ -487,9 +487,12 @@ async function loadExperiments() {
       </div>
       ${m.detail ? `<div class="detail">${m.detail}</div>` : ''}
     ` : '';
+    const lead = h.id === 'h9-ram-overlay-head'
+      ? '<span class="pill running">best measured research lead</span>' : '';
     return `
     <div class="experiment-card" id="card-${h.id}">
       <h3>${h.id}: ${h.title}</h3>
+      ${lead}
       <p class="idea">${h.statement}</p>
       ${verdictBox}
       <details>

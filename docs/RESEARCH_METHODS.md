@@ -1,9 +1,9 @@
-# Configurable Research Program: H0-H15
+# Configurable Research Program: H0-H18
 
 Status: implemented research harness. The first bounded hardware screen is
 reported in [BOUNDED_RESEARCH_REPORT_2026-08-21.md](BOUNDED_RESEARCH_REPORT_2026-08-21.md);
 it does not satisfy the confirmatory repeat counts below. H0-H8 are the
-original program described in the sections that follow; H9-H15 extend it
+original program described in the sections that follow; H9-H18 extend it
 without changing them -- see section 15 and
 [NOVEL_METHODS_2026-08-21.md](NOVEL_METHODS_2026-08-21.md) for their designs,
 and [HYPOTHESIS_LINEAGE.md](HYPOTHESIS_LINEAGE.md) for every hypothesis's
@@ -405,6 +405,26 @@ the profiled control with 100% overlap and 0% gain. H13 and H15 therefore remain
 stopped at the action-divergence gate. Full derivation:
 [HYPOTHESIS_LINEAGE.md](HYPOTHESIS_LINEAGE.md).
 
-Run `afterimage research experiments --json` for the machine-readable H0-H15
+## H16-H18 -- interaction repairs after the full comparison
+
+- **H16** composes the fixed `k=8` speculative control with a distinct H1
+  critical-path resident set. The treatment changed, VRAM and tokens matched,
+  but it was slower (8.836 versus 8.350 s/token; -2.75% paired median).
+- **H17** restricts coalescing to one tensor and an 8 MiB extent. It cut calls
+  57.05% with 0.54% byte amplification, but all four cells lost (-18.37%
+  paired median). This rules out the Python `bytearray`/view path, not native
+  registered-buffer asynchronous I/O.
+- **H18** uses Transformers' exact `DynamicCache.crop` to roll target lookahead
+  back to the accepted prefix. The randomized L2 screen exercised 16 crops and
+  326 reused prefix tokens with identical outputs and +0.49% peak VRAM. Its
+  paired effect was -0.59%, 90% interval [-4.62%, +1.09%], so the current
+  general treatment stops for futility.
+
+All three remain selectable configurations so their negative results are
+reproducible; none replaces the stable fixed-speculation default. Sources and
+raw artifacts are linked from
+[ALL_HYPOTHESES_AND_BASELINES.md](ALL_HYPOTHESES_AND_BASELINES.md).
+
+Run `afterimage research experiments --json` for the machine-readable H0-H18
 registry, or `afterimage research test-plan HYPOTHESIS --json` for its regulated
 protocol.

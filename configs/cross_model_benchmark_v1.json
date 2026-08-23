@@ -1,0 +1,177 @@
+{
+  "schema_version": 1,
+  "campaign_id": "cross-family-scale-v1",
+  "purpose": "Test whether Afterimage's Qwen3-14B conclusions transfer across model family and scale on the same RTX 3080 Laptop GPU.",
+  "common": {
+    "gpu_memory": "4GB",
+    "cpu_memory": "12GB",
+    "exactness": "BF16 greedy token identity at temperature zero",
+    "cache_regime": "cold Linux page cache before each timed cell"
+  },
+  "models": [
+    {
+      "id": "phi4-mini-3.8b",
+      "role": "small",
+      "enabled": true,
+      "model_id": "microsoft/Phi-4-mini-instruct",
+      "official_source": "https://huggingface.co/microsoft/Phi-4-mini-instruct",
+      "store": "/root/afterimage/cross_model/store_phi4_mini_3.8b",
+      "hf_offload_dir": "/root/afterimage/cross_model/hf_offload_phi4_mini_3.8b",
+      "expected_bf16_weight_bytes": 7672066216,
+      "benchmarks": [
+        {
+          "id": "smoke",
+          "runner": "bounded",
+          "methods": ["exact-min"],
+          "case_ids": ["fact-gold"],
+          "max_new_tokens": 1,
+          "time_budget_minutes": 20
+        },
+        {
+          "id": "hf-accelerate",
+          "runner": "hf_accelerate",
+          "case_ids": ["fact-gold", "arithmetic-17x6", "code-square", "retrieval-7319"],
+          "max_new_tokens": 4
+        },
+        {
+          "id": "broad-l1",
+          "runner": "bounded",
+          "methods": [
+            "exact-min", "exact-resident", "ram-overlay-head",
+            "chunked-head", "pi-prefetch", "mpc-prefetch", "bayes-prefetch",
+            "profiled-knapsack", "critical-path", "replay-cem", "replay-qubo",
+            "coalesced-storage", "tensor-extents", "replay-extent-qubo",
+            "certified-mips"
+          ],
+          "case_ids": ["fact-gold", "arithmetic-17x6", "code-square", "retrieval-7319"],
+          "max_new_tokens": 4,
+          "time_budget_minutes": 120
+        },
+        {
+          "id": "airllm-l1",
+          "runner": "bounded",
+          "methods": ["airllm"],
+          "case_ids": ["fact-gold", "arithmetic-17x6", "code-square", "retrieval-7319"],
+          "max_new_tokens": 4,
+          "time_budget_minutes": 60
+        },
+        {
+          "id": "h12-l2",
+          "runner": "regulated",
+          "hypothesis": "H12",
+          "blocks": 2,
+          "max_new_tokens": 4,
+          "time_budget_minutes": 45
+        },
+        {
+          "id": "h14-l2",
+          "runner": "regulated",
+          "hypothesis": "H14",
+          "blocks": 2,
+          "max_new_tokens": 4,
+          "time_budget_minutes": 45
+        },
+        {
+          "id": "h17-l2",
+          "runner": "regulated",
+          "hypothesis": "H17",
+          "blocks": 2,
+          "max_new_tokens": 4,
+          "time_budget_minutes": 45
+        }
+      ]
+    },
+    {
+      "id": "mistral-small-24b",
+      "role": "large",
+      "enabled": true,
+      "model_id": "mistralai/Mistral-Small-24B-Instruct-2501",
+      "official_source": "https://huggingface.co/mistralai/Mistral-Small-24B-Instruct-2501",
+      "store": "/root/afterimage/cross_model/store_mistral_small_24b",
+      "hf_offload_dir": "/root/afterimage/cross_model/hf_offload_mistral_small_24b",
+      "expected_bf16_weight_bytes": 47144848872,
+      "benchmarks": [
+        {
+          "id": "smoke",
+          "runner": "bounded",
+          "methods": ["exact-min"],
+          "case_ids": ["fact-gold"],
+          "max_new_tokens": 1,
+          "time_budget_minutes": 40
+        },
+        {
+          "id": "hf-accelerate",
+          "runner": "hf_accelerate",
+          "case_ids": ["fact-gold", "retrieval-7319"],
+          "max_new_tokens": 2
+        },
+        {
+          "id": "broad-l1",
+          "runner": "bounded",
+          "methods": [
+            "exact-min", "exact-resident", "ram-overlay-head",
+            "chunked-head", "pi-prefetch", "mpc-prefetch", "bayes-prefetch",
+            "profiled-knapsack", "critical-path", "replay-cem", "replay-qubo",
+            "coalesced-storage", "tensor-extents", "replay-extent-qubo",
+            "certified-mips"
+          ],
+          "case_ids": ["fact-gold", "retrieval-7319"],
+          "max_new_tokens": 2,
+          "time_budget_minutes": 180
+        },
+        {
+          "id": "airllm-l1",
+          "runner": "bounded",
+          "methods": ["airllm"],
+          "case_ids": ["fact-gold", "retrieval-7319"],
+          "max_new_tokens": 2,
+          "time_budget_minutes": 60
+        },
+        {
+          "id": "h12-scale-l1",
+          "runner": "regulated",
+          "hypothesis": "H12",
+          "blocks": 1,
+          "case_ids": ["fact-gold", "retrieval-7319"],
+          "max_new_tokens": 2,
+          "time_budget_minutes": 90
+        },
+        {
+          "id": "h14-scale-l1",
+          "runner": "regulated",
+          "hypothesis": "H14",
+          "blocks": 1,
+          "case_ids": ["fact-gold", "retrieval-7319"],
+          "max_new_tokens": 2,
+          "time_budget_minutes": 90
+        },
+        {
+          "id": "h17-scale-l1",
+          "runner": "regulated",
+          "hypothesis": "H17",
+          "blocks": 1,
+          "case_ids": ["fact-gold", "retrieval-7319"],
+          "max_new_tokens": 2,
+          "time_budget_minutes": 90
+        }
+      ]
+    }
+  ],
+  "deferred_models": [
+    {
+      "model_id": "google/gemma-2-27b-it",
+      "official_source": "https://huggingface.co/google/gemma-2-27b-it",
+      "reason": "Structurally compatible text-only 27B target, but its license-gated files return HTTP 401 in the unauthenticated benchmark environment."
+    }
+  ],
+  "excluded_hypothesis_families": [
+    {
+      "ids": ["H0", "H2", "H3", "H8", "H11", "H16", "H18"],
+      "reason": "Speculation/controller transfer needs a small resident draft with exactly the target tokenizer and vocabulary; neither cross-family target has a safe draft that fits beside the target on this 8 GB GPU. Existing Qwen3-14B results remain the evidence for these methods."
+    },
+    {
+      "ids": ["H6", "H7"],
+      "reason": "Artifact-design protocols use representation-plan and MoE expert fixtures, not the dense online generation runner. Their cross-checkpoint coverage is reported separately."
+    }
+  ]
+}

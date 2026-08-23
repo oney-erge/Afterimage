@@ -45,7 +45,8 @@ class CompressedLayer:
 EXPONENT_SHIFT = 7
 
 
-def compress_layer(W: torch.Tensor, chunk_size: int = 1024, max_bits: int = 16) -> CompressedLayer:
+def compress_layer(W: torch.Tensor, chunk_size: int = 1024, max_bits: int = 16,
+                   work_chunk_elems: int = 1 << 24) -> CompressedLayer:
     """sign_mantissa is packed into ONE byte per weight, not stored as
     int16. sign (bit 15) and mantissa (bits 6-0) are 8 bits of real content
     but are NOT contiguous in the original 16-bit word -- the 8-bit
@@ -65,13 +66,28 @@ def compress_layer(W: torch.Tensor, chunk_size: int = 1024, max_bits: int = 16) 
     shape is restored by a single .reshape() at the end of decompression.
     """
     assert W.dtype == torch.bfloat16, f"expected bfloat16, got {W.dtype}"
-    bits = W.contiguous().view(torch.int16).to(torch.int32) & 0xFFFF
-    exponent = (bits >> EXPONENT_SHIFT) & 0xFF
-    sign = (bits >> 15) & 1
-    mantissa = bits & 0x7F
-    sign_mantissa = ((sign << 7) | mantissa).to(torch.uint8).cpu().flatten()
+    if work_chunk_elems < 1:
+        raise ValueError("work_chunk_elems must be positive")
 
-    encoded = encode_chunked(exponent.flatten(), chunk_size=chunk_size, max_bits=max_bits)
+    # Never expand a multi-GB matrix into several full int32 fields. The old
+    # vectorized expression held bits, exponent, sign and mantissa as int32
+    # arrays and encode_chunked then copied exponent to int64. A 1.34 GB BF16
+    # output head consequently exceeded a 19 GB WSL VM. The two real outputs
+    # are each uint8, so allocate only those and bound int32 scratch to one
+    # work chunk. This changes memory lifetime, not the bit transform.
+    raw = W.contiguous().view(torch.int16).flatten()
+    n = raw.numel()
+    sign_mantissa = torch.empty(n, dtype=torch.uint8, device="cpu")
+    exponent = torch.empty(n, dtype=torch.uint8, device="cpu")
+    for start in range(0, n, work_chunk_elems):
+        end = min(start + work_chunk_elems, n)
+        bits = raw[start:end].to(torch.int32) & 0xFFFF
+        exponent[start:end] = ((bits >> EXPONENT_SHIFT) & 0xFF).to(torch.uint8)
+        sign_mantissa[start:end] = (
+            ((((bits >> 15) & 1) << 7) | (bits & 0x7F)).to(torch.uint8))
+        del bits
+
+    encoded = encode_chunked(exponent, chunk_size=chunk_size, max_bits=max_bits)
     return CompressedLayer(sign_mantissa=sign_mantissa, encoded=encoded, shape=tuple(W.shape))
 
 

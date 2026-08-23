@@ -32,6 +32,9 @@ def main() -> int:
     out = pathlib.Path(args.out).resolve()
     if out.exists():
         raise FileExistsError("refusing to overwrite immutable result: %s" % out)
+    tmp = out.with_suffix(out.suffix + ".partial")
+    if tmp.exists():
+        raise FileExistsError("partial result already exists: %s" % tmp)
     out.parent.mkdir(parents=True, exist_ok=True)
 
     cases = list(prompt_cases("evaluation"))
@@ -46,21 +49,9 @@ def main() -> int:
         args.model, args.offload_dir, gpu_memory=args.gpu_memory,
         cpu_memory=args.cpu_memory)
     rows = []
-    for case in cases:
-        prompt = render_chat_prompt(baseline.tokenizer, case)
-        cache_succeeded = drop_caches()
-        row = baseline.generate(prompt, args.max_new_tokens)
-        row.update(case_id=case.id, semantic_bucket=case.semantic_bucket,
-                   expected_match=case.matches(row["text"]),
-                   cache_drop_succeeded=cache_succeeded,
-                   cache_drop_error=(None if cache_succeeded else
-                                     "Linux page-cache drop failed"))
-        rows.append(row)
-        print("%-20s %.3f s/token" % (case.id, row["seconds_per_token"]))
-
     payload = {
         "schema_version": 1,
-        "status": "complete",
+        "status": "running",
         "model": args.model,
         "method": "huggingface-accelerate-disk-offload",
         "precision": "bfloat16",
@@ -73,6 +64,25 @@ def main() -> int:
         "prompt_suite": [dataclasses.asdict(case) for case in cases],
         "cache_regime": "cold page cache before every timed cell",
         "rows": rows,
+        "started_at_unix": started,
+    }
+    tmp.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    for case in cases:
+        prompt = render_chat_prompt(baseline.tokenizer, case)
+        cache_succeeded = drop_caches()
+        row = baseline.generate(prompt, args.max_new_tokens)
+        row.update(case_id=case.id, semantic_bucket=case.semantic_bucket,
+                   expected_match=case.matches(row["text"]),
+                   cache_drop_succeeded=cache_succeeded,
+                   cache_drop_error=(None if cache_succeeded else
+                                     "Linux page-cache drop failed"))
+        rows.append(row)
+        payload["rows"] = rows
+        tmp.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+        print("%-20s %.3f s/token" % (case.id, row["seconds_per_token"]))
+
+    payload.update({
+        "status": "complete",
         "summary": {
             "seconds_per_token": sum(row["wall_seconds"] for row in rows) /
                                  max(sum(row["tokens_generated"] for row in rows), 1),
@@ -84,10 +94,8 @@ def main() -> int:
             "all_cache_drops_succeeded": all(
                 row["cache_drop_succeeded"] for row in rows),
         },
-        "started_at_unix": started,
         "completed_at_unix": time.time(),
-    }
-    tmp = out.with_suffix(out.suffix + ".partial")
+    })
     tmp.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
     tmp.replace(out)
     print("wrote immutable result %s" % out)

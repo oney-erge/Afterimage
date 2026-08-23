@@ -149,15 +149,41 @@ MEASURED_COMPRESSION_RATIO = 1.453
 
 
 def _estimate_download_bytes(model_id: str) -> int | None:
-    """Sum of .safetensors file sizes reported by the HF Hub API, without
-    downloading anything. Returns None on any failure (offline, gated repo,
-    private model, network error) -- callers must treat that as "unknown",
-    never as "zero bytes needed"."""
+    """Estimate the Transformers weight set, excluding duplicate exports.
+
+    Some repositories publish both ``model-*.safetensors`` (the files named
+    by ``model.safetensors.index.json``) and a second, full
+    ``consolidated*.safetensors`` export.  Summing every safetensors sibling
+    double-counts such checkpoints and can make the disk preflight report
+    twice the real requirement.  Prefer the index's exact shard set; only
+    fall back to conventional non-consolidated files when no index exists.
+
+    Returns None on any failure (offline, gated repo, private model, network
+    error, or incomplete size metadata) -- callers must treat that as
+    "unknown", never as "zero bytes needed".
+    """
     try:
-        from huggingface_hub import HfApi
+        from huggingface_hub import HfApi, hf_hub_download
+
         info = HfApi().model_info(model_id, files_metadata=True)
-        total = sum(s.size or 0 for s in info.siblings
-                    if s.rfilename.endswith(".safetensors"))
+        siblings = {s.rfilename: s.size for s in info.siblings}
+        index_name = "model.safetensors.index.json"
+        if index_name in siblings:
+            index_path = pathlib.Path(hf_hub_download(model_id, index_name))
+            index = json.loads(index_path.read_text(encoding="utf-8"))
+            filenames = set(index.get("weight_map", {}).values())
+        elif "model.safetensors" in siblings:
+            filenames = {"model.safetensors"}
+        else:
+            filenames = {
+                name for name in siblings
+                if name.endswith(".safetensors")
+                and not pathlib.PurePosixPath(name).name.startswith("consolidated")
+            }
+        sizes = [siblings.get(name) for name in filenames]
+        if not filenames or any(size is None or size <= 0 for size in sizes):
+            return None
+        total = sum(sizes)
         return total or None
     except Exception:
         return None
@@ -777,12 +803,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     research = sub.add_parser(
         "research",
-        help="the H0-H15 research layer -- opt-in, does not affect ordinary "
+        help="the H0-H18 research layer -- opt-in, does not affect ordinary "
              "compress/run/serve. See docs/RESEARCH_METHODS.md.")
     research_sub = research.add_subparsers(dest="research_command", required=True)
 
     e = research_sub.add_parser(
-        "experiments", help="list versioned H0-H15 experiment definitions")
+        "experiments", help="list versioned H0-H18 experiment definitions")
     e.add_argument("--json", action="store_true")
     e.set_defaults(func=cmd_experiments)
 

@@ -689,14 +689,17 @@ def start_experiment(hypothesis_id: str, req: ExperimentRunRequest) -> dict:
                 400, "%s held-out evaluation requires config_overrides."
                 "spec_policy_learn=false; calibrate the state on separate prompts first"
                 % hypothesis_id)
-    if hypothesis_id == "h1-critical-path":
+    if hypothesis_id in ("h1-critical-path", "h16-spec-critical-path"):
         profile_path = pathlib.Path(req.config_overrides["critical_path_profile"])
         if not profile_path.exists():
-            raise HTTPException(400, "H1 critical_path_profile does not exist: %s" % profile_path)
+            raise HTTPException(
+                400, "%s critical_path_profile does not exist: %s" %
+                (hypothesis_id, profile_path))
         if req.config_overrides.get("trace_events"):
             raise HTTPException(
-                400, "H1 evaluation must run with tracing off; collect the profile "
-                "in separate control runs because CUDA trace synchronization is intrusive")
+                400, ("%s evaluation must run with tracing off; collect the profile "
+                      "in separate control runs because CUDA trace synchronization "
+                      "is intrusive") % hypothesis_id)
     if hypothesis_id in (
             "h10-replay-cem", "h13-qubo-residency",
             "h15-extent-qubo-residency"):

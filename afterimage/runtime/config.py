@@ -31,7 +31,7 @@ class EngineConfig:
 
     Those six are documented in docs/CONFIGURATION.md and are what
     `afterimage run`'s core argument group exposes. Everything else below
-    belongs to the opt-in H0-H15 research layer (docs/RESEARCH_METHODS.md) --
+    belongs to the opt-in H0-H18 research layer (docs/RESEARCH_METHODS.md) --
     placement/prefetch/representation/expert-codec policies, critical-path
     profiles, replay plans, and the tracing/experiment plumbing they need.
     They default to the exact behaviour this engine had before that layer

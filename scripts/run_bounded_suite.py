@@ -14,7 +14,6 @@ import dataclasses
 import gc
 import hashlib
 import json
-import os
 import pathlib
 import platform
 import statistics
@@ -23,6 +22,7 @@ import sys
 import tempfile
 import time
 import traceback
+from collections.abc import Callable
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
@@ -270,6 +270,13 @@ def render_cases(tokenizer, cases: tuple[PromptCase, ...]) -> list[dict]:
     return rendered
 
 
+def load_tokenizer(model_id: str):
+    """Load one cross-family tokenizer with Mistral's regex fix enabled."""
+    from transformers import AutoTokenizer
+
+    return AutoTokenizer.from_pretrained(model_id, fix_mistral_regex=True)
+
+
 def result_row(case: PromptCase, method: Method, prompt: str, input_tokens: int,
                generated_ids: list[int], answer: str, wall_s: float,
                peak_vram_gb: float, cache_drop: tuple[bool, str | None],
@@ -297,11 +304,17 @@ def result_row(case: PromptCase, method: Method, prompt: str, input_tokens: int,
 
 
 def run_airllm(method: Method, rendered: list[dict], n_tokens: int,
-               deadline: float) -> tuple[list[dict], dict]:
+               deadline: float,
+               rows_checkpoint: Callable[[list[dict]], None] | None = None,
+               ) -> tuple[list[dict], dict]:
     from airllm import AutoModel
 
     init_t0 = time.perf_counter()
     model = AutoModel.from_pretrained(MODEL)
+    # AirLLM 3.1.0 constructs its own tokenizer without Transformers'
+    # ``fix_mistral_regex`` compatibility flag.  Reuse the already-rendered
+    # benchmark tokenizer so every backend consumes identical input IDs.
+    model.tokenizer = rendered[0]["tokenizer"]
     init_s = time.perf_counter() - init_t0
     rows = []
     try:
@@ -316,8 +329,19 @@ def run_airllm(method: Method, rendered: list[dict], n_tokens: int,
             cache = drop_caches()
             reset_cuda_peak()
             t0 = time.perf_counter()
+            # An empty EOS list forces a fixed token count. Transformers 5.x
+            # still needs a concrete pad ID when EOS is empty, otherwise it
+            # indexes eos_token_tensor[0] while preparing special tokens.
+            pad_token_id = model.tokenizer.pad_token_id
+            if pad_token_id is None:
+                pad_token_id = model.tokenizer.eos_token_id
+            if isinstance(pad_token_id, (list, tuple)):
+                pad_token_id = pad_token_id[0] if pad_token_id else None
+            if pad_token_id is None:
+                pad_token_id = 0
             output = model.generate(
                 ids, max_new_tokens=n_tokens, eos_token_id=[],
+                pad_token_id=int(pad_token_id),
                 do_sample=False, use_cache=True, return_dict_in_generate=True, **kwargs)
             torch.cuda.synchronize()
             wall = time.perf_counter() - t0
@@ -328,6 +352,8 @@ def run_airllm(method: Method, rendered: list[dict], n_tokens: int,
                 item["case"], method, item["prompt"], item["input_tokens"],
                 generated, answer, wall, torch.cuda.max_memory_allocated() / 1e9,
                 cache, {"generation_mode": "greedy"}))
+            if rows_checkpoint is not None:
+                rows_checkpoint(rows)
             log("  %-18s %.2f s/token  %r" %
                 (item["case"].id, rows[-1]["seconds_per_token"], answer))
             del output, sequence, ids
@@ -362,7 +388,9 @@ def run_afterimage(method: Method, rendered: list[dict], n_tokens: int,
                    replay_plan: str | None = None,
                    spec_state: str | None = None,
                    burn_in_rendered: list[dict] | None = None,
-                   burn_in_tokens: int = 0) -> tuple[list[dict], dict]:
+                   burn_in_tokens: int = 0,
+                   rows_checkpoint: Callable[[list[dict]], None] | None = None,
+                   ) -> tuple[list[dict], dict]:
     init_t0 = time.perf_counter()
     engine, cfg = engine_for(method, critical_profile=critical_profile,
                              replay_plan=replay_plan, spec_state=spec_state)
@@ -454,6 +482,8 @@ def run_afterimage(method: Method, rendered: list[dict], n_tokens: int,
                 item["case"], method, item["prompt"], item["input_tokens"],
                 generated, answer, wall, torch.cuda.max_memory_allocated() / 1e9,
                 cache, extra))
+            if rows_checkpoint is not None:
+                rows_checkpoint(rows)
             log("  %-18s %.2f s/token  %r" %
                 (item["case"].id, rows[-1]["seconds_per_token"], answer))
             del sequence, ids
@@ -741,9 +771,8 @@ def main() -> int:
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA is required for the hardware comparison")
 
-    from transformers import AutoTokenizer
     repo_root = pathlib.Path(__file__).resolve().parent.parent
-    tokenizer = AutoTokenizer.from_pretrained(MODEL)
+    tokenizer = load_tokenizer(MODEL)
     evaluation_cases = prompt_cases("evaluation")
     if args.case_ids:
         requested_cases = [part.strip() for part in args.case_ids.split(",") if part.strip()]
@@ -774,6 +803,15 @@ def main() -> int:
         "max_new_tokens": args.max_new_tokens,
         "time_budget_minutes": args.time_budget_minutes,
         "cache_regime": "cold page cache before every timed cell",
+        "metric_definitions": {
+            "expected_match_rate": (
+                "fraction of cases whose bounded text completes the prompt's "
+                "semantic expected prefix; this is a task score, not an "
+                "execution-exactness score"),
+            "token_agreement_vs_exact_min": (
+                "fraction of shared cases with an identical complete output "
+                "token-id sequence to the exact-min Afterimage control"),
+        },
         "model": MODEL,
         "draft_model": DRAFT_MODEL,
         "store": STORE,
@@ -947,11 +985,21 @@ def main() -> int:
             log("\nMETHOD: %s" % method.title)
             entry = {"method_id": method.id, "title": method.title,
                      "declared_exactness": method.exactness, "rows": []}
+            result["methods"].append(entry)
+
+            def save_interim_rows(rows: list[dict]) -> None:
+                entry["rows"] = list(rows)
+                entry["summary"] = aggregate(rows)
+                entry["interim"] = True
+                result["elapsed_seconds"] = time.perf_counter() - started
+                add_comparisons(result)
+                checkpoint(partial, result)
+
             method_t0 = time.perf_counter()
             try:
                 if method.kind == "airllm":
                     rows, metadata = run_airllm(method, rendered, args.max_new_tokens,
-                                                deadline)
+                                                deadline, save_interim_rows)
                 else:
                     rows, metadata = run_afterimage(
                         method, rendered, args.max_new_tokens, deadline,
@@ -960,7 +1008,8 @@ def main() -> int:
                         replay_plan=(replay_plans[method_id]["path"]
                                      if method_id in replay_plans else None),
                         spec_state=(spec_states[method_id]["path"]
-                                    if method_id in spec_states else None))
+                                    if method_id in spec_states else None),
+                        rows_checkpoint=save_interim_rows)
                 entry["rows"] = rows
                 entry["metadata"] = metadata
                 entry["summary"] = aggregate(rows)
@@ -970,9 +1019,10 @@ def main() -> int:
                 entry["summary"] = aggregate(entry["rows"])
                 result["failures"].append({"method": method.id, "error": repr(exc)})
                 log("  FAILED: %r" % exc)
+            entry.pop("interim", None)
             entry["method_wall_seconds"] = time.perf_counter() - method_t0
-            result["methods"].append(entry)
             result["elapsed_seconds"] = time.perf_counter() - started
+            add_comparisons(result)
             checkpoint(partial, result)
 
     if draft_model is not None:

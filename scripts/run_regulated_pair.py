@@ -8,11 +8,9 @@ first clear their separate mechanism gates in ``run_bounded_suite.py``.
 from __future__ import annotations
 
 import argparse
-import dataclasses
 import json
 import pathlib
 import random
-import statistics
 import sys
 import tempfile
 import time
@@ -215,6 +213,12 @@ def main() -> int:
     parser.add_argument("--time-budget-minutes", type=float, default=40.0)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--skip-airllm", action="store_true")
+    parser.add_argument("--model", default=bounded.MODEL)
+    parser.add_argument("--draft-model", default=bounded.DRAFT_MODEL)
+    parser.add_argument("--store", default=bounded.STORE)
+    parser.add_argument(
+        "--case-ids", default=None,
+        help="comma-separated evaluation cases; default is all four families")
     parser.add_argument("--out", required=True)
     args = parser.parse_args()
     if args.blocks < 1 or args.max_new_tokens < 1:
@@ -229,12 +233,24 @@ def main() -> int:
         raise FileExistsError("refusing to overwrite immutable result")
     out.parent.mkdir(parents=True, exist_ok=True)
 
+    bounded.MODEL = args.model
+    bounded.DRAFT_MODEL = args.draft_model
+    bounded.STORE = args.store
+
     import torch
-    from transformers import AutoTokenizer
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA is required")
-    tokenizer = AutoTokenizer.from_pretrained(bounded.MODEL)
-    evaluation = bounded.render_cases(tokenizer, prompt_cases("evaluation"))
+    tokenizer = bounded.load_tokenizer(bounded.MODEL)
+    evaluation_cases = prompt_cases("evaluation")
+    if args.case_ids:
+        by_id = {case.id: case for case in evaluation_cases}
+        requested = [part.strip() for part in args.case_ids.split(",")
+                     if part.strip()]
+        unknown = sorted(set(requested) - set(by_id))
+        if unknown:
+            parser.error("unknown evaluation cases: %s" % ", ".join(unknown))
+        evaluation_cases = tuple(by_id[case_id] for case_id in requested)
+    evaluation = bounded.render_cases(tokenizer, evaluation_cases)
     calibration = bounded.render_cases(tokenizer, prompt_cases("calibration")[:2])
     for item in evaluation + calibration:
         item["tokenizer"] = tokenizer
@@ -269,6 +285,9 @@ def main() -> int:
         "time_budget_minutes": args.time_budget_minutes,
         "randomization_seed": args.seed,
         "cache_regime": "cold page cache before every timed cell",
+        "model": bounded.MODEL,
+        "draft_model": bounded.DRAFT_MODEL,
+        "store": bounded.STORE,
         "environment": bounded.environment_manifest(
             pathlib.Path(__file__).resolve().parent.parent, tokenizer),
         "trials": [], "airllm_anchor": None, "failures": [],

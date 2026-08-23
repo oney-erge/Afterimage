@@ -20,6 +20,17 @@ def test_full_weight_reconstruction_bit_exact_cpu():
     assert torch.equal(orig_bits, recon_bits), "bit patterns differ even if values compare equal"
 
 
+def test_bounded_work_chunks_preserve_every_bf16_bit():
+    """Force many extraction chunks without allocating a multi-GB fixture."""
+    torch.manual_seed(40)
+    W = (torch.randn(37, 59) * 0.02).to(torch.bfloat16)
+    layer = compress_layer(
+        W, chunk_size=31, work_chunk_elems=17)
+    recon = decompress_layer_cpu_reference(layer)
+
+    assert torch.equal(recon.view(torch.int16), W.view(torch.int16))
+
+
 def test_reconstruction_bit_exact_on_realistic_weight_scale():
     torch.manual_seed(1)
     for scale in [0.001, 0.02, 0.5, 3.0]:

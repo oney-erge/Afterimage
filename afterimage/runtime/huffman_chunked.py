@@ -50,7 +50,10 @@ class ChunkedEncoded:
 
 def encode_chunked(exponents: torch.Tensor, chunk_size: int = 512,
                     max_bits: int = 16) -> ChunkedEncoded:
-    flat = exponents.flatten().cpu().numpy().astype(np.int64)
+    # bincount and the code lookup accept uint8 symbols directly. Casting a
+    # large exponent field to int64 made an unnecessary 8x full-field copy
+    # during offline compression (5.37 GB for a 27B-class output head).
+    flat = exponents.flatten().cpu().numpy()
     n = flat.shape[0]
 
     counts = np.bincount(flat, minlength=256)

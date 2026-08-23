@@ -31,6 +31,22 @@ completes and is renamed to `.json`. Never treat a `.partial` file's contents
 as a result, and never delete one without confirming the run that owns it
 has actually stopped.
 
+The staged cross-family runner makes these checkpoints resumable and preserves
+the interrupted file with an `.interrupted-*` suffix:
+
+```bash
+python scripts/run_cross_model_campaign.py \
+  --config configs/cross_model_benchmark_v1.json \
+  --out-dir results/cross_model_YYYY-MM-DD --workers 1
+python scripts/run_cross_model_campaign.py \
+  --config configs/cross_model_benchmark_v1.json \
+  --out-dir results/cross_model_YYYY-MM-DD --workers 1 --resume
+```
+
+The controlling 2026-08-22 cross-family interpretation and direct links to
+every valid raw artifact are in
+[`docs/CROSS_MODEL_BENCHMARK_2026-08-22.md`](../docs/CROSS_MODEL_BENCHMARK_2026-08-22.md).
+
 For a short exploratory screen before that full protocol, use the diverse,
 disjoint calibration/evaluation suite with a hard wall-time cap:
 

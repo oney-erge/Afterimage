@@ -114,6 +114,37 @@ class StreamStats:
 _BIG_TENSOR_SUFFIXES = ("embed_tokens.weight", "lm_head.weight")
 
 
+def _transformers_weight_shards(snapshot: pathlib.Path) -> list[pathlib.Path]:
+    """Return exactly the safetensors files named by Transformers metadata.
+
+    Some model repositories publish both ``model-*.safetensors`` and a second
+    ``consolidated.safetensors`` export for another runtime.  Glob-reading the
+    directory would silently process both complete copies.  Prefer the
+    Transformers index when present; the single-file convention remains the
+    fallback for small checkpoints and local test fixtures.
+    """
+    index_path = snapshot / "model.safetensors.index.json"
+    if index_path.exists():
+        index = json.loads(index_path.read_text(encoding="utf-8"))
+        filenames = sorted(set(index.get("weight_map", {}).values()))
+        if not filenames:
+            raise ValueError("empty weight_map in %s" % index_path)
+        shards = [snapshot / filename for filename in filenames]
+        missing = [str(path) for path in shards if not path.exists()]
+        if missing:
+            raise FileNotFoundError(
+                "Transformers weight index names missing shards: %s" % missing)
+        return shards
+
+    single = snapshot / "model.safetensors"
+    if single.exists():
+        return [single]
+
+    return sorted(
+        path for path in snapshot.glob("*.safetensors")
+        if not path.name.startswith("consolidated"))
+
+
 def _compress_one_tensor(task: tuple) -> dict:
     """Runs in a worker process (or the main process for the "big" tensors
     -- see compress_model_to_disk). Returns plain numpy arrays, not
@@ -208,8 +239,12 @@ def compress_model_to_disk(model_id: str, out_dir, config: EngineConfig | None =
     out_dir = pathlib.Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    snap = pathlib.Path(snapshot_download(model_id))
-    shards = sorted(snap.glob("*.safetensors"))
+    # ``consolidated*.safetensors`` is commonly a duplicate export for a
+    # non-Transformers runtime.  Avoid downloading it and independently
+    # verify the remaining set against model.safetensors.index.json.
+    snap = pathlib.Path(snapshot_download(
+        model_id, ignore_patterns=["consolidated*.safetensors"]))
+    shards = _transformers_weight_shards(snap)
     if not shards:
         raise FileNotFoundError("no .safetensors in " + str(snap))
 
@@ -1402,6 +1437,16 @@ class StreamingLosslessModel:
         cross the bus every token, so bytes-read/token rises. That tradeoff
         is the point of exposing it as a budget rather than hardcoding it.
         """
+        def load_key(key: str) -> torch.Tensor:
+            if self._tier.get(key) == "ram":
+                cached = self._ram_cache[key]
+                return (self._decode_tensor(key, cached)
+                        if self.ram_tier_format == "compressed"
+                        else cached.to(
+                            self.device,
+                            non_blocking=(key not in self._ram_cache_pageable_keys)))
+            return self._load_tensor(key)
+
         for mod_name, pnames in self._streamed_module_params().items():
             module = self.model.get_submodule(mod_name)
 
@@ -1410,17 +1455,7 @@ class StreamingLosslessModel:
                     self.control.checkpoint()
                     for pn in pns:
                         key = mn + "." + pn
-                        if self._tier.get(key) == "ram":
-                            cached = self._ram_cache[key]
-                            tensor = (self._decode_tensor(key, cached)
-                                      if self.ram_tier_format == "compressed"
-                                      else cached.to(
-                                          self.device,
-                                          non_blocking=(key not in
-                                                        self._ram_cache_pageable_keys)))
-                        else:
-                            tensor = self._load_tensor(key)
-                        self._set_param(module, pn, tensor)
+                        self._set_param(module, pn, load_key(key))
                     return None
                 return pre
 
@@ -1436,6 +1471,36 @@ class StreamingLosslessModel:
 
             module.register_forward_pre_hook(make_pre(mod_name, pnames), with_kwargs=True)
             module.register_forward_hook(make_post(mod_name, pnames), with_kwargs=True)
+
+        # A tied checkpoint stores only model.embed_tokens.weight. If that
+        # tensor streams, the embedding module's post-hook replaces its live
+        # parameter with a new meta placeholder immediately after lookup.
+        # lm_head was tied to the *old* placeholder during startup, so without
+        # this second live range it computes plausible-looking garbage. Load
+        # the identical stored tensor again for the output projection; this
+        # preserves the planner's low-VRAM headroom model because the full
+        # embedding/head is not kept alive across decoder layers.
+        embed_key = "model.embed_tokens.weight"
+        tied_streamed = (
+            bool(getattr(self.model.config, "tie_word_embeddings", False))
+            and self._tier.get(embed_key) in ("disk", "ram"))
+        if tied_streamed:
+            head = self.model.lm_head
+
+            def tied_head_pre(module, args, kwargs):
+                self.control.checkpoint()
+                self._set_param(module, "weight", load_key(embed_key))
+                return None
+
+            def tied_head_post(module, args, kwargs, output):
+                torch.cuda.synchronize()
+                self._to_meta_param(module, "weight")
+                if self.empty_cache_every:
+                    torch.cuda.empty_cache()
+                return output
+
+            head.register_forward_pre_hook(tied_head_pre, with_kwargs=True)
+            head.register_forward_hook(tied_head_post, with_kwargs=True)
 
     def _kv_cache_length(self) -> int:
         """Return the cached prefix length or fail closed on an unknown cache.

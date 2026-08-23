@@ -8,4 +8,9 @@ dist/
 venv/
 *.npy
 /tmp_nvme/
-results/*.json.partial
+# Result checkpoints and streamed command logs are local recovery material.
+# Publish completed stage JSON instead; nested campaigns write checkpoints
+# below their model directory rather than directly under results/.
+results/**/*.json.partial
+results/cross_model_*/**/*.log
+results/cross_model_*/INTERIM_RESULTS.md

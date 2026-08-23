@@ -70,7 +70,8 @@ def load_hf_offload_baseline(model_name: str, offload_dir: str, *,
     offload_path = pathlib.Path(offload_dir)
     offload_path.mkdir(parents=True, exist_ok=True)
     started = time.perf_counter()
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    tokenizer = AutoTokenizer.from_pretrained(
+        model_name, fix_mistral_regex=True)
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
         dtype=torch.bfloat16,

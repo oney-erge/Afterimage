@@ -1,0 +1,157 @@
+{
+  "campaign_id": "cross-family-scale-v1",
+  "completed_at_unix": 1787422158.5200653,
+  "config": "/mnt/c/for fun/Afterimage/configs/cross_model_benchmark_v1.json",
+  "deferred_models": [
+    {
+      "model_id": "google/gemma-2-27b-it",
+      "official_source": "https://huggingface.co/google/gemma-2-27b-it",
+      "reason": "Structurally compatible text-only 27B target, but its license-gated files return HTTP 401 in the unauthenticated benchmark environment."
+    }
+  ],
+  "excluded_hypothesis_families": [
+    {
+      "ids": [
+        "H0",
+        "H2",
+        "H3",
+        "H8",
+        "H11",
+        "H16",
+        "H18"
+      ],
+      "reason": "Speculation/controller transfer needs a small resident draft with exactly the target tokenizer and vocabulary; neither cross-family target has a safe draft that fits beside the target on this 8 GB GPU. Existing Qwen3-14B results remain the evidence for these methods."
+    },
+    {
+      "ids": [
+        "H6",
+        "H7"
+      ],
+      "reason": "Artifact-design protocols use representation-plan and MoE expert fixtures, not the dense online generation runner. Their cross-checkpoint coverage is reported separately."
+    }
+  ],
+  "failures": [],
+  "models": [
+    {
+      "id": "phi4-mini-3.8b",
+      "model_id": "microsoft/Phi-4-mini-instruct",
+      "role": "small",
+      "stages": [
+        {
+          "id": "preflight",
+          "status": "passed",
+          "summary": {
+            "architectures": [
+              "Phi3ForCausalLM"
+            ],
+            "completed_at_unix": 1787422156.3486753,
+            "declared_expected_weight_bytes": 7672066216,
+            "dimensions": {
+              "hidden_size": 3072,
+              "intermediate_size": 8192,
+              "num_attention_heads": 24,
+              "num_hidden_layers": 32,
+              "num_key_value_heads": 8,
+              "tie_word_embeddings": true,
+              "vocab_size": 200064
+            },
+            "elapsed_seconds": 2.511197566986084,
+            "estimated_bf16_head_bytes": 1229193216,
+            "has_chat_template": true,
+            "layout": {
+              "afterimage_compatible": true,
+              "has_embed_tokens": true,
+              "has_layers": true,
+              "has_lm_head": true,
+              "has_model": true,
+              "model_class": "Phi3ForCausalLM"
+            },
+            "model_id": "microsoft/Phi-4-mini-instruct",
+            "model_type": "phi3",
+            "revision": "cfbefacb99257ffa30c83adab238a50856ac3083",
+            "status": "passed",
+            "storage": {
+              "capacity_passed": true,
+              "free_bytes": 895475445760,
+              "path": "/root/afterimage/cross_model",
+              "required_preflight_bytes": 14576925810
+            },
+            "tokenizer_class": "TokenizersBackend",
+            "tokenizer_size": 200029,
+            "transformers_weight_bytes": 7672066216,
+            "transformers_weight_files": [
+              "model-00001-of-00002.safetensors",
+              "model-00002-of-00002.safetensors"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "mistral-small-24b",
+      "model_id": "mistralai/Mistral-Small-24B-Instruct-2501",
+      "role": "large",
+      "stages": [
+        {
+          "id": "preflight",
+          "status": "passed",
+          "summary": {
+            "architectures": [
+              "MistralForCausalLM"
+            ],
+            "completed_at_unix": 1787422158.4818757,
+            "declared_expected_weight_bytes": 47144848872,
+            "dimensions": {
+              "hidden_size": 5120,
+              "intermediate_size": 32768,
+              "num_attention_heads": 32,
+              "num_hidden_layers": 40,
+              "num_key_value_heads": 8,
+              "tie_word_embeddings": false,
+              "vocab_size": 131072
+            },
+            "elapsed_seconds": 2.0611884593963623,
+            "estimated_bf16_head_bytes": 1342177280,
+            "has_chat_template": true,
+            "layout": {
+              "afterimage_compatible": true,
+              "has_embed_tokens": true,
+              "has_layers": true,
+              "has_lm_head": true,
+              "has_model": true,
+              "model_class": "MistralForCausalLM"
+            },
+            "model_id": "mistralai/Mistral-Small-24B-Instruct-2501",
+            "model_type": "mistral",
+            "revision": "9527884be6e5616bdd54de542f9ae13384489724",
+            "status": "passed",
+            "storage": {
+              "capacity_passed": true,
+              "free_bytes": 895475449856,
+              "path": "/root/afterimage/cross_model",
+              "required_preflight_bytes": 89575212856
+            },
+            "tokenizer_class": "TokenizersBackend",
+            "tokenizer_size": 131072,
+            "transformers_weight_bytes": 47144848872,
+            "transformers_weight_files": [
+              "model-00001-of-00010.safetensors",
+              "model-00002-of-00010.safetensors",
+              "model-00003-of-00010.safetensors",
+              "model-00004-of-00010.safetensors",
+              "model-00005-of-00010.safetensors",
+              "model-00006-of-00010.safetensors",
+              "model-00007-of-00010.safetensors",
+              "model-00008-of-00010.safetensors",
+              "model-00009-of-00010.safetensors",
+              "model-00010-of-00010.safetensors"
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "schema_version": 1,
+  "started_at_unix": 1787422147.6791115,
+  "status": "complete"
+}

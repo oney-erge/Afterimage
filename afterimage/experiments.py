@@ -418,7 +418,14 @@ HYPOTHESES = {
         ("draft_model_id", "critical_path_profile"),
         "Kill if the resident action does not differ, peak VRAM rises more "
         "than 5%, or paired throughput gain is below 5%.",
-        minimum_repeats=3, minimum_new_tokens=8),
+        minimum_repeats=3, minimum_new_tokens=8,
+        measured=MeasuredOutcome(
+            "contradicted",
+            "No -- the resident set changed at matched VRAM, but combining "
+            "it with speculation was slower than fixed speculation alone.",
+            "8.836 versus 8.350 s/token in the four-family L1 screen; "
+            "paired median effect -2.75% and only 1/4 cells faster.",
+            effect_pct=-2.75, n_pairs=4)),
     "h17-tensor-extents": Hypothesis(
         "h17-tensor-extents", "Tensor-scoped overlap-preserving micro-extents",
         "Coalescing only inside each tensor keeps H14's fixed-request savings "
@@ -427,7 +434,14 @@ HYPOTHESES = {
         "committed_tokens_per_second", 0.05, "reference_execution_equivalent",
         (), "Kill if calls fall less than 20%, byte amplification exceeds 5%, "
         "or paired throughput gain is below 5%.",
-        minimum_repeats=3, minimum_new_tokens=8),
+        minimum_repeats=3, minimum_new_tokens=8,
+        measured=MeasuredOutcome(
+            "mechanism_only",
+            "No -- tensor-scoped extents reduced calls without the H14 "
+            "layer-wide boundary, but the buffer/view path was still slower.",
+            "57.05% fewer calls, 0.54% physical-byte amplification and exact "
+            "tokens, but 19.747 versus 16.252 s/token; no cell won.",
+            effect_pct=-18.37, n_pairs=4)),
     "h18-rollback-cached-spec": Hypothesis(
         "h18-rollback-cached-spec", "Rollback-cached target verification",
         "Cropping the exact target KV cache to the accepted prefix avoids "
@@ -437,7 +451,15 @@ HYPOTHESES = {
         ("draft_model_id",),
         "Kill on any greedy-token mismatch at temperature zero, unavailable "
         "cache crop support, over 5% peak-VRAM growth, or under 5% gain.",
-        minimum_repeats=3, minimum_new_tokens=8),
+        minimum_repeats=3, minimum_new_tokens=8,
+        measured=MeasuredOutcome(
+            "contradicted",
+            "No -- exact cache rollback worked, but fixed speculation was "
+            "already committing too many tokens per sweep for reuse to pay.",
+            "L2: 16 crops and 326 cached prefix tokens, identical outputs, "
+            "+0.49% VRAM; paired median effect -0.59%, 90% interval "
+            "[-4.62%, +1.09%], only 3/8 cells faster.",
+            effect_pct=-0.59, n_pairs=8)),
 }
 
 

@@ -7,8 +7,6 @@ standard this project has held every other piece of the engine to.
 Requires CUDA + triton, like the rest of the GPU test suite; skips cleanly
 otherwise.
 """
-import types
-
 import pytest
 import torch
 from safetensors.torch import save_file
@@ -143,6 +141,42 @@ def test_tied_model_still_works_with_row_gather_storage_present(tmp_path, monkey
     sm.close()
 
     assert torch.equal(logits, ref_logits)
+
+
+def test_tied_embedding_streams_again_for_lm_head_at_low_vram(
+        tmp_path, monkeypatch):
+    """A disk-tier tied weight has two disjoint live ranges per forward."""
+    from afterimage.runtime.config import EngineConfig
+    from afterimage.runtime.streaming_engine import StreamingLosslessModel
+
+    cfg, ref_model = _build_tiny_model(
+        tie=True, seed=101, vocab_size=2048, hidden_size=64,
+        intermediate_size=128)
+    store_dir = _make_store(tmp_path, monkeypatch, ref_model, cfg,
+                            "fake/tied-streamed-engine", "tied_streamed")
+    torch.manual_seed(102)
+    ids = torch.randint(0, cfg.vocab_size, (1, 5), device="cuda")
+    ref_model = ref_model.to("cuda")
+    with torch.no_grad():
+        reference = ref_model(input_ids=ids).logits
+    del ref_model
+    torch.cuda.empty_cache()
+
+    # 134.62 MB leaves enough planner headroom for one materialized tensor
+    # but essentially no permanent-residency capacity, forcing the tied
+    # embedding/head matrix onto the disk tier in this small fixture.
+    engine = StreamingLosslessModel(
+        "fake/tied-streamed-engine", store_dir, device="cuda",
+        config=EngineConfig(
+            vram_budget_gb=0.13462, decode_slice_elems=32,
+            io_prefetch_depth=0))
+    assert engine._tier["model.embed_tokens.weight"] == "disk"
+    with torch.no_grad():
+        actual = engine.forward_logits(ids)
+    assert engine.stats.layer_loads == cfg.num_hidden_layers
+    engine.close()
+
+    assert torch.equal(actual, reference)
 
 
 def test_generate_greedy_matches_reference_argmax_sequence(tmp_path, monkeypatch):

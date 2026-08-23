@@ -10,12 +10,13 @@
   <a href="https://github.com/iodriller/Afterimage/actions/workflows/ci.yml"><img src="https://github.com/iodriller/Afterimage/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="Apache-2.0"></a>
   <a href="pyproject.toml"><img src="https://img.shields.io/badge/python-3.10%2B-3776AB" alt="Python 3.10+"></a>
-  <a href="docs/ALL_HYPOTHESES_AND_BASELINES.md"><img src="https://img.shields.io/badge/evidence-H0--H15-4fd1a5" alt="H0-H15 evidence"></a>
+  <a href="docs/ALL_HYPOTHESES_AND_BASELINES.md"><img src="https://img.shields.io/badge/evidence-H0--H18-4fd1a5" alt="H0-H18 evidence"></a>
 </p>
 
 <p align="center">
   <a href="#quick-start">Quick start</a> ·
   <a href="docs/ALL_HYPOTHESES_AND_BASELINES.md">Results</a> ·
+  <a href="docs/CROSS_MODEL_BENCHMARK_2026-08-22.md">Cross-model benchmark</a> ·
   <a href="docs/ARCHITECTURE.md">Architecture</a> ·
   <a href="docs/CONFIGURATION.md">Configuration</a> ·
   <a href="docs/RESEARCH_METHODS.md">Research</a>
@@ -31,7 +32,7 @@ same memory. Every number below is a real run on real hardware, not a
 projection.
 
 It comes with a CLI, a web UI, an OpenAI-compatible server, and a Python API.
-There's also an opt-in research lab where sixteen speedup ideas get tested
+There's also an opt-in research lab where nineteen speedup ideas get tested
 against named controls and reported honestly, wins and losses both. If the
 full model already fits in your GPU, a normal in-memory engine will be faster;
 Afterimage is for when it doesn't.
@@ -59,9 +60,16 @@ The honest reading:
 - The 0.901 GB Afterimage point is not lossless execution. Blocking the output
   head changes BF16 reduction order even when the final token happens to agree.
 
-See [all H0-H15 hypotheses, controls, results, external comparisons, and the
+See [all H0-H18 hypotheses, controls, results, external comparisons, and the
 ranked conclusion](docs/ALL_HYPOTHESES_AND_BASELINES.md). The raw JSON is in
 [`results/`](results/).
+
+The broader [cross-family and scale campaign](docs/CROSS_MODEL_BENCHMARK_2026-08-22.md)
+adds Phi-4 Mini 3.8B and Mistral Small 24B. It finds a real Pareto boundary:
+Accelerate is fastest on both new checkpoints; AirLLM owns the exact low-VRAM
+24B point; and Afterimage certified MIPS reaches 27.539 s/token at 2.915 GB,
+**1.66x AirLLM** but 9.52% behind Accelerate. Across Phi, Qwen, and Mistral,
+the lossless store remains stable at 1.45–1.49x compression.
 
 ## Why Afterimage
 
@@ -166,7 +174,7 @@ afterimage serve --host 127.0.0.1 --port 8420
 ```
 
 The server exposes `/v1/chat/completions`, compression job controls,
-pause/resume/cancel, budget feasibility, runtime statistics, and the H0-H15
+pause/resume/cancel, budget feasibility, runtime statistics, and the H0-H18
 Experiment Lab.
 
 ## Research lab
@@ -190,10 +198,13 @@ Current research summary:
 - H1 is the strongest positive live 14B candidate, at +1.61% versus control.
 - H6 predicts a 38.56% preparation reduction and now has a scalable 441-tensor
   planner, but still needs held-out live execution.
+- H16 and H17 regressed. H18's exact KV rollback passed its mechanism gate but
+  stopped for L2 futility (-0.59% paired median; 90% interval -4.62% to +1.09%).
 - The remaining candidates are below gate, action-identical, or contradicted.
 
-No H1-H15 candidate has L3 confirmatory superiority evidence. Fixed speculation
-is a stable core configuration, not one of the failed adaptive candidates.
+No H1-H18 candidate has L3 confirmatory superiority evidence. Fixed speculation
+is a stable core configuration, not one of the failed adaptive candidates, and
+is the web UI's default profile.
 
 ## Documentation
 
@@ -203,7 +214,7 @@ is a stable core configuration, not one of the failed adaptive candidates.
 | [Architecture](docs/ARCHITECTURE.md) | Runtime, storage, memory-tier, speculation, and evidence diagrams |
 | [Configuration](docs/CONFIGURATION.md) | Stable profiles and advanced flags |
 | [How it works](docs/HOW_IT_WORKS.md) | Implementation walkthrough and AirLLM contrast |
-| [Research methods](docs/RESEARCH_METHODS.md) | H0-H15 definitions, controls, metrics, and kill gates |
+| [Research methods](docs/RESEARCH_METHODS.md) | H0-H18 definitions, controls, metrics, and kill gates |
 | [Hypothesis lineage](docs/HYPOTHESIS_LINEAGE.md) | Literature source and novelty boundary for each idea |
 | [Results log](docs/RESULTS_LOG.md) | Chronological corrections and raw-run interpretation |
 | [Contributing](CONTRIBUTING.md) | Development and verification workflow |

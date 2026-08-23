@@ -40,14 +40,14 @@ every measured claim in this codebase traces back to a real run in
 - `afterimage/probe/`, `afterimage/testing/`, and the modules marked
   `ARCHIVED` in their own docstrings — the killed Phase-0 branch, kept for
   traceability, not the current engine (`docs/archive/README.md`)
-- `docs/RESEARCH_METHODS.md` — the H0-H15 opt-in research layer's
+- `docs/RESEARCH_METHODS.md` — the H0-H18 opt-in research layer's
   hypotheses, protocols, and kill gates
 - `docs/RESULTS_LOG.md` — the append-only measurement ledger; a real run's
   numbers get appended here, never edited retroactively
 
 ## Adding a research hypothesis
 
-If you're extending the H0-H15 program: read
+If you're extending the H0-H18 program: read
 [RESEARCH_METHODS.md](docs/RESEARCH_METHODS.md) section 4 (the experiment
 contract) first. Every hypothesis needs a named `MethodProfile`, a named
 control, a numeric kill gate declared *before* running it, and its result
