@@ -60,17 +60,19 @@ case "$GPU_VENDOR" in
     ;;
   mac)
     log "macOS: this runs CPU-only, and that's a real limit worth stating plainly."
-    log "Afterimage's decode kernels need CUDA, which Macs don't have. A streamed"
-    log "14B model on CPU is slow enough to be a demo, not a daily tool."
-    log "If your Mac has enough unified memory to hold the model directly, a"
-    log "normal (non-streaming) runtime will just be faster -- Afterimage exists"
-    log "for the case where the model doesn't fit, which unified memory often avoids."
+    log "The fast GPU decode kernels need CUDA, which Macs don't have, so this"
+    log "falls back to a compiled CPU decoder. A streamed 14B model on CPU is"
+    log "slow enough to be a demo, not a daily tool. If your Mac has enough"
+    log "unified memory to hold the model directly, a normal (non-streaming)"
+    log "runtime will just be faster -- Afterimage exists for the case where"
+    log "the model doesn't fit, which unified memory often avoids."
     pip install torch
     pip install -e "$REPO_DIR[server]"
     ;;
   none)
     log "no GPU detected -- installing CPU-only torch (inference will be slow;"
-    log "the GPU decode kernels in afterimage/runtime/gpu_decode*.py require CUDA)"
+    log "the fast GPU decode kernels in afterimage/runtime/gpu_decode*.py need"
+    log "CUDA, so this falls back to a compiled CPU decoder instead)"
     pip install torch --index-url https://download.pytorch.org/whl/cpu
     pip install -e "$REPO_DIR[server]"
     ;;

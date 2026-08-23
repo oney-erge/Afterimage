@@ -7,7 +7,6 @@ Every inconclusive search falls back to the caller's full projection.
 from __future__ import annotations
 
 import dataclasses
-import math
 
 import torch
 
@@ -30,6 +29,18 @@ class MIPSIndex:
     dims: int
     block_rows: int
     weights64: torch.Tensor = dataclasses.field(repr=False)
+    # Per-block coord_min/coord_max/max_l1, stacked across ALL blocks at
+    # build time so certified_argmax can compute every block's upper bound
+    # in one batched pass instead of one small tensor op per block. Measured
+    # at ~0.15s of Python/dispatch overhead across 64 blocks on a
+    # 16384-row slice (195 separate .abs() calls), almost all outside the
+    # actual matmul work -- see docs/RESULTS_LOG.md speed audit. Values are
+    # identical to iterating index.blocks one at a time; only the batching
+    # changed, verified bit-for-bit against the per-block computation
+    # (tests/test_certified_mips.py).
+    coord_min_stack: torch.Tensor = dataclasses.field(repr=False, default=None)
+    coord_max_stack: torch.Tensor = dataclasses.field(repr=False, default=None)
+    max_l1_stack: torch.Tensor = dataclasses.field(repr=False, default=None)
 
     @property
     def nbytes(self) -> int:
@@ -37,6 +48,9 @@ class MIPSIndex:
         for block in self.blocks:
             for tensor in (block.center, block.coord_min, block.coord_max):
                 tensor_bytes += tensor.numel() * tensor.element_size()
+        for stacked in (self.coord_min_stack, self.coord_max_stack, self.max_l1_stack):
+            if stacked is not None:
+                tensor_bytes += stacked.numel() * stacked.element_size()
         return tensor_bytes
 
     @classmethod
@@ -54,7 +68,16 @@ class MIPSIndex:
             blocks.append(MIPSBlock(start, end, center, radius, max_l1,
                                    part.min(dim=0).values,
                                    part.max(dim=0).values))
-        return cls(blocks, int(cpu.shape[0]), int(cpu.shape[1]), block_rows, cpu)
+        if blocks:
+            coord_min_stack = torch.stack([b.coord_min for b in blocks])
+            coord_max_stack = torch.stack([b.coord_max for b in blocks])
+            max_l1_stack = torch.tensor([b.max_l1 for b in blocks], dtype=torch.float64)
+        else:
+            coord_min_stack = torch.empty(0, cpu.shape[1], dtype=torch.float64)
+            coord_max_stack = torch.empty(0, cpu.shape[1], dtype=torch.float64)
+            max_l1_stack = torch.empty(0, dtype=torch.float64)
+        return cls(blocks, int(cpu.shape[0]), int(cpu.shape[1]), block_rows, cpu,
+                   coord_min_stack, coord_max_stack, max_l1_stack)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -86,7 +109,11 @@ def certified_argmax(query: torch.Tensor, weights: torch.Tensor, index: MIPSInde
     if q.numel() != index.dims or weights.shape != (index.rows, index.dims):
         raise ValueError("query/weight shape does not match MIPS index")
     w_cpu = index.weights64
-    qmax = float(q.abs().max()) if q.numel() else 0.0
+    # q never changes across the block loop below; q.abs() was being
+    # recomputed once per block (64 times on a 16384-row/256-block-row
+    # index) for a result that's identical every time.
+    q_abs = q.abs()
+    qmax = float(q_abs.max()) if q.numel() else 0.0
     unit = 2.0 ** -24 if fp32_accumulation else 2.0 ** -8
     gamma = _gamma(index.dims, unit)
     gamma64 = _gamma(index.dims, 2.0 ** -53)
@@ -102,19 +129,27 @@ def certified_argmax(query: torch.Tensor, weights: torch.Tensor, index: MIPSInde
     # to BF16/FP16. Both stages must be enclosed before claiming the argmax.
     arithmetic_error = gamma + output_unit * (1.0 + gamma)
 
-    ordered = []
-    for block in index.blocks:
-        # A coordinate box is looser than a center/radius ball but admits a
-        # transparent outward-rounded bound. Each row lies inside the box,
-        # so selecting the favorable endpoint for every query coordinate is
-        # an upper bound on every real dot product in the block.
-        box_terms = torch.maximum(block.coord_min * q, block.coord_max * q)
-        real_upper = float(box_terms.sum())
-        real_upper += gamma64 * float(box_terms.abs().sum())
-        real_upper = math.nextafter(real_upper, float("inf"))
-        roundoff = arithmetic_error * qmax * block.max_l1
-        ordered.append((real_upper + roundoff, block))
-    ordered.sort(key=lambda item: item[0], reverse=True)
+    # A coordinate box is looser than a center/radius ball but admits a
+    # transparent outward-rounded bound. Each row lies inside the box, so
+    # selecting the favorable endpoint for every query coordinate is an
+    # upper bound on every real dot product in the block. Batched over all
+    # blocks at once (index.*_stack, built in MIPSIndex.build) instead of
+    # recomputing it with several small tensor ops per block -- the per-block
+    # Python loop this replaced was almost pure dispatch overhead relative
+    # to the actual evaluation work below. torch.nextafter matches
+    # math.nextafter bit-for-bit for float64 (verified), so this is the same
+    # outward rounding, just batched.
+    if index.blocks:
+        box_terms_all = torch.maximum(index.coord_min_stack * q, index.coord_max_stack * q)
+        real_upper_all = box_terms_all.sum(dim=1)
+        real_upper_all = real_upper_all + gamma64 * box_terms_all.abs().sum(dim=1)
+        real_upper_all = torch.nextafter(real_upper_all,
+                                         torch.full_like(real_upper_all, float("inf")))
+        roundoff_all = arithmetic_error * qmax * index.max_l1_stack
+        upper_all = (real_upper_all + roundoff_all).tolist()
+        ordered = sorted(zip(upper_all, index.blocks), key=lambda item: item[0], reverse=True)
+    else:
+        ordered = []
 
     best_index = -1
     best_lower = -float("inf")
@@ -128,7 +163,7 @@ def certified_argmax(query: torch.Tensor, weights: torch.Tensor, index: MIPSInde
             continue
         part = w_cpu[block.row_start:block.row_end]
         scores = part @ q
-        errors = (arithmetic_error + gamma64) * (part.abs() @ q.abs())
+        errors = (arithmetic_error + gamma64) * (part.abs() @ q_abs)
         lowers = scores - errors
         local = int(torch.argmax(lowers))
         if float(lowers[local]) > best_lower:
@@ -139,7 +174,7 @@ def certified_argmax(query: torch.Tensor, weights: torch.Tensor, index: MIPSInde
     # Competing evaluated rows need to be bounded too, not only pruned blocks.
     all_scores = w_cpu @ q if rows_evaluated == index.rows else None
     if all_scores is not None:
-        all_errors = (arithmetic_error + gamma64) * (w_cpu.abs() @ q.abs())
+        all_errors = (arithmetic_error + gamma64) * (w_cpu.abs() @ q_abs)
         competitor = torch.cat((all_scores[:best_index] + all_errors[:best_index],
                                 all_scores[best_index + 1:] + all_errors[best_index + 1:]))
         competitor_upper = float(competitor.max()) if competitor.numel() else -float("inf")
@@ -152,7 +187,7 @@ def certified_argmax(query: torch.Tensor, weights: torch.Tensor, index: MIPSInde
                 continue
             part = w_cpu[block.row_start:block.row_end]
             scores = part @ q
-            errors = (arithmetic_error + gamma64) * (part.abs() @ q.abs())
+            errors = (arithmetic_error + gamma64) * (part.abs() @ q_abs)
             for offset, upper in enumerate((scores + errors).tolist()):
                 if block.row_start + offset != best_index:
                     competitor_upper = max(competitor_upper, float(upper))

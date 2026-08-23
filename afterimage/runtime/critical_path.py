@@ -20,6 +20,14 @@ import time
 from collections import defaultdict, deque
 from typing import Iterator
 
+import numpy as np
+
+try:
+    import numba
+    _HAS_NUMBA = True
+except ImportError:
+    _HAS_NUMBA = False
+
 
 @dataclasses.dataclass(frozen=True)
 class TraceEvent:
@@ -117,6 +125,266 @@ def critical_path(events: list[TraceEvent],
     slack = {event_id: max(0.0, latest_start[event_id] - earliest[event_id])
              for event_id in order}
     return CriticalPathReport(makespan, tuple(path), earliest, latest_start, slack)
+
+
+@dataclasses.dataclass(frozen=True)
+class CompiledTopology:
+    """A trace's dependency graph, precomputed once so critical_path_fast can
+    re-score it many times -- varying only which events' durations get
+    overridden -- without repeating the topological sort or graph-building
+    work on every call.
+
+    This is the shape replay_planner.py's CEM/QUBO search needs: it scores
+    hundreds to thousands of candidate residency masks against the SAME
+    handful of traces, and profiling showed critical_path() itself (not just
+    its numeric DP) was 55% of that search's wall time on a 720-event trace,
+    3.68M of it plain max()/min() calls (docs/RESULTS_LOG.md speed audit).
+    compile_topology() does the graph work in Python once per trace;
+    critical_path_fast() re-runs only the numeric forward/backward passes,
+    compiled, per call.
+    """
+    event_ids: tuple[str, ...]      # index -> event id, in original events order
+    id_to_index: dict[str, int]
+    order: np.ndarray               # int32, topological order, as indices
+    parent_ptr: np.ndarray          # int32[n+1], CSR row pointers into parent_idx
+    parent_idx: np.ndarray          # int32, each event's parents in its own dependency order
+    child_ptr: np.ndarray           # int32[n+1], CSR row pointers into child_idx
+    child_idx: np.ndarray           # int32, each event's children in child-original-index order
+    base_duration: np.ndarray       # float64, max(0.0, event.duration_s) per index
+
+    @property
+    def n(self) -> int:
+        return len(self.event_ids)
+
+
+def compile_topology(events: list[TraceEvent]) -> CompiledTopology:
+    """Builds the same dependency graph and topological order critical_path()
+    computes internally, as integer-indexed CSR arrays instead of string-keyed
+    dicts. Raises the same errors critical_path() does (duplicate ids, a
+    dependency on a missing event, a cycle) -- just once here, at compile
+    time, rather than on every subsequent score.
+    """
+    n = len(events)
+    id_to_index: dict[str, int] = {}
+    for i, event in enumerate(events):
+        if event.id in id_to_index:
+            raise ValueError("trace event ids must be unique")
+        id_to_index[event.id] = i
+
+    children_lists: list[list[int]] = [[] for _ in range(n)]
+    parents_lists: list[list[int]] = [[] for _ in range(n)]
+    indegree = [0] * n
+    for i, event in enumerate(events):
+        for parent_id in event.dependencies:
+            p = id_to_index.get(parent_id)
+            if p is None:
+                raise ValueError("event %s depends on missing event %s" % (event.id, parent_id))
+            children_lists[p].append(i)
+            parents_lists[i].append(p)
+            indegree[i] += 1
+
+    # Kahn's algorithm, index-based -- same FIFO order as critical_path()'s
+    # string-keyed version, since both seed from and append children in
+    # ascending original-event-index order.
+    queue = deque(i for i in range(n) if indegree[i] == 0)
+    order: list[int] = []
+    remaining = list(indegree)
+    while queue:
+        i = queue.popleft()
+        order.append(i)
+        for c in children_lists[i]:
+            remaining[c] -= 1
+            if remaining[c] == 0:
+                queue.append(c)
+    if len(order) != n:
+        raise ValueError("trace dependency graph contains a cycle")
+
+    parent_ptr = np.zeros(n + 1, dtype=np.int32)
+    for i in range(n):
+        parent_ptr[i + 1] = parent_ptr[i] + len(parents_lists[i])
+    parent_idx = np.empty(int(parent_ptr[-1]), dtype=np.int32)
+    for i in range(n):
+        parent_idx[parent_ptr[i]:parent_ptr[i + 1]] = parents_lists[i]
+
+    child_ptr = np.zeros(n + 1, dtype=np.int32)
+    for i in range(n):
+        child_ptr[i + 1] = child_ptr[i] + len(children_lists[i])
+    child_idx = np.empty(int(child_ptr[-1]), dtype=np.int32)
+    for i in range(n):
+        child_idx[child_ptr[i]:child_ptr[i + 1]] = children_lists[i]
+
+    base_duration = np.array([max(0.0, event.duration_s) for event in events], dtype=np.float64)
+
+    return CompiledTopology(
+        event_ids=tuple(event.id for event in events),
+        id_to_index=id_to_index,
+        order=np.array(order, dtype=np.int32),
+        parent_ptr=parent_ptr, parent_idx=parent_idx,
+        child_ptr=child_ptr, child_idx=child_idx,
+        base_duration=base_duration,
+    )
+
+
+def _critical_path_numeric_python(order, parent_ptr, parent_idx, child_ptr, child_idx, duration):
+    """Pure-Python numeric core -- the fallback when numba isn't installed,
+    and the thing the compiled kernel is checked against. Same algorithm as
+    critical_path()'s forward/backward passes, over index arrays instead of
+    dicts; see _critical_path_numeric_numba's tie-break notes below."""
+    n = order.shape[0]
+    earliest = np.empty(n, dtype=np.float64)
+    finish = np.empty(n, dtype=np.float64)
+    predecessor = np.full(n, -1, dtype=np.int32)
+    for oi in range(n):
+        i = order[oi]
+        p0, p1 = parent_ptr[i], parent_ptr[i + 1]
+        if p1 > p0:
+            best = parent_idx[p0]
+            best_finish = finish[best]
+            for k in range(p0 + 1, p1):
+                cand = parent_idx[k]
+                if finish[cand] > best_finish:
+                    best = cand
+                    best_finish = finish[cand]
+            earliest[i] = best_finish
+            predecessor[i] = best
+        else:
+            earliest[i] = 0.0
+        finish[i] = earliest[i] + duration[i]
+
+    makespan = finish[order[0]]
+    last = order[0]
+    for oi in range(1, n):
+        i = order[oi]
+        if finish[i] > makespan:
+            makespan = finish[i]
+            last = i
+
+    latest_start = np.empty(n, dtype=np.float64)
+    for oi in range(n - 1, -1, -1):
+        i = order[oi]
+        c0, c1 = child_ptr[i], child_ptr[i + 1]
+        if c1 > c0:
+            lf = latest_start[child_idx[c0]]
+            for k in range(c0 + 1, c1):
+                v = latest_start[child_idx[k]]
+                if v < lf:
+                    lf = v
+        else:
+            lf = makespan
+        latest_start[i] = lf - duration[i]
+
+    slack = np.empty(n, dtype=np.float64)
+    for i in range(n):
+        s = latest_start[i] - earliest[i]
+        slack[i] = s if s > 0.0 else 0.0
+
+    return earliest, finish, predecessor, latest_start, slack, makespan, last
+
+
+if _HAS_NUMBA:
+    @numba.njit(cache=True)
+    def _critical_path_numeric_numba(order, parent_ptr, parent_idx, child_ptr, child_idx, duration):
+        """Same algorithm as _critical_path_numeric_python, compiled.
+
+        Tie-breaks matter here, not just totals: critical_path()'s forward
+        pass picks max(deps, key=finish.get), and Python's max() returns the
+        FIRST maximal element on a tie -- replicated here with a strict '>'
+        comparison over each event's parents in their original dependency
+        order (parent_idx preserves that order; see compile_topology). The
+        makespan/"last" selection has the same first-wins-tie property,
+        walking `order` (not raw index order) with a strict '>'. The
+        backward pass's min() over children only needs the numeric result,
+        not which child achieves it, so no tie-break there matters.
+        """
+        n = order.shape[0]
+        earliest = np.empty(n, dtype=np.float64)
+        finish = np.empty(n, dtype=np.float64)
+        predecessor = np.full(n, -1, dtype=np.int32)
+        for oi in range(n):
+            i = order[oi]
+            p0, p1 = parent_ptr[i], parent_ptr[i + 1]
+            if p1 > p0:
+                best = parent_idx[p0]
+                best_finish = finish[best]
+                for k in range(p0 + 1, p1):
+                    cand = parent_idx[k]
+                    if finish[cand] > best_finish:
+                        best = cand
+                        best_finish = finish[cand]
+                earliest[i] = best_finish
+                predecessor[i] = best
+            else:
+                earliest[i] = 0.0
+            finish[i] = earliest[i] + duration[i]
+
+        makespan = finish[order[0]]
+        last = order[0]
+        for oi in range(1, n):
+            i = order[oi]
+            if finish[i] > makespan:
+                makespan = finish[i]
+                last = i
+
+        latest_start = np.empty(n, dtype=np.float64)
+        for oi in range(n - 1, -1, -1):
+            i = order[oi]
+            c0, c1 = child_ptr[i], child_ptr[i + 1]
+            if c1 > c0:
+                lf = latest_start[child_idx[c0]]
+                for k in range(c0 + 1, c1):
+                    v = latest_start[child_idx[k]]
+                    if v < lf:
+                        lf = v
+            else:
+                lf = makespan
+            latest_start[i] = lf - duration[i]
+
+        slack = np.empty(n, dtype=np.float64)
+        for i in range(n):
+            s = latest_start[i] - earliest[i]
+            slack[i] = s if s > 0.0 else 0.0
+
+        return earliest, finish, predecessor, latest_start, slack, makespan, last
+
+
+def critical_path_fast(topology: CompiledTopology,
+                       duration_overrides: dict[str, float] | None = None) -> CriticalPathReport:
+    """critical_path(), scored against a precompiled CompiledTopology instead
+    of a raw event list -- same return type, same values, for a graph whose
+    topology was already validated and sorted by compile_topology(). Use this
+    (with one compile_topology() call reused across many scores) anywhere a
+    trace gets replayed repeatedly with different duration_overrides; use
+    critical_path() directly for a one-off score.
+    """
+    n = topology.n
+    if n == 0:
+        return CriticalPathReport(0.0, (), {}, {}, {})
+
+    duration = topology.base_duration.copy()
+    if duration_overrides:
+        for event_id, value in duration_overrides.items():
+            idx = topology.id_to_index.get(event_id)
+            if idx is not None:
+                duration[idx] = max(0.0, float(value))
+
+    numeric = _critical_path_numeric_numba if _HAS_NUMBA else _critical_path_numeric_python
+    earliest, finish, predecessor, latest_start, slack, makespan, last = numeric(
+        topology.order, topology.parent_ptr, topology.parent_idx,
+        topology.child_ptr, topology.child_idx, duration)
+
+    path_idx = []
+    cur = int(last)
+    while cur != -1:
+        path_idx.append(cur)
+        cur = int(predecessor[cur])
+    path_idx.reverse()
+
+    event_ids = topology.event_ids
+    path = tuple(event_ids[i] for i in path_idx)
+    earliest_d = {event_ids[i]: float(earliest[i]) for i in range(n)}
+    latest_d = {event_ids[i]: float(latest_start[i]) for i in range(n)}
+    slack_d = {event_ids[i]: float(slack[i]) for i in range(n)}
+    return CriticalPathReport(float(makespan), path, earliest_d, latest_d, slack_d)
 
 
 @dataclasses.dataclass

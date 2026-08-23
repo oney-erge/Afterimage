@@ -19,7 +19,10 @@ from collections import defaultdict
 
 import numpy as np
 
-from .critical_path import CriticalPathProfile, TraceEvent, critical_path
+from .critical_path import (
+    CompiledTopology, CriticalPathProfile, TraceEvent, compile_topology, critical_path,
+    critical_path_fast,
+)
 from .vram_planner import TierPlan, plan_from_manifest
 
 
@@ -145,15 +148,32 @@ class ReplayResidencyPlan:
 
 
 def _mean_makespan(traces: list[list[TraceEvent]], selected: set[str],
-                   event_ids: list[dict[str, tuple[str, ...]]]) -> float:
+                   event_ids: list[dict[str, tuple[str, ...]]],
+                   topologies: list[CompiledTopology] | None = None) -> float:
+    """Scores one candidate residency set by replaying every calibration
+    trace with its selected tensors' prepare spans zeroed out.
+
+    `topologies`, when given, must be compile_topology(events) for each
+    trace in `traces`, in the same order -- the CEM/QUBO searches above call
+    this hundreds to thousands of times against the SAME traces, varying
+    only `selected`, so building each trace's dependency graph and
+    topological order once and rescoring it with critical_path_fast (rather
+    than rebuilding both from scratch on every call, as bare critical_path()
+    does) is what makes that search loop's 55%-in-critical_path() profile
+    tractable (docs/RESULTS_LOG.md speed audit). Falls back to critical_path()
+    directly when omitted, for any caller that only scores a trace once.
+    """
     durations = []
-    for events, trace_ids in zip(traces, event_ids):
+    for i, (events, trace_ids) in enumerate(zip(traces, event_ids)):
         overrides = {
             event_id: 0.0
             for key in selected
             for event_id in trace_ids.get(key, ())
         }
-        durations.append(critical_path(events, overrides).duration_s)
+        if topologies is not None:
+            durations.append(critical_path_fast(topologies[i], overrides).duration_s)
+        else:
+            durations.append(critical_path(events, overrides).duration_s)
     return float(np.mean(durations))
 
 
@@ -282,6 +302,7 @@ def optimize_replay_residency(
             "calibration traces cover %.1f%% of candidates, below %.1f%%; "
             "missing examples: %s" %
             (100 * coverage, 100 * minimum_coverage, ", ".join(missing[:5])))
+    topologies = [compile_topology(events) for events in traces]
 
     rng = np.random.default_rng(seed)
     total_size = max(int(sizes.sum()), 1)
@@ -311,7 +332,7 @@ def optimize_replay_residency(
                 used += int(sizes[idx])
         return mask
 
-    baseline_s = _mean_makespan(traces, set(), event_ids)
+    baseline_s = _mean_makespan(traces, set(), event_ids, topologies)
     measured_profile = CriticalPathProfile.from_traces(traces)
     seed_plans = {"traffic_density": baseline_plan}
     for policy in ("profiled_knapsack", "critical_path"):
@@ -324,7 +345,7 @@ def optimize_replay_residency(
         mask = np.asarray([key in set(plan.vram_keys) for key in keys])
         mask = repair(mask)
         selected = {key for key, keep in zip(keys, mask) if keep}
-        seeded.append((_mean_makespan(traces, selected, event_ids), policy, mask))
+        seeded.append((_mean_makespan(traces, selected, event_ids, topologies), policy, mask))
     seeded.sort(key=lambda item: item[0])
     control_s, control_policy, best_mask = seeded[0]
     best_mask = best_mask.copy()
@@ -337,7 +358,7 @@ def optimize_replay_residency(
         for _sample in range(population - 1):
             mask = repair(rng.random(len(keys)) < probability)
             selected = {key for key, keep in zip(keys, mask) if keep}
-            score = _mean_makespan(traces, selected, event_ids)
+            score = _mean_makespan(traces, selected, event_ids, topologies)
             candidates.append((score, mask))
         evaluations += population - 1
         candidates.sort(key=lambda pair: pair[0])
@@ -431,12 +452,13 @@ def optimize_qubo_residency(
             "calibration traces cover %.1f%% of candidates, below %.1f%%; "
             "missing examples: %s" %
             (100 * coverage, 100 * minimum_coverage, ", ".join(missing[:5])))
+    topologies = [compile_topology(events) for events in traces]
 
     def score(mask: np.ndarray) -> float:
         selected = {key for key, keep in zip(keys, mask) if keep}
-        return _mean_makespan(traces, selected, event_ids)
+        return _mean_makespan(traces, selected, event_ids, topologies)
 
-    baseline_s = _mean_makespan(traces, set(), event_ids)
+    baseline_s = _mean_makespan(traces, set(), event_ids, topologies)
     measured_profile = CriticalPathProfile.from_traces(traces)
     seed_plans = {"traffic_density": baseline_plan}
     for policy in ("profiled_knapsack", "critical_path"):
@@ -625,6 +647,7 @@ def optimize_extent_qubo_residency(
             "calibration traces cover %.1f%% of candidates, below %.1f%%; "
             "missing examples: %s" %
             (100 * coverage, 100 * minimum_coverage, ", ".join(missing[:5])))
+    topologies = [compile_topology(events) for events in traces]
 
     extents = build_storage_extents(
         manifest, keys, max_extent_bytes=max_extent_bytes,
@@ -637,9 +660,9 @@ def optimize_extent_qubo_residency(
                 for key in extent.keys}
 
     def score_mask(mask: np.ndarray) -> float:
-        return _mean_makespan(traces, selected_from_mask(mask), event_ids)
+        return _mean_makespan(traces, selected_from_mask(mask), event_ids, topologies)
 
-    baseline_s = _mean_makespan(traces, set(), event_ids)
+    baseline_s = _mean_makespan(traces, set(), event_ids, topologies)
     measured_profile = CriticalPathProfile.from_traces(traces)
     seed_plans = {"traffic_density": baseline_plan}
     for policy in ("profiled_knapsack", "critical_path"):
@@ -651,7 +674,7 @@ def optimize_extent_qubo_residency(
     for policy, plan in seed_plans.items():
         selected = set(plan.vram_keys)
         seeded_controls.append((
-            _mean_makespan(traces, selected, event_ids), policy, selected))
+            _mean_makespan(traces, selected, event_ids, topologies), policy, selected))
     seeded_controls.sort(key=lambda item: item[0])
     control_s, control_policy, control_keys = seeded_controls[0]
     best_s = control_s

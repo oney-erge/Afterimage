@@ -47,7 +47,8 @@ if ($GpuVendor -eq "nvidia") {
     pip install -e "$RepoDir[gpu,server]"
 } else {
     Log "no supported GPU detected -- installing CPU-only torch (inference will be slow;"
-    Log "the GPU decode kernels in afterimage/runtime/gpu_decode*.py require CUDA)"
+    Log "the fast GPU decode kernels in afterimage/runtime/gpu_decode*.py need CUDA,"
+    Log "so this falls back to a compiled CPU decoder instead)"
     pip install torch --index-url https://download.pytorch.org/whl/cpu
     pip install -e "$RepoDir[server]"
 }

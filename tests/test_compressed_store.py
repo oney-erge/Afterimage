@@ -1,6 +1,10 @@
+import pytest
 import torch
 
-from afterimage.runtime.compressed_store import compress_layer, decompress_layer_cpu_reference
+from afterimage.runtime.compressed_store import (
+    compress_layer, decompress_layer_cpu_reference, decompress_layer_gpu, decompress_rows_gpu,
+)
+from afterimage.runtime.cpu_decode import _HAS_NUMBA
 
 
 def test_full_weight_reconstruction_bit_exact_cpu():
@@ -90,3 +94,47 @@ def test_shape_preserved_through_roundtrip():
         recon = decompress_layer_cpu_reference(layer)
         assert recon.shape == shape
         assert torch.equal(recon, W)
+
+
+@pytest.mark.skipif(not _HAS_NUMBA, reason="numba not installed")
+def test_decompress_layer_gpu_dispatches_to_cpu_decoder_when_no_cuda():
+    """decompress_layer_gpu's name is legacy; on device='cpu' it must route
+    through cpu_decode.py's numba decoder (there is no CUDA to fall back to)
+    and still be bit-exact -- this is the path a machine with no GPU at all
+    (e.g. macOS) actually runs at inference time."""
+    torch.manual_seed(20)
+    W = (torch.randn(128, 512) * 0.02).to(torch.bfloat16)
+    layer = compress_layer(W, chunk_size=256)
+
+    out = decompress_layer_gpu(layer, device="cpu")
+    ref = decompress_layer_cpu_reference(layer)
+    assert torch.equal(out.view(torch.int16), ref.view(torch.int16))
+    assert torch.equal(out.view(torch.int16), W.view(torch.int16))
+
+
+@pytest.mark.skipif(not _HAS_NUMBA, reason="numba not installed")
+def test_sliced_cpu_decompress_matches_unsliced():
+    """Same guarantee test_sliced_decompress.py checks for the GPU kernel,
+    for the CPU dispatch path: forcing many slices must not change a single
+    decoded weight."""
+    torch.manual_seed(21)
+    W = (torch.randn(4096, 512) * 0.02).to(torch.bfloat16)
+    layer = compress_layer(W, chunk_size=1024)
+
+    big = decompress_layer_gpu(layer, device="cpu", max_slice_elems=1 << 30)
+    small = decompress_layer_gpu(layer, device="cpu", max_slice_elems=1 << 17)
+
+    assert torch.equal(big.view(torch.int16), small.view(torch.int16))
+    assert torch.equal(small.view(torch.int16), W.view(torch.int16))
+
+
+@pytest.mark.skipif(not _HAS_NUMBA, reason="numba not installed")
+def test_decompress_rows_cpu_matches_full_layer_slice():
+    torch.manual_seed(22)
+    W = (torch.randn(200, 256) * 0.02).to(torch.bfloat16)
+    layer = compress_layer(W, chunk_size=64)
+
+    full = decompress_layer_gpu(layer, device="cpu")
+    rows = decompress_rows_gpu(layer, 30, 90, device="cpu")
+
+    assert torch.equal(rows.view(torch.int16), full[30:90].view(torch.int16))

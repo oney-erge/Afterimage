@@ -158,9 +158,36 @@ def _slice_encoded(enc: ChunkedEncoded, c0: int, c1: int) -> ChunkedEncoded:
     )
 
 
+def _decode_exponent(enc: ChunkedEncoded, device: str) -> torch.Tensor:
+    """Decodes enc's exponent stream to a length-n_symbols uint8 tensor on
+    `device`. On a CUDA device this is the Triton kernel in gpu_decode_v2.py;
+    otherwise it's the numba-compiled decoder in cpu_decode.py -- the same
+    chunk-independent algorithm either way (huffman_chunked.py), so which one
+    runs is a hardware choice, not a behavioral one. Both are bit-exact
+    against decode_chunked_cpu_reference (tests/test_cpu_decode.py,
+    tests/test_huffman_chunked.py).
+    """
+    if str(device) == "cpu":
+        from .cpu_decode import _HAS_NUMBA, decode_chunks_numba
+        if not _HAS_NUMBA:
+            raise RuntimeError(
+                "No CUDA device found, and CPU decode needs the 'numba' "
+                "package to run. It ships as a core dependency of this "
+                "project -- if it's missing, reinstall with `pip install "
+                "-e .` (or `.[server]`).")
+        arr = decode_chunks_numba(enc)[: enc.n_symbols]
+        return torch.from_numpy(arr.copy())
+    from .gpu_decode_v2 import decode_gpu_v2
+    return decode_gpu_v2(enc, device=device)
+
+
 def decompress_layer_gpu(layer: CompressedLayer, device: str = "cuda",
                          max_slice_elems: int = 1 << 25) -> torch.Tensor:
     """Reconstructs the EXACT original bf16 tensor.
+
+    Despite the name (kept for callers already using it), this dispatches by
+    device: CUDA uses the Triton kernel, anything else uses the CPU decoder
+    in cpu_decode.py via _decode_exponent -- see its docstring.
 
     Slicing happens at the DECODE level, not just the recombine. An earlier
     version decoded the whole stream first and only sliced the bit math
@@ -176,13 +203,11 @@ def decompress_layer_gpu(layer: CompressedLayer, device: str = "cuda",
     allocated in full (it is the layer's real weight and has to exist), so
     peak is output + one slice of scratch, not output + a full second copy.
     """
-    from .gpu_decode_v2 import decode_gpu_v2
-
     enc = layer.encoded
     n = enc.n_symbols
 
     if n <= max_slice_elems:
-        exponent = decode_gpu_v2(enc, device=device)
+        exponent = _decode_exponent(enc, device).to(device=device)
         sm = layer.sign_mantissa.to(device=device)
         return _recombine(exponent[:n], sm[:n], layer.shape)
 
@@ -192,7 +217,7 @@ def decompress_layer_gpu(layer: CompressedLayer, device: str = "cuda",
     for c0 in range(0, enc.n_chunks, chunks_per_slice):
         c1 = min(c0 + chunks_per_slice, enc.n_chunks)
         sub = _slice_encoded(enc, c0, c1)
-        exp = decode_gpu_v2(sub, device=device)
+        exp = _decode_exponent(sub, device).to(device=device)
 
         s0 = c0 * enc.chunk_size
         s1 = min(c1 * enc.chunk_size, n)
@@ -239,8 +264,6 @@ def decompress_rows_gpu(layer: CompressedLayer, row_start: int, row_end: int,
     Returns a (row_end - row_start, cols) bf16 tensor, bit-identical to the
     corresponding slice of decompress_layer_gpu's output.
     """
-    from .gpu_decode_v2 import decode_gpu_v2
-
     if len(layer.shape) != 2:
         raise ValueError("decompress_rows_gpu needs a 2D tensor, got shape %r"
                          % (layer.shape,))
@@ -259,7 +282,7 @@ def decompress_rows_gpu(layer: CompressedLayer, row_start: int, row_end: int,
     c1 = min(enc.n_chunks, -(-e1 // cs))
 
     sub = _slice_encoded(enc, c0, c1)
-    exponent = decode_gpu_v2(sub, device=device)
+    exponent = _decode_exponent(sub, device).to(device=device)
 
     base = c0 * cs
     avail = min(enc.n_symbols, c1 * cs) - base
