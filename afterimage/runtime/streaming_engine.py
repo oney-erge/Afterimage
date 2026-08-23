@@ -39,6 +39,7 @@ import dataclasses
 import json
 import multiprocessing as mp
 import pathlib
+import sys
 import threading
 import time
 import warnings
@@ -468,6 +469,7 @@ class StreamingLosslessModel:
                   % (vram_cap_gb, frac * 100, total / 1e9), flush=True)
 
         hf_cfg = AutoConfig.from_pretrained(model_id)
+        self.hf_cfg = hf_cfg
         with torch.device("meta"):
             self.model = AutoModelForCausalLM.from_config(hf_cfg, dtype=torch.bfloat16)
         self.model.eval()
@@ -711,6 +713,11 @@ class StreamingLosslessModel:
                     (100.0 * coverage, ", ".join(missing[:5])))
         if cfg.placement_policy in (
                 "replay_cem", "replay_qubo", "replay_extent_qubo"):
+            # The replay planners validate against a byte count frozen into
+            # the plan at search time (ReplayResidencyPlan.to_tier_plan
+            # takes no activation_slack_bytes at all), so max_context isn't
+            # threaded through here -- these are opt-in research placement
+            # policies, not the path max_context's docstring promises.
             from .replay_planner import ReplayResidencyPlan
             frozen = ReplayResidencyPlan.load(cfg.replay_plan_state)
             plan = frozen.to_tier_plan(
@@ -725,6 +732,14 @@ class StreamingLosslessModel:
                 raise RuntimeError(
                     "lm_head_policy='ram_overlay' requires an untied, stored "
                     "lm_head.weight; this checkpoint has no independent head")
+            plan_kwargs = {}
+            if cfg.max_context is not None:
+                from .vram_planner import (
+                    DEFAULT_ACTIVATION_SLACK_BYTES, kv_cache_bytes_per_token,
+                )
+                kv_reserve = kv_cache_bytes_per_token(self.hf_cfg) * cfg.max_context
+                plan_kwargs["activation_slack_bytes"] = (
+                    DEFAULT_ACTIVATION_SLACK_BYTES + kv_reserve)
             plan = plan_from_manifest(
                 self.manifest, vram_budget_gb=cfg.vram_budget_gb,
                 ram_budget_gb=cfg.ram_budget_gb or 0.0,
@@ -733,7 +748,8 @@ class StreamingLosslessModel:
                 draft_uses=draft_uses, stream_only=stream_only,
                 critical_path_profile=critical_profile,
                 forced_ram_keys=forced_ram,
-                placement_policy=cfg.placement_policy)
+                placement_policy=cfg.placement_policy,
+                **plan_kwargs)
         if not plan.feasible:
             raise RuntimeError("VRAM budget is infeasible: " + plan.reason)
         for key in plan.vram_keys:
@@ -1091,11 +1107,18 @@ class StreamingLosslessModel:
                             layers_total=self.n_layers, gb_read=self.stats.bytes_read / 1e9,
                             elapsed_s=elapsed, eta_s=eta)
         if self.progress and (layer_idx % 5 == 0 or layer_idx == self.n_layers - 1):
+            # stderr, not stdout: generated text goes to stdout (see
+            # cli.py's cmd_run), so `afterimage run ... > answer.txt` or
+            # `| some_tool` gets just the answer, with this status line
+            # still visible in the terminal and still capturable separately
+            # (`2> progress.log`) for the "captured to a log file" case this
+            # function's docstring cares about.
             print("  [%s] %5.1f%%  tok %d/%d  layer %2d/%d  %.1f GB  "
                   "%.0fs elapsed  ETA %.0fs"
                   % (bar, pct, self._tok_i + 1, self._tok_total,
                      layer_idx + 1, self.n_layers,
-                     self.stats.bytes_read / 1e9, elapsed, eta), flush=True)
+                     self.stats.bytes_read / 1e9, elapsed, eta),
+                  file=sys.stderr, flush=True)
 
     def _read_layer_tensor_arrays(
             self, idx: int, reader: BinaryWeightReader) -> tuple[dict, int, int]:

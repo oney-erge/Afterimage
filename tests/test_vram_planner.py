@@ -1,7 +1,11 @@
+import types
+
 import pytest
 
 from afterimage.runtime.critical_path import CriticalPathProfile, TensorCost
-from afterimage.runtime.vram_planner import TensorInfo, plan_from_manifest, plan_tiers
+from afterimage.runtime.vram_planner import (
+    TensorInfo, kv_cache_bytes_per_token, plan_from_manifest, plan_tiers,
+)
 
 
 def _t(key, orig_mb, comp_mb, layer=True, row_gather=False, uses=1):
@@ -296,3 +300,60 @@ def test_materialize_override_lowers_the_headroom_reserve():
 def test_materialize_bytes_defaults_to_orig_bytes():
     assert TensorInfo("a", 100, 50, True).materialize_bytes == 100
     assert TensorInfo("a", 100, 50, True, materialize_override=10).materialize_bytes == 10
+
+
+def _hf_cfg(**kw):
+    return types.SimpleNamespace(**kw)
+
+
+def test_kv_cache_bytes_per_token_matches_qwen3_14b_by_hand():
+    """Qwen3-14B: 40 layers, 8 KV heads (GQA), head_dim 128, bf16 -- the
+    number the KV-cache reserve is meant to catch (docs/RESULTS_LOG.md
+    speed audit): 2 * 40 * 8 * 128 * 2 = 163,840 bytes/token, ~160 KB."""
+    cfg = _hf_cfg(num_hidden_layers=40, num_attention_heads=40,
+                 num_key_value_heads=8, head_dim=128)
+    assert kv_cache_bytes_per_token(cfg) == 2 * 40 * 8 * 128 * 2
+    assert kv_cache_bytes_per_token(cfg) == 163840
+
+
+def test_kv_cache_bytes_per_token_falls_back_to_attention_heads_without_gqa():
+    """No num_key_value_heads at all -- plain multi-head attention, every
+    head has its own K/V (the pre-GQA case)."""
+    cfg = _hf_cfg(num_hidden_layers=12, num_attention_heads=12, head_dim=64)
+    assert kv_cache_bytes_per_token(cfg) == 2 * 12 * 12 * 64 * 2
+
+
+def test_kv_cache_bytes_per_token_derives_head_dim_from_hidden_size():
+    cfg = _hf_cfg(num_hidden_layers=12, num_attention_heads=12,
+                 num_key_value_heads=4, hidden_size=768)
+    # head_dim = hidden_size // num_attention_heads = 64
+    assert kv_cache_bytes_per_token(cfg) == 2 * 12 * 4 * 64 * 2
+
+
+def test_kv_cache_bytes_per_token_raises_when_shape_is_unknowable():
+    with pytest.raises(ValueError, match="num_hidden_layers"):
+        kv_cache_bytes_per_token(_hf_cfg(num_attention_heads=12))
+    with pytest.raises(ValueError, match="head_dim"):
+        kv_cache_bytes_per_token(_hf_cfg(num_hidden_layers=12, num_attention_heads=12))
+
+
+def test_kv_reserve_can_make_an_otherwise_feasible_budget_infeasible():
+    """The actual bug this closes: a budget that fits without a KV reserve
+    must be free to become infeasible once a real context length is
+    accounted for, rather than silently ignoring it. scratch_bytes is left
+    unset (decode_slice_elems given instead) so activation_slack_bytes
+    actually reaches the headroom calculation -- plan_tiers only folds it
+    in when deriving scratch_bytes itself; an explicit scratch_bytes
+    bypasses that derivation entirely, which is why streaming_engine.py's
+    real call site never passes both."""
+    tensors = [_t("layer.0", 100, 60), _t("layer.1", 100, 60)]
+    # largest materialize_bytes = 100e6; decode_slice_elems=100 keeps decode
+    # scratch negligible (1000 bytes) so headroom is ~largest + slack.
+    without_kv_reserve = plan_tiers(tensors, vram_budget_gb=0.15, decode_slice_elems=100,
+                                    activation_slack_bytes=int(20e6))
+    assert without_kv_reserve.feasible, without_kv_reserve.reason
+
+    with_kv_reserve = plan_tiers(tensors, vram_budget_gb=0.15, decode_slice_elems=100,
+                                 activation_slack_bytes=int(20e6) + int(40e6))
+    assert not with_kv_reserve.feasible
+    assert "scratch and activations" in with_kv_reserve.reason

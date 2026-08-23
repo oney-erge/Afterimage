@@ -30,6 +30,7 @@ from afterimage.experiments import (
     HYPOTHESES, PROFILES, ExperimentRun, ResultStore, oracle_gap,
     environment_manifest, registry_payload, run_paired,
 )
+from afterimage.reference import MEASURED_REFERENCE
 from afterimage.runtime.config import EngineConfig
 from afterimage.server.jobs import registry
 
@@ -96,23 +97,14 @@ def hardware() -> dict:
             "vram_free_gb": free, "vram_total_gb": total}
 
 
-# Measured reference point: Qwen3-14B on the RTX 3080 Laptop (README's
-# benchmark table / docs/FINAL_TEST_RESULTS_2026-08-21.md). Extrapolating to
-# other sizes assumes the same architecture family and roughly linear
-# scaling of store size and streamed-read time with parameter count -- true
-# to first order for same-precision dense transformers, not a promise for
-# any specific checkpoint. Every number this produces is an ESTIMATE; only
-# a real compress + run on the actual model is a measurement.
-MEASURED_REFERENCE = {
-    "model": "Qwen/Qwen3-14B",
-    "params_b": 14.0,
-    "bf16_gb_per_b_params": 29.536 / 14.0,
-    "compressed_gb_per_b_params": 20.328 / 14.0,
-    "min_memory_s_per_token_per_b": 32.514 / 14.0,
-    "min_memory_vram_gb": 1.723,
-    "fast_s_per_token_per_b": 9.150 / 14.0,
-    "fast_vram_floor_gb": 3.813,
-}
+# MEASURED_REFERENCE (imported above): Qwen3-14B on the RTX 3080 Laptop
+# (README's benchmark table / docs/FINAL_TEST_RESULTS_2026-08-21.md).
+# Extrapolating to other sizes assumes the same architecture family and
+# roughly linear scaling of store size and streamed-read time with
+# parameter count -- true to first order for same-precision dense
+# transformers, not a promise for any specific checkpoint. Every number
+# this produces is an ESTIMATE; only a real compress + run on the actual
+# model is a measurement.
 
 
 def _capability_estimate(params_b: float) -> dict:

@@ -213,6 +213,42 @@ DECODE_SCRATCH_BYTES_PER_ELEM = 10
 DEFAULT_ACTIVATION_SLACK_BYTES = 128 * 1024 * 1024
 
 
+def kv_cache_bytes_per_token(hf_cfg, dtype_bytes: int = 2) -> int:
+    """VRAM one token of KV cache costs, for this model's own shape.
+
+    Before this existed, DEFAULT_ACTIVATION_SLACK_BYTES (a flat 128 MB) was
+    the entire reserve for "logits, hidden states and the KV cache" --
+    which covers Qwen3-14B's actual ~160 KB/token KV cache for under 1,000
+    tokens of context, then silently stops covering it. At 8k context that
+    model's real KV cache is 1.34 GB against the 128 MB it was ever
+    budgeted; at 32k it's 5.37 GB, which can exceed the entire VRAM budget
+    on an 8 GB card. This turns that into a number a caller can actually
+    reserve for, instead of a guess that happened to be right for short runs.
+
+    Two K/V tensors per layer, each num_key_value_heads * head_dim wide.
+    Falls back to num_attention_heads when num_key_value_heads is absent
+    (no GQA -- every head has its own K/V, the MHA case), and to
+    hidden_size // num_attention_heads when head_dim isn't stated directly
+    (the standard relationship when it isn't overridden).
+    """
+    layers = getattr(hf_cfg, "num_hidden_layers", None)
+    heads = getattr(hf_cfg, "num_attention_heads", None)
+    if layers is None or heads is None:
+        raise ValueError(
+            "hf_cfg is missing num_hidden_layers/num_attention_heads -- "
+            "can't estimate KV cache size for this architecture")
+    kv_heads = getattr(hf_cfg, "num_key_value_heads", None) or heads
+    head_dim = getattr(hf_cfg, "head_dim", None)
+    if not head_dim:
+        hidden_size = getattr(hf_cfg, "hidden_size", None)
+        if not hidden_size:
+            raise ValueError(
+                "hf_cfg has neither head_dim nor hidden_size -- can't "
+                "estimate KV cache size for this architecture")
+        head_dim = hidden_size // heads
+    return 2 * layers * kv_heads * head_dim * dtype_bytes
+
+
 def decode_scratch_bytes(decode_slice_elems: int) -> int:
     """Transient VRAM the sliced decoder needs for one slice.
 

@@ -108,6 +108,10 @@ afterimage run Qwen/Qwen3-14B \
   --vram-budget-gb 4 --stats
 ```
 
+Already have a compressed store published somewhere? `afterimage pull
+Qwen/Qwen3-14B --store-repo someone/that-store` fetches it directly and
+skips compression entirely -- see [USAGE.md](docs/USAGE.md).
+
 Prefer Docker?
 
 ```bash

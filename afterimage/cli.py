@@ -1,8 +1,10 @@
 """Command-line entry point for Afterimage.
 
-    afterimage doctor                     hardware detection + install diagnosis
+    afterimage doctor                     hardware + disk-speed diagnosis
     afterimage compress MODEL              build a compressed store, with progress
-    afterimage run MODEL PROMPT            one-off generation
+    afterimage pull MODEL --store-repo R   fetch an already-compressed store instead
+    afterimage verify MODEL                check a store's checksums
+    afterimage run MODEL PROMPT            one-off generation, streamed
     afterimage serve                       launch the FastAPI server + web UI
     afterimage bench MODEL                 head-to-head vs AirLLM (needs airllm installed)
 
@@ -19,6 +21,7 @@ import os
 import pathlib
 import shutil
 import sys
+import time
 
 # AFTERIMAGE_STORE_ROOT lets the Docker image (and anyone else) point stores
 # at a mounted volume instead of the container's ephemeral home directory --
@@ -75,6 +78,63 @@ def _detect_ram_gb() -> float | None:
     return None
 
 
+def _benchmark_disk_read_mb_s(target_dir: pathlib.Path, size_mb: int = 256):
+    """Measures real sequential read throughput of the disk that will
+    actually hold compressed stores, instead of quoting the reference
+    machine's number at everyone.
+
+    Streaming I/O dominates wall time on this engine, and it's the cost
+    that varies most between machines: the reference RTX 3080 Laptop's own
+    bounded suite measured 506-917 MB/s across its methods, and a desktop
+    NVMe commonly does 3,000-7,000. A user on a much faster (or slower)
+    disk than the reference machine has no way to know that from the
+    README's table alone.
+
+    Best-effort cache drop via posix_fadvise(DONTNEED) where available
+    (Linux/WSL2); there's no equivalent syscall this project can call on
+    Windows/macOS, so the read there may partly hit the OS page cache and
+    read faster than a genuinely cold read would -- callers are told which
+    case they got so they don't take a cache-assisted number as gospel.
+
+    Returns (mb_per_s, cache_dropped) or None if the write/read/cleanup
+    failed for any reason (read-only filesystem, disk full, permissions) --
+    this must never be the reason `doctor` exits non-zero.
+    """
+    target_dir = pathlib.Path(target_dir)
+    try:
+        target_dir.mkdir(parents=True, exist_ok=True)
+        probe = target_dir / ".afterimage-disk-probe.tmp"
+        chunk = os.urandom(4 * 1024 * 1024)
+        total_bytes = size_mb * 1024 * 1024
+        try:
+            with open(probe, "wb") as f:
+                written = 0
+                while written < total_bytes:
+                    f.write(chunk)
+                    written += len(chunk)
+                f.flush()
+                os.fsync(f.fileno())
+
+            cache_dropped = False
+            with open(probe, "rb") as f:
+                if hasattr(os, "posix_fadvise") and hasattr(os, "POSIX_FADV_DONTNEED"):
+                    os.posix_fadvise(f.fileno(), 0, 0, os.POSIX_FADV_DONTNEED)
+                    cache_dropped = True
+                t0 = time.perf_counter()
+                read_bytes = 0
+                while True:
+                    data = f.read(4 * 1024 * 1024)
+                    if not data:
+                        break
+                    read_bytes += len(data)
+                elapsed = max(time.perf_counter() - t0, 1e-6)
+            return (read_bytes / 1e6) / elapsed, cache_dropped
+        finally:
+            probe.unlink(missing_ok=True)
+    except OSError:
+        return None
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     import torch
 
@@ -110,6 +170,32 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         print("      untested, not unsupported. block_chunks (Triton kernel tuning) was")
         print("      tuned for NVIDIA's 32-wide warp; AMD's 64-wide wavefront likely")
         print("      wants a different value -- see docs/archive/MASTER_PLAN.md.")
+
+    print()
+    if args.skip_disk_check:
+        print("Disk read speed  : skipped (--skip-disk-check)")
+    else:
+        from afterimage.reference import MEASURED_REFERENCE
+        result = _benchmark_disk_read_mb_s(DEFAULT_STORE_ROOT)
+        if result is None:
+            print("Disk read speed  : couldn't measure (%s isn't writable)" % DEFAULT_STORE_ROOT)
+        else:
+            mb_s, cache_dropped = result
+            print("Disk read speed  : %.0f MB/s%s" %
+                 (mb_s, "" if cache_dropped else " (may be optimistic -- OS page cache "
+                                                  "couldn't be dropped on this platform)"))
+            ref = MEASURED_REFERENCE
+            store_gb = ref["compressed_gb_per_b_params"] * ref["params_b"]
+            read_fraction = ref["min_memory_store_fraction_read_per_token"]
+            s_per_token = (store_gb * read_fraction * 1000) / mb_s
+            print("                   at this speed, a 14B model's minimum-memory "
+                  "profile (worst case --")
+            print("                   most of the store re-read every token) would run "
+                  "roughly %.0fs/token." % s_per_token)
+            print("                   Residency (--vram-budget-gb) and speculation "
+                  "(--draft-model) both read")
+            print("                   far less per token than this -- see README's "
+                  "benchmark table for real ratios.")
 
     print()
     print("Compressed stores in %s:" % DEFAULT_STORE_ROOT)
@@ -267,6 +353,106 @@ def cmd_compress(args: argparse.Namespace) -> int:
     return 0
 
 
+# -- verify ------------------------------------------------------------
+
+def cmd_verify(args: argparse.Namespace) -> int:
+    """Reads every blob in a store's weights.bin once and checks it
+    against the manifest's stored CRC32s -- binstore.verify_store() had
+    anticipated this command in its own docstring since before it existed
+    ("meant to be run explicitly (a CLI `afterimage verify` command...)"),
+    which this closes. The one time this matters most: right after
+    `afterimage pull` fetches a store you didn't compress yourself, where
+    silent corruption in transit would otherwise surface as a mysterious
+    decode error deep into a run instead of a clear answer up front.
+    """
+    from afterimage.runtime.binstore import verify_store
+
+    store_dir = pathlib.Path(args.store) if args.store else _store_dir_for(args.model)
+    if not (store_dir / "manifest.json").exists():
+        print("No compressed store at %s -- run `afterimage compress %s` or "
+              "`afterimage pull %s` first" % (store_dir, args.model, args.model),
+              file=sys.stderr)
+        return 1
+
+    print("Verifying %s ..." % store_dir)
+    ok, bad_keys = verify_store(store_dir)
+    if ok:
+        print("OK -- every tensor's checksum matched.")
+        return 0
+    print("FAILED -- %d tensor(s) don't match their stored checksum:" % len(bad_keys),
+         file=sys.stderr)
+    for key in bad_keys[:20]:
+        print("  %s" % key, file=sys.stderr)
+    if len(bad_keys) > 20:
+        print("  ... and %d more" % (len(bad_keys) - 20), file=sys.stderr)
+    print("The store is corrupt. Re-compress or re-pull it -- do not run against it.",
+         file=sys.stderr)
+    return 1
+
+
+# -- pull ----------------------------------------------------------------
+
+def cmd_pull(args: argparse.Namespace) -> int:
+    """Fetches an already-compressed store from a Hugging Face repo instead
+    of downloading the original checkpoint and compressing it locally.
+
+    A compressed store is nothing more than manifest.json + weights.bin
+    (see compress_model_to_disk); nothing stops someone publishing one and
+    everyone else just downloading it, which is strictly better than
+    compressing locally on every axis: less to transfer (the compressed
+    store is smaller than the original checkpoint), no compression pass at
+    all, and the original checkpoint never has to exist on disk, so peak
+    disk usage drops too. This is the client half of that; it does not
+    publish anything, and no store is hosted anywhere by this project yet
+    -- point --store-repo at one you (or someone) has actually published.
+    """
+    from huggingface_hub import hf_hub_download
+
+    store_dir = pathlib.Path(args.store) if args.store else _store_dir_for(args.model)
+    store_dir.mkdir(parents=True, exist_ok=True)
+
+    print("Fetching a pre-compressed store for %s from %s (%s repo) ..."
+         % (args.model, args.store_repo, args.repo_type))
+    try:
+        manifest_path = hf_hub_download(args.store_repo, "manifest.json",
+                                        repo_type=args.repo_type)
+        weights_path = hf_hub_download(args.store_repo, "weights.bin",
+                                       repo_type=args.repo_type)
+    except Exception as e:
+        print("Could not fetch manifest.json + weights.bin from %s: %s"
+             % (args.store_repo, e), file=sys.stderr)
+        print("This only works against a repo that actually hosts an Afterimage "
+              "store (a manifest.json and weights.bin at its root) -- if you meant "
+              "to compress %s yourself instead, use `afterimage compress %s`."
+              % (args.model, args.model), file=sys.stderr)
+        return 1
+
+    manifest = json.loads(pathlib.Path(manifest_path).read_text())
+    if manifest.get("model_id") != args.model:
+        print("NOTE: this store's manifest says model_id=%r, not %r -- using it "
+              "anyway since you pointed --store-repo at it explicitly, but this is "
+              "either a differently-named checkpoint or the wrong repo."
+              % (manifest.get("model_id"), args.model), file=sys.stderr)
+
+    shutil.copy(manifest_path, store_dir / "manifest.json")
+    shutil.copy(weights_path, store_dir / "weights.bin")
+
+    print("Store fetched: %.2f GB (%.3fx ratio, per the manifest)"
+         % (manifest.get("total_comp_bytes", 0) / 1e9, manifest.get("ratio", 0.0)))
+    if args.verify:
+        from afterimage.runtime.binstore import verify_store
+        print("Verifying checksums ...")
+        ok, bad_keys = verify_store(store_dir)
+        if not ok:
+            print("FAILED -- %d tensor(s) don't match their checksum after download; "
+                 "the transfer was corrupted. Delete %s and try again."
+                 % (len(bad_keys), store_dir), file=sys.stderr)
+            return 1
+        print("OK -- every tensor's checksum matched.")
+    print("Run: afterimage run %s \"...\" --auto" % args.model)
+    return 0
+
+
 # -- run -------------------------------------------------------------------
 
 # Measured operating points from the README's benchmark table (RTX 3080
@@ -311,6 +497,66 @@ def _resolve_run_profile(args: argparse.Namespace) -> None:
           % (name, args.vram_budget_gb, args.draft_model), file=sys.stderr)
 
 
+def _render_prompt(tok, prompt: str, think: bool) -> str:
+    """Applies the model's chat template, the way an instruct model expects
+    to be talked to -- matching what the server (_build_prompt in
+    server/app.py) and the benchmark suite (render_chat_prompt in
+    bench/prompt_suite.py) already do. A raw completion string sent to an
+    instruct model tends to ramble or ignore the requested format, which is
+    exactly what a bare-prompt CLI run would produce.
+
+    enable_thinking=False by default: Qwen3-family models reason inside
+    <think> blocks before answering, and every one of those tokens costs
+    this engine's full per-token price (9-30s at the profiles README
+    documents), so a few hundred thinking tokens can turn a two-sentence
+    answer into a half-hour run. --think opts back in. Older tokenizers
+    that don't accept enable_thinking raise TypeError, caught the same way
+    render_chat_prompt does.
+    """
+    messages = [{"role": "user", "content": prompt}]
+    kwargs = dict(tokenize=False, add_generation_prompt=True)
+    if think:
+        return tok.apply_chat_template(messages, **kwargs)
+    try:
+        return tok.apply_chat_template(messages, enable_thinking=False, **kwargs)
+    except TypeError:
+        return tok.apply_chat_template(messages, **kwargs)
+
+
+def _make_stream_printer(tok):
+    """Returns an on_token callback that prints newly-decoded text to
+    stdout as soon as each token arrives, plus the running list of token
+    ids it has seen.
+
+    Decodes the WHOLE buffer every call, not just the new token, and prints
+    only the suffix that's new: one character can span multiple tokens
+    (BPE/SentencePiece byte-fallback, multi-byte UTF-8, leading-space
+    markers), so decoding a token in isolation can print garbled text or
+    drop a space that only resolves once the next token arrives.
+    Re-decoding the whole buffer is milliseconds -- irrelevant against a
+    9-30s/token engine -- and it can never drift from what a final,
+    single decode() of the same ids would produce, since it always IS
+    that decode, just called earlier and more often.
+    """
+    token_ids: list[int] = []
+    state = {"printed": ""}
+
+    def on_token(tok_id: int) -> None:
+        token_ids.append(tok_id)
+        text = tok.decode(token_ids, skip_special_tokens=True)
+        if text.startswith(state["printed"]):
+            new = text[len(state["printed"]):]
+            if new:
+                print(new, end="", flush=True)
+            state["printed"] = text
+        # else: this tokenizer's decode() isn't prefix-stable as more ids
+        # are added (rare). Skip the increment rather than risk printing
+        # something garbled or duplicated -- cmd_run reconciles against the
+        # authoritative final decode once generation finishes.
+
+    return on_token, state
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     import torch
     from transformers import AutoTokenizer
@@ -328,12 +574,15 @@ def cmd_run(args: argparse.Namespace) -> int:
         return 1
 
     tok = AutoTokenizer.from_pretrained(args.model)
-    ids = tok(args.prompt, return_tensors="pt").input_ids
+    rendered = args.prompt if args.raw else _render_prompt(tok, args.prompt, args.think)
+    ids = tok(rendered, return_tensors="pt").input_ids
     device = "cuda" if torch.cuda.is_available() else "cpu"
     ids = ids.to(device)
+    stop_token_ids = {tok.eos_token_id} if tok.eos_token_id is not None else set()
 
     cfg = EngineConfig(vram_cap_gb=args.vram_cap_gb, vram_budget_gb=args.vram_budget_gb,
-                       ram_budget_gb=args.ram_budget_gb, progress=not args.quiet,
+                       ram_budget_gb=args.ram_budget_gb, max_context=args.max_context,
+                       progress=not args.quiet,
                        io_prefetch_depth=args.io_prefetch_depth,
                        storage_read_policy=args.storage_read_policy,
                        storage_extent_max_bytes=args.storage_extent_max_bytes,
@@ -362,17 +611,30 @@ def cmd_run(args: argparse.Namespace) -> int:
               "hardware and prompt -- pass --stats to see the real numbers after)"
               % (eta_s_per_token * args.max_new_tokens, args.max_new_tokens),
               file=sys.stderr)
+    on_token, stream_state = (None, None) if args.no_stream else _make_stream_printer(tok)
     with StreamingLosslessModel(args.model, store_dir, device=device, config=cfg) as sm:
         if args.draft_model:
             draft = load_draft_model(args.draft_model, device=device)
             seq, _policy = sm.generate_adaptive(
                 ids, max_new_tokens=args.max_new_tokens, draft_model=draft,
-                temperature=args.spec_temperature)
+                temperature=args.spec_temperature, on_token=on_token,
+                stop_token_ids=stop_token_ids)
         else:
             seq = sm.generate_greedy(ids, max_new_tokens=args.max_new_tokens,
-                                     use_cache=not args.no_kv_cache)
-        text = tok.decode(seq[0, ids.shape[1]:])
-        print(text)
+                                     use_cache=not args.no_kv_cache, on_token=on_token,
+                                     stop_token_ids=stop_token_ids)
+        text = tok.decode(seq[0, ids.shape[1]:], skip_special_tokens=True)
+        if args.no_stream:
+            print(text)
+        elif stream_state["printed"] != text:
+            # Rare: this tokenizer's decode() wasn't prefix-stable as tokens
+            # accumulated (see _make_stream_printer), so what streamed to
+            # the terminal doesn't quite match a single decode of the whole
+            # sequence. Print the authoritative text so the visible output
+            # is still correct, even though the stream stumbled getting there.
+            print("\n[reconciled] %s" % text)
+        else:
+            print()
         if args.stats:
             print("\n--- stats ---", file=sys.stderr)
             print("io=%.2fs decode=%.2fs compute=%.2fs bytes_read=%.2fGB"
@@ -674,6 +936,8 @@ def build_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="command", required=True)
 
     d = sub.add_parser("doctor", help="hardware detection + install diagnosis")
+    d.add_argument("--skip-disk-check", action="store_true",
+                   help="skip the ~256 MB read/write disk-speed probe")
     d.set_defaults(func=cmd_doctor)
 
     c = sub.add_parser("compress", help="build a compressed store for a model")
@@ -689,6 +953,24 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--yes", action="store_true",
                    help="don't prompt if the disk-space preflight looks tight")
     c.set_defaults(func=cmd_compress)
+
+    v = sub.add_parser("verify", help="check a compressed store's checksums")
+    v.add_argument("model", help="HuggingFace model id whose store to verify")
+    v.add_argument("--store", default=None, help="store directory (default: ~/.afterimage/stores/<model>)")
+    v.set_defaults(func=cmd_verify)
+
+    pl = sub.add_parser(
+        "pull", help="fetch an already-compressed store from a Hugging Face repo")
+    pl.add_argument("model", help="HuggingFace model id the store is for")
+    pl.add_argument("--store-repo", required=True,
+                    help="Hugging Face repo id hosting manifest.json + weights.bin "
+                         "(e.g. someone/afterimage-qwen3-14b) -- this project doesn't "
+                         "host any itself yet, so this must be a repo you know exists")
+    pl.add_argument("--repo-type", default="model", choices=["model", "dataset"])
+    pl.add_argument("--store", default=None, help="store directory (default: ~/.afterimage/stores/<model>)")
+    pl.add_argument("--no-verify", dest="verify", action="store_false",
+                    help="skip the checksum pass after downloading (verified by default)")
+    pl.set_defaults(func=cmd_pull)
 
     r = sub.add_parser("run", help="one-off generation from a compressed store")
     r.add_argument("model", help="HuggingFace model id (for the tokenizer + architecture)")
@@ -714,6 +996,13 @@ def build_parser() -> argparse.ArgumentParser:
                              "README); refused up front if infeasible, never approximated")
     r_core.add_argument("--ram-budget-gb", type=float, default=None,
                         help="a second, pinned-host-RAM tier below VRAM and above disk")
+    r_core.add_argument("--max-context", type=int, default=None,
+                        help="reserve VRAM for up to this many tokens of KV cache "
+                             "(requires --vram-budget-gb / --profile / --auto, since "
+                             "the reserve needs a VRAM budget to attach a refusal to). "
+                             "Without this, an infeasible combination of budget and "
+                             "conversation length OOMs mid-generation instead of being "
+                             "refused up front -- see docs/CONFIGURATION.md")
     r_core.add_argument("--draft-model", default=None,
                         help="HuggingFace id of a small resident draft model (e.g. "
                              "Qwen/Qwen3-0.6B) -- enables speculative decoding, the "
@@ -727,6 +1016,22 @@ def build_parser() -> argparse.ArgumentParser:
     r_core.add_argument("--quiet", action="store_true")
     r_core.add_argument("--stats", action="store_true",
                         help="print peak-VRAM/throughput/prefetch counters after generation")
+    r_core.add_argument("--raw", action="store_true",
+                        help="skip the chat template and feed the prompt to the model "
+                             "exactly as typed -- for base/completion models, or to "
+                             "reproduce the raw-prompt behaviour from before this flag "
+                             "existed. Most instruct models (the default assumption) "
+                             "want the template; without it they often ramble or ignore "
+                             "the prompt's format.")
+    r_core.add_argument("--think", action="store_true",
+                        help="allow the model's native reasoning mode instead of "
+                             "suppressing it (Qwen3's enable_thinking=False by default). "
+                             "Thinking tokens are real generated tokens at this engine's "
+                             "per-token price, so this can multiply wall time; off unless "
+                             "you specifically want to see the reasoning trace.")
+    r_core.add_argument("--no-stream", action="store_true",
+                        help="print the full answer at once when generation finishes "
+                             "instead of as each token arrives")
 
     r_adv = r.add_argument_group(
         "advanced / research",

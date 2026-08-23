@@ -61,6 +61,24 @@ def test_ram_budget_without_vram_budget_is_rejected():
         EngineConfig(ram_budget_gb=8.0)
 
 
+def test_max_context_without_vram_budget_is_rejected():
+    """Same reasoning as ram_budget_gb: with no VRAM budget the legacy
+    fixed residency policy applies and never refuses an infeasible plan,
+    so a KV-cache reserve would have nothing to attach a refusal to."""
+    with pytest.raises(ValueError, match="requires vram_budget_gb"):
+        EngineConfig(max_context=8192)
+
+
+def test_max_context_must_be_positive():
+    with pytest.raises(ValueError, match="max_context"):
+        EngineConfig(vram_budget_gb=4.0, max_context=0)
+
+
+def test_max_context_with_vram_budget_is_accepted():
+    cfg = EngineConfig(vram_budget_gb=4.0, max_context=8192)
+    assert cfg.max_context == 8192
+
+
 def test_rejects_negative_prefetch_depth():
     with pytest.raises(ValueError, match="io_prefetch_depth"):
         EngineConfig(io_prefetch_depth=-1)

@@ -44,6 +44,32 @@ afterimage compress Qwen/Qwen3-14B             # ~30 min download, ~6 min compre
 afterimage run Qwen/Qwen3-14B "The capital of France is" --auto
 ```
 
+If someone has already published a compressed store for the model you
+want, skip the download-and-compress step entirely:
+
+```bash
+afterimage pull Qwen/Qwen3-14B --store-repo someone/afterimage-qwen3-14b
+afterimage run Qwen/Qwen3-14B "The capital of France is" --auto
+```
+
+This project doesn't host any stores itself yet, so `--store-repo` has to
+point at a real one -- a compressed store is just `manifest.json` +
+`weights.bin` (see `compress_model_to_disk`), so nothing stops anyone
+publishing one. `pull` checksums the download against the manifest by
+default (`--no-verify` to skip); `afterimage verify MODEL` re-runs that
+check any time, against a pulled or locally-compressed store alike.
+
+Output streams token by token as it's generated (a 14B model at these
+profiles is 9-30s/token, so it matters), applies the model's chat template,
+and stops at the model's own end-of-turn token instead of running to
+`--max-new-tokens` regardless. `--raw` skips the template for a base/
+completion model; `--think` allows the model's native reasoning trace
+instead of suppressing it (real generated tokens, at full per-token price);
+`--no-stream` prints the whole answer at once instead. `afterimage doctor`
+also benchmarks your disk's real read speed and translates it into an
+expected seconds/token, so the README's numbers aren't the only reference
+point you have.
+
 `--auto` detects your VRAM and picks `--profile min-memory|balanced|fast`
 for you, printing what it chose and why. To pick explicitly:
 
@@ -57,10 +83,15 @@ Or set the underlying knobs directly. See [CONFIGURATION.md](CONFIGURATION.md):
 
 ```bash
 afterimage run Qwen/Qwen3-14B "..." \
-  --vram-budget-gb 4 \
+  --vram-budget-gb 4 --max-context 8192 \
   --draft-model Qwen/Qwen3-0.6B --spec-k 8 \
   --stats
 ```
+
+`--max-context` reserves VRAM for that many tokens of KV cache up front,
+so a long conversation gets refused before it starts rather than running
+out of memory partway through one -- worth setting whenever you're doing
+more than a single short exchange.
 
 `--stats` prints peak VRAM, I/O/decode/compute time, and prefetch counters
 after generation.

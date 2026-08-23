@@ -49,15 +49,23 @@ dedicated subcommands for building profiles, traces and plans.
 
 ## Supported model architectures
 
-This engine hard-codes a Llama-family layout: a top-level `model.layers`
-list of decoder blocks, `model.embed_tokens`, and `model.lm_head`.
+The actual requirement is structural, not a fixed list: a top-level
+`model.layers` list of decoder blocks, `model.embed_tokens`, and
+`model.lm_head`. `StreamingLosslessModel` checks exactly that
+(`hasattr(model, "model") and hasattr(model.model, "layers")`) and refuses
+construction with a clear error naming the architecture if it doesn't hold,
+instead of failing confusingly deeper in.
+
+That gate is wider than "Llama-family" -- checked directly against every
+architecture below by constructing each on the meta device and testing the
+same condition this engine tests at load time (`transformers` 5.15.1):
 
 | Family | Status |
 |---|---|
-| Qwen (Qwen2, Qwen3) | works, the primary tested family |
-| Llama, Llama 2/3 | works |
-| Mistral | works (same layout family) |
-| GPT-2, Falcon, MPT and other non-Llama layouts | **not supported.** Construction fails with a clear error naming the architecture, instead of a silent wrong result. |
+| Qwen (Qwen2, Qwen3), Llama, Llama 2/3, Mistral | works, the primary tested family -- also exercised end to end (compress + run) |
+| Gemma, Gemma 2, Gemma 3 (text), Phi-3, OLMo, StableLM, Cohere, Persimmon | passes the same structural check -- dense, standard `model.layers` decoder blocks, same tensor-naming convention as the tested family. Not yet exercised end to end by this project; worth trying, expected to work. |
+| Qwen3-MoE, Mixtral, OLMoE | passes the structural check, and `EngineConfig.expert_codec` already has explicit per-expert-tensor handling (default `"independent"`: each expert compresses on its own, no cross-expert assumption). Not yet run end to end against a real MoE checkpoint by this project -- try it, but verify your own output before trusting it for anything that matters. |
+| GPT-2, Falcon, MPT, BLOOM and other non-Llama layouts | **not supported**, confirmed against the same check. Construction fails with a clear error naming the architecture, instead of a silent wrong result. |
 
 If you're not sure, `afterimage compress MODEL --dry-run` and
 `afterimage run` both fail fast and name the problem before doing real work.

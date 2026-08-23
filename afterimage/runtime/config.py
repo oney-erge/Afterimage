@@ -87,6 +87,20 @@ class EngineConfig:
         Planning decides what SHOULD live where; this is what stops the
         allocator from silently creeping past it. None disables the cap.
 
+    max_context
+        How many tokens of KV cache the VRAM plan must reserve room for.
+        The KV cache grows with every generated token and lives in VRAM
+        alongside whatever vram_budget_gb committed to residency, but
+        residency planning had no idea it existed until this field: the
+        headroom reserve used to be one flat 128 MB constant regardless of
+        model or context length, which a 14B model's real ~160 KB/token KV
+        cache blows past at under 1,000 tokens of context. None keeps that
+        original flat-constant behaviour (matches every existing caller
+        exactly); a number adds max_context * per-token KV bytes (derived
+        from the model's own layer/head/head_dim config) to the reserve, so
+        an infeasible combination is refused before generation starts
+        instead of OOMing partway through a long conversation.
+
     io_prefetch_depth
         How many layers ahead the background reader tries to stay, using a
         small pool of reader threads (each with its own file handle, so
@@ -314,6 +328,7 @@ class EngineConfig:
     vram_budget_gb: float | None = None
     ram_budget_gb: float | None = None
     vram_cap_gb: float | None = None
+    max_context: int | None = None
     io_prefetch_depth: int = 1
     storage_read_policy: str = "per_blob"
     storage_extent_max_bytes: int = 1 << 28
@@ -380,6 +395,14 @@ class EngineConfig:
         if self.decode_slice_elems < 1:
             raise ValueError("decode_slice_elems must be >= 1, got %d"
                              % self.decode_slice_elems)
+        if self.max_context is not None and self.max_context < 1:
+            raise ValueError("max_context must be >= 1, got %d" % self.max_context)
+        if self.max_context is not None and self.vram_budget_gb is None:
+            raise ValueError(
+                "max_context requires vram_budget_gb to also be set -- with "
+                "no VRAM budget the legacy fixed residency policy applies, "
+                "which never refuses an infeasible plan, so a KV-cache "
+                "reserve would have nothing to attach a refusal to")
         if self.ram_budget_gb is not None and self.vram_budget_gb is None:
             raise ValueError(
                 "ram_budget_gb requires vram_budget_gb to also be set -- the "
