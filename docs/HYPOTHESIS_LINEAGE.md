@@ -16,7 +16,7 @@ Citation status is marked per row:
 [LITERATURE.md](LITERATURE.md) / [RESEARCH_METHODS.md](RESEARCH_METHODS.md)
 without a fresh check in that pass.
 
-Verdicts and measured numbers: [README](../README.md#research-status-mixed-evidence-no-l3-confirmation)
+Verdicts and measured numbers: [ALL_HYPOTHESES_AND_BASELINES.md](ALL_HYPOTHESES_AND_BASELINES.md)
 and [BOUNDED_RESEARCH_REPORT_2026-08-21.md](BOUNDED_RESEARCH_REPORT_2026-08-21.md).
 
 ---

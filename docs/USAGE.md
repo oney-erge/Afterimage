@@ -3,20 +3,30 @@
 ## Get started
 
 ```bash
-git clone https://github.com/iodriller/Afterimage.git
+git clone https://github.com/oney-erge/Afterimage.git
 cd Afterimage
 ./start
 ```
 
 That's it. First run, it sets everything up (detects your GPU, installs
-the matching torch build, creates a venv) and then runs a small model end
+the matching torch build, creates a `.venv`) and then runs a small model end
 to end so you can watch it work before committing to a real download.
-Every run after that just starts the server. Run `./start` again any time.
+Every run after that skips straight to the last step. Either way, the
+script finishes by starting the server and stays running in that
+terminal -- open **http://127.0.0.1:8420** in a browser for the web UI.
+Run `./start` again any time.
 
 On Windows, double-click `start.bat`. On macOS, double-click
 `start.command` (or run `./start` from a terminal). Same script either
 way, and it always tells you whether it just installed something or is
 just starting.
+
+To use the CLI from another terminal instead of (or alongside) the
+server, use the virtual environment `./start` created directly
+(`.venv/bin/afterimage ...` on macOS/Linux/WSL2,
+`.venv\Scripts\afterimage.exe ...` on Windows), or activate it first
+(`source .venv/bin/activate`, or `.venv\Scripts\Activate.ps1`) and just
+run `afterimage ...`.
 
 By hand, if you'd rather:
 ```bash
@@ -39,8 +49,8 @@ proof the pipeline works here before you point it at something big.
 ## A real model
 
 ```bash
-afterimage compress Qwen/Qwen3-14B --dry-run   # estimate download/store size and disk headroom first
-afterimage compress Qwen/Qwen3-14B             # ~30 min download, ~6 min compress on 16 cores
+afterimage compress Qwen/Qwen3-14B --dry-run   # estimate download/store/disk size first (does not check architecture)
+afterimage compress Qwen/Qwen3-14B             # reference: ~30 min download, ~6 min compress on 16 cores; varies a lot by connection and CPU
 afterimage run Qwen/Qwen3-14B "The capital of France is" --auto
 ```
 
@@ -60,15 +70,16 @@ default (`--no-verify` to skip); `afterimage verify MODEL` re-runs that
 check any time, against a pulled or locally-compressed store alike.
 
 Output streams token by token as it's generated (a 14B model at these
-profiles is 9-30s/token, so it matters), applies the model's chat template,
-and stops at the model's own end-of-turn token instead of running to
-`--max-new-tokens` regardless. `--raw` skips the template for a base/
-completion model; `--think` allows the model's native reasoning trace
-instead of suppressing it (real generated tokens, at full per-token price);
-`--no-stream` prints the whole answer at once instead. `afterimage doctor`
-also benchmarks your disk's real read speed and translates it into an
-expected seconds/token, so the README's numbers aren't the only reference
-point you have.
+profiles measures 9.150-32.514 s/token depending on the profile, so it
+matters), applies the model's chat template, and stops at the model's own
+end-of-turn token instead of running to `--max-new-tokens` regardless.
+`--raw` skips the template for a base/completion model; `--think` allows
+the model's native reasoning trace instead of suppressing it (real
+generated tokens, at full per-token price); `--no-stream` prints the whole
+answer at once instead. `afterimage doctor` also benchmarks your disk's
+real read speed and estimates the minimum-memory profile's s/token from
+it, so the README's reference-hardware numbers aren't the only data point
+you have for your own disk.
 
 `--auto` detects your VRAM and picks `--profile min-memory|balanced|fast`
 for you, printing what it chose and why. To pick explicitly:

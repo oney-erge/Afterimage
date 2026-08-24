@@ -65,13 +65,16 @@ Fixes, in order of effort:
 
 ## "It's taking forever and I don't know if it's stuck"
 
-`afterimage run` prints a rough ETA before generation starts (pass
-`--stats` to see the real numbers after). At the exact minimum-memory
-profile, expect roughly 15 to 30 seconds per token on an 8 GB card
-streaming a 14B model. That's expected, not a hang. See the README's
-benchmark table for what spending memory or enabling speculation buys
-back. `--quiet` suppresses progress output if you'd rather redirect to a
-log.
+`afterimage run` prints a rough ETA before generation starts; `--stats`
+prints the real, measured numbers once generation finishes. On the
+reference 14B model and 8 GB card, the exact minimum-memory profile
+measures 32.514 s/token, exact residency at 4 GB measures 17.360 s/token,
+and fixed speculation measures 9.150 s/token -- see the README's benchmark
+table for the full picture. `afterimage quickstart` only reports timing for
+its small (0.6B) model, so it isn't a predictor of these 14B numbers;
+`--stats` on a real run is the way to see what your own hardware does.
+That's expected, not a hang. `--quiet` suppresses progress output if you'd
+rather redirect to a log.
 
 ## Unsupported model architecture
 

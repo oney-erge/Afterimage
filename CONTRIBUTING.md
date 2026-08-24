@@ -3,7 +3,7 @@
 ## Setup
 
 ```bash
-git clone https://github.com/iodriller/Afterimage.git
+git clone https://github.com/oney-erge/Afterimage.git
 cd Afterimage
 pip install -e ".[dev,server]"    # add "gpu" too if you have an NVIDIA card
 ```

@@ -15,7 +15,7 @@ CLI-to-API mapping.
 | RAM budget | `--ram-budget-gb` | `ram_budget_gb` | none | A second, pinned-host-RAM tier below VRAM and above disk. Needs a VRAM budget set first (the planner fills VRAM before RAM). |
 | Draft model | `--draft-model` | `draft_model` | none (no speculation) | A small resident model (e.g. `Qwen/Qwen3-0.6B`) that enables speculative decoding, the largest lossless speedup measured (3.15x). Must share the target's tokenizer and vocabulary. |
 | Draft chain length | `--spec-k` | `spec_k` | 8 | How many tokens the draft model proposes per sweep, when a draft model is set. |
-| Chunked output head | `--lm-head-slice-rows` | `lm_head_slice_rows` | 0 (whole head, exact) | Above 0, computes logits in row blocks instead of materializing the whole 1.5+ GB output head. Lowers the VRAM floor by about 43%, but is **not bit-exact** (see the README's "why the chunked head is not exact" section). |
+| Chunked output head | `--lm-head-slice-rows` | `lm_head_slice_rows` | 0 (whole head, exact) | Above 0, computes logits in row blocks instead of materializing the whole 1.5+ GB output head. Lowers the VRAM floor by about 43%, but is **not bit-exact** (see [HOW_IT_WORKS.md's Method 3](HOW_IT_WORKS.md#method-3--chunked-output-head-approximate)). |
 | Quantization | `--quantize` (compress only) | — | none (lossless) | `q8` trades bit-exactness for a smaller store. Set at compression time, not per-run. |
 
 ## Profiles: the measured operating points, as presets
@@ -67,8 +67,11 @@ same condition this engine tests at load time (`transformers` 5.15.1):
 | Qwen3-MoE, Mixtral, OLMoE | passes the structural check, and `EngineConfig.expert_codec` already has explicit per-expert-tensor handling (default `"independent"`: each expert compresses on its own, no cross-expert assumption). Not yet run end to end against a real MoE checkpoint by this project -- try it, but verify your own output before trusting it for anything that matters. |
 | GPT-2, Falcon, MPT, BLOOM and other non-Llama layouts | **not supported**, confirmed against the same check. Construction fails with a clear error naming the architecture, instead of a silent wrong result. |
 
-If you're not sure, `afterimage compress MODEL --dry-run` and
-`afterimage run` both fail fast and name the problem before doing real work.
+If you're not sure, `afterimage run` fails fast and names the problem before
+doing real work. `compress --dry-run` only estimates download/store/disk
+size; it does not check architecture, so a compressed store built with
+`compress` can still be rejected by `run` if the checkpoint's layout isn't
+supported.
 
 **Apple Silicon:** no CUDA means no GPU decode kernels, so Afterimage runs
 CPU-only on a Mac today. A streamed 14B model on CPU is slow enough to be a

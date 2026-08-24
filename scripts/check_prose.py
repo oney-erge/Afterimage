@@ -23,6 +23,7 @@ CHECKED_FILES = [
     "docs/USAGE.md",
     "docs/CONFIGURATION.md",
     "docs/TROUBLESHOOTING.md",
+    "docs/FAQ.md",
 ]
 
 

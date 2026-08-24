@@ -20,8 +20,8 @@ dependencies = [
 ]
 
 [project.urls]
-Repository = "https://github.com/iodriller/Afterimage"
-Issues = "https://github.com/iodriller/Afterimage/issues"
+Repository = "https://github.com/oney-erge/Afterimage"
+Issues = "https://github.com/oney-erge/Afterimage/issues"
 
 [project.optional-dependencies]
 gpu = ["torch>=2.2", "triton>=2.2"]
