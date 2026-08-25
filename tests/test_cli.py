@@ -146,10 +146,13 @@ def test_every_subcommand_is_wired_to_its_own_function():
         (["pull", "org/model", "--store-repo", "org/store"], cli_mod.cmd_pull),
         (["run", "org/model", "hello"], cli_mod.cmd_run),
         (["quickstart"], cli_mod.cmd_quickstart),
+        (["serve", "--open"], cli_mod.cmd_serve),
     ]
     for argv, expected_func in cases:
         args = parser.parse_args(argv)
         assert args.func is expected_func, argv
+
+    assert parser.parse_args(["serve", "--open"]).open is True
 
 
 def test_pull_parses_repo_type_and_verify_defaults():

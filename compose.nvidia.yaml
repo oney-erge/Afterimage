@@ -1,0 +1,13 @@
+services:
+  afterimage:
+    image: afterimage:cuda
+    build:
+      args:
+        VARIANT: cuda
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

@@ -1,5 +1,6 @@
 # docker compose up
 #
+# CPU-first default. Add compose.nvidia.yaml on a supported NVIDIA host.
 # Persists compressed stores and the HuggingFace download cache in the
 # `afterimage-data` volume so the expensive one-time compression pass (and
 # model downloads) survive container rebuilds. Requires the NVIDIA
@@ -9,22 +10,14 @@ services:
     build:
       context: .
       args:
-        VARIANT: cuda
-    image: afterimage:cuda
+        VARIANT: cpu
+    image: afterimage:cpu
+    init: true
+    restart: unless-stopped
     ports:
-      - "8420:8420"
+      - "127.0.0.1:${AFTERIMAGE_PORT:-8420}:8420"
     volumes:
       - afterimage-data:/data
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
-    # Older Docker Engine/Compose without `deploy.resources` GPU support:
-    # comment the `deploy:` block above and uncomment this instead.
-    # runtime: nvidia
 
 volumes:
   afterimage-data:

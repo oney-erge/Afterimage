@@ -22,8 +22,13 @@ open_url() { [ "$no_browser" -eq 1 ] && return; command -v open >/dev/null 2>&1 
 
 case "$action" in
   docker|stop|logs)
-    command -v docker >/dev/null 2>&1 || { echo "Docker is not installed." >&2; exit 1; }
-    docker info >/dev/null 2>&1 || { echo "Docker is installed but its engine is not running." >&2; exit 1; }
+    if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
+      [ "$action" = stop ] && { echo "The native server runs in the foreground. Press Ctrl+C in its terminal to stop it."; exit 0; }
+      [ "$action" = logs ] && { echo "The native server writes logs to its foreground terminal."; exit 0; }
+      command -v docker >/dev/null 2>&1 || { echo "Docker is not installed." >&2; exit 1; }
+      echo "Docker is installed but its engine is not running." >&2
+      exit 1
+    fi
     [ "$action" = stop ] && exec docker compose down
     [ "$action" = logs ] && exec docker compose logs --follow
     docker compose up --detach --build
@@ -34,13 +39,13 @@ esac
 exe=.venv/bin/afterimage
 if [ "$action" = doctor ]; then [ -x "$exe" ] || { echo "Afterimage is not installed. Run ./run.sh once." >&2; exit 1; }; exec "$exe" doctor; fi
 uv=$(find_uv || true); [ -n "$uv" ] || uv=$(install_uv)
-"$uv" python install 3.11
+retry "Python installation" "$uv" python install 3.11
 [ -x .venv/bin/python ] || "$uv" venv --python 3.11 .venv
 gpu=cpu
 if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then gpu=nvidia
 elif command -v rocm-smi >/dev/null 2>&1 && rocm-smi >/dev/null 2>&1; then gpu=amd; fi
 if command -v sha256sum >/dev/null 2>&1; then source_hash=$(sha256sum pyproject.toml | cut -d' ' -f1); else source_hash=$(shasum -a 256 pyproject.toml | cut -d' ' -f1); fi
-fingerprint="$source_hash|$gpu"
+fingerprint="$source_hash|uv=$uv_version|python=3.11|$gpu"
 installed=$(cat .venv/.afterimage-sync 2>/dev/null || true)
 if [ "$action" = repair ] || [ "$installed" != "$fingerprint" ] || [ ! -x "$exe" ]; then
   reinstall=(); [ "$action" = repair ] && reinstall+=(--reinstall)

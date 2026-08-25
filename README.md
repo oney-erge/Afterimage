@@ -71,18 +71,21 @@ against named controls and reported honestly, wins and losses both.
 ```bash
 git clone https://github.com/oney-erge/Afterimage.git
 cd Afterimage
-./start
+./run.sh       # Linux
+./run.command  # macOS
 ```
 
-That's the whole thing, on macOS, Linux, and WSL2. First run creates a
-`.venv`, installs the matching torch build for your GPU, and runs a small
-model (Qwen3-0.6B, about 2 GB) end to end so you can see it work. Every run
-after that skips straight to the last step. On Windows, double-click
-`start.bat` instead (or run `.\install.ps1`).
+On Windows, double-click `run.bat`. First run installs a pinned `uv`, a
+managed Python, and the matching Torch build, then opens the server after its
+health check succeeds. Later runs reuse the environment. Use `doctor`,
+`repair`, `docker`, `logs`, or `stop` after the launcher name for the same
+operational interface used by the other projects. The small model quickstart
+is available separately as `afterimage quickstart` and is not an automatic
+multi-gigabyte download.
 
 The script finishes by starting the server and stays running in that
 terminal -- open **http://127.0.0.1:8420** in a browser for the web UI.
-Press Ctrl-C to stop it; run `./start` again any time.
+Press Ctrl-C to stop it; run the launcher again any time.
 
 To use the CLI from another terminal while the server (or without it) is
 running, use the virtual environment `./start` created:

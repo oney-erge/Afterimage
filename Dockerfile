@@ -31,14 +31,16 @@ ENV DEBIAN_FRONTEND=noninteractive \
     HF_HOME=/data/hf-cache
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        python3.11 python3.11-venv python3-pip git curl \
+        python3 python3-venv python3-pip git curl \
+    && groupadd --gid 10001 afterimage \
+    && useradd --uid 10001 --gid afterimage --create-home afterimage \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY afterimage ./afterimage
 
-RUN python3.11 -m venv /opt/venv
+RUN python3 -m venv /opt/venv
 ENV PATH="/opt/venv/bin:${PATH}"
 
 # [gpu] on the CUDA variant declares the triton dependency this image
@@ -49,10 +51,13 @@ RUN pip install --upgrade pip wheel \
     && pip install torch --index-url ${TORCH_INDEX_URL} \
     && pip install -e ".[${PIP_EXTRAS}]"
 
-RUN mkdir -p /data/stores /data/hf-cache
+RUN mkdir -p /data/stores /data/hf-cache \
+    && chown -R afterimage:afterimage /data
 
 VOLUME ["/data"]
 EXPOSE 8420
+
+USER afterimage
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
     CMD curl -f http://localhost:8420/health || exit 1

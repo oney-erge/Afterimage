@@ -871,11 +871,29 @@ def cmd_quickstart(args: argparse.Namespace) -> int:
 
 def cmd_serve(args: argparse.Namespace) -> int:
     import logging
+    import threading
+    import urllib.request
+    import webbrowser
 
     import uvicorn
     logging.basicConfig(
         level=getattr(logging, args.log_level.upper()),
         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    browse_host = "127.0.0.1" if args.host in {"0.0.0.0", "::"} else args.host
+    url = f"http://{browse_host}:{args.port}"
+    if args.open:
+        def open_when_ready() -> None:
+            for _ in range(120):
+                try:
+                    with urllib.request.urlopen(f"{url}/health", timeout=1) as response:
+                        if response.status == 200:
+                            webbrowser.open(url)
+                            return
+                except OSError:
+                    time.sleep(0.5)
+
+        threading.Thread(target=open_when_ready, daemon=True).start()
+    print(f"Afterimage web UI: {url}")
     uvicorn.run("afterimage.server.app:app", host=args.host, port=args.port,
                reload=False, log_level=args.log_level.lower())
     return 0
@@ -1094,6 +1112,8 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("serve", help="launch the FastAPI server + web UI")
     s.add_argument("--host", default="127.0.0.1")
     s.add_argument("--port", type=int, default=8420)
+    s.add_argument("--open", action="store_true",
+                   help="open the web UI after the health check succeeds")
     s.add_argument("--log-level", default="info",
                    choices=["debug", "info", "warning", "error"])
     s.set_defaults(func=cmd_serve)
