@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Storage-path diagnosis for docs/archive/EXECUTION_PLAN.md Stage A.
+# Storage-path diagnosis for the archived Phase-0 execution plan Stage A.
 #
 # Determines whether this machine can produce trustworthy cold-read NVMe
 # numbers, and by which mechanism: drop_caches, O_DIRECT, or neither.

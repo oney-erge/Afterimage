@@ -80,7 +80,7 @@ closest-prior links, not novelty or priority claims.
 | H17 | [Shriver et al.](https://www.usenix.org/legacy/publications/library/proceedings/usenix99/full_papers/shriver/shriver_html/index.html) | Request batching/overlap is prior work; making the tensor the hard coalescing boundary is Afterimage's H14 repair. |
 | H18 | [Transformers `DynamicCache.crop`](https://github.com/huggingface/transformers/blob/main/src/transformers/cache_utils.py), [SpecInfer](https://arxiv.org/abs/2305.09781) | The runtime uses Transformers' exact cache-crop primitive and established speculative KV reuse; the offloaded-target rollback integration is local. |
 
-The fuller correction notes—including the earlier NicePIM over-attribution—are
+The fuller correction notes, including the earlier NicePIM over-attribution, are
 in [HYPOTHESIS_LINEAGE.md](HYPOTHESIS_LINEAGE.md).
 
 ## One large H0-H18 comparison table
@@ -109,7 +109,7 @@ forced into a meaningless external speed ratio.
 | **16** | **H4** | Feedback prefetch (PI/MPC) | Adaptive depth vs tuned fixed depth | Two real CUDA screens | PI 21.253; MPC 35.031 s/tok | 20.040 s/tok | PI **-5.7%**; MPC **-42.8%** throughput | PI 1.41x; MPC 0.86x in screen | Both slower descriptively | 3.934 GB; exact | Direction was negative in both screens. Earlier PI run was -35.7%; magnitude changed, conclusion did not. |
 | **17** | **H5** | Certified greedy MIPS head | Certified branch-and-bound vs resident full head | L1 real 14B screen; 6.296 GB index | 20.065 s/tok | 13.949 s/tok | **-30.5% throughput**; only 0.084% rows pruned | 1.45x in matched cells | ~0.71x descriptive | 2.669 GB GPU + 6.296 GB CPU index; greedy exact | Kill current bounds/index. Certification overhead dominates. |
 | **18** | **H17** | Tensor-scoped micro-extents | Per-tensor 8 MiB extents vs per-blob reads | L1, four families × four tokens | 19.747 s/tok | 16.252 s/tok | **-18.37% paired median**; 0/4 cells won | ~1.46x descriptive | ~0.73x descriptive | 3.934 GB; exact; 57.05% fewer calls; +0.54% bytes | The narrower boundary did not fix the Python buffer/view cost. Stop current path. |
-| **19** | **H14** | Coalesced storage reads | Adjacent extent reads vs per-blob reads | L1, four randomized pairs | 26.527 s/tok | 19.578 s/tok | **-27.73% throughput** | ~1.13x descriptive | ~0.54x descriptive | 3.934 GB; exact | Mechanism passed—89.07% fewer calls, 0% extra bytes—but destroyed overlap. Stop this implementation. |
+| **19** | **H14** | Coalesced storage reads | Adjacent extent reads vs per-blob reads | L1, four randomized pairs | 26.527 s/tok | 19.578 s/tok | **-27.73% throughput** | ~1.13x descriptive | ~0.54x descriptive | 3.934 GB; exact | Mechanism passed (89.07% fewer calls, 0% extra bytes) but destroyed overlap. Stop this implementation. |
 
 ## Ranking: what is actually worth using or pursuing
 

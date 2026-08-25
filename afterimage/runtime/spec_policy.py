@@ -1,5 +1,5 @@
 """Adaptive control over speculative draft length (and, for self-draft, when
-to stop drafting) -- docs/archive/PROPOSAL_ADAPTIVE.md mechanism B.
+to stop drafting) -- mechanism B of the archived adaptive-speculation proposal.
 
 Every policy here answers exactly one question -- "how many tokens should
 the next draft chain try for?" -- and is judged purely on wall-clock speed,

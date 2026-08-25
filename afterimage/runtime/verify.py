@@ -41,7 +41,7 @@ def temperature_probs(logits: torch.Tensor, temperature: float) -> torch.Tensor:
     target's argmax" -- exactly generate_greedy's rule, for ANY draft
     (any k, any quality). That gives every adaptive/self-draft arm a real
     correctness assertion (token-identical to generate_greedy) instead of
-    only a distributional one -- see docs/archive/ADAPTIVE_TEST_PLAN.md §3.
+    only a distributional one -- see the archived adaptive test plan §3.
     """
     if temperature <= 0:
         probs = torch.zeros_like(logits)

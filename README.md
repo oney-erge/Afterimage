@@ -317,8 +317,10 @@ is the web UI's default profile.
 | [Architecture](docs/ARCHITECTURE.md) | Runtime, storage, memory-tier, speculation, and evidence diagrams |
 | [Configuration](docs/CONFIGURATION.md) | Stable profiles and advanced flags |
 | [How it works](docs/HOW_IT_WORKS.md) | Implementation walkthrough and AirLLM contrast |
-| [Research methods](docs/RESEARCH_METHODS.md) | H0-H18 definitions, controls, metrics, and kill gates |
+| [Research methods](docs/RESEARCH_METHODS.md) | H0-H18 definitions, evidence levels, controls, and kill gates |
 | [Hypothesis lineage](docs/HYPOTHESIS_LINEAGE.md) | Literature source and novelty boundary for each idea |
+| [Literature](docs/LITERATURE.md) | Survey of running models larger than VRAM, and where this sits in it |
+| [Cross-model benchmark](docs/CROSS_MODEL_BENCHMARK_2026-08-22.md) | Phi-4 Mini, Qwen3, and Mistral Small across families and scale |
 | [Results log](docs/RESULTS_LOG.md) | Chronological corrections and raw-run interpretation |
 | [Contributing](CONTRIBUTING.md) | Development and verification workflow |
 

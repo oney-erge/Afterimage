@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Verifies the benchmarking preconditions from docs/archive/EXECUTION_PLAN.md Stage A.
+# Verifies the benchmarking preconditions from the archived Phase-0 execution plan Stage A.
 # Run inside WSL2:  bash scripts/verify_rig.sh
 set -u
 

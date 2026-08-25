@@ -11,7 +11,7 @@ from afterimage.probe.workloads import (
 
 import pytest
 
-pytestmark = pytest.mark.archive  # Phase-0 subspace-activation-cache branch, killed -- see docs/archive/README.md
+pytestmark = pytest.mark.archive  # Phase-0 subspace-activation-cache branch, killed per its own gate
 def test_topic_switch_prompts_terminates_quickly():
     """The direct regression test for the infinite-loop bug: an earlier
     version of topic_switch_prompts() could spin forever once the two

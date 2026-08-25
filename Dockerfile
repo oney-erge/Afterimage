@@ -6,7 +6,7 @@
 #   docker build -t afterimage:cpu --build-arg VARIANT=cpu .
 #
 # There is no ROCm build target here: this project's ROCm/AMD support has
-# not been exercised on real AMD hardware (see docs/archive/MASTER_PLAN.md)
+# not been exercised on real AMD hardware
 # and shipping an unverified image would overstate what's actually
 # supported. Run --gpus all + docker's ROCm passthrough manually if you
 # want to try it.

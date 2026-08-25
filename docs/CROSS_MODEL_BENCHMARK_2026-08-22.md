@@ -17,8 +17,8 @@ Accelerate**. At the minimum-memory floor AirLLM still wins: 45.737 s/token at
 1.367 GB versus Afterimage exact-min at 48.477 s/token and 1.709 GB. H12,
 H14, and H17 all fail their paired speed gates on the larger family. The novel
 result worth developing is therefore certified output-head search on untied,
-large-vocabulary checkpoints—not more prefetch-controller complexity or the
-current coalescing implementations.
+large-vocabulary checkpoints, not more prefetch-controller complexity and not
+the current coalescing implementations.
 
 ## Why these models
 

@@ -2,7 +2,7 @@
 
 STATUS: this is NOT on the GPU inference path, and deliberately so.
 
-It was built to test docs/archive/PROPOSAL.md's own H2 (unrelated to the
+It was built to test the archived streaming proposal's own H2 (unrelated to the
 current H2 hazard-cost stopping hypothesis in docs/RESEARCH_METHODS.md) --
 splitting entropy decode across CPU and GPU, on the reasoning that decode
 (~13 s/token) and disk I/O
@@ -96,7 +96,7 @@ if _HAS_NUMBA:
 
 def decode_chunks_numba(enc: ChunkedEncoded, chunk_lo: int = 0,
                         chunk_hi: int | None = None) -> np.ndarray:
-    """The compiled fallback docs/archive/PROPOSAL.md's own H2 anticipated
+    """The compiled fallback the archived streaming proposal's own H2 anticipated
     needing if the numpy-vectorized path ("released into a C extension" per
     that doc) came up short. Requires the optional `numba` dependency;
     raises clearly if it's absent rather than silently falling back to a

@@ -29,20 +29,20 @@ python -m compileall -q afterimage  # what CI checks before tests
 ## Code style
 
 No enforced formatter yet. Match the surrounding file: comments explain
-*why*, not what (the code should read for what); avoid fabricated numbers —
-every measured claim in this codebase traces back to a real run in
+*why*, not what (the code should read for what); avoid fabricated numbers.
+Every measured claim in this codebase traces back to a real run in
 `results/` or `docs/RESULTS_LOG.md`.
 
 ## Where things live
 
-- `afterimage/runtime/` — the streaming engine, compression, planners
-- `afterimage/server/` — the FastAPI control API + web UI
+- `afterimage/runtime/`: the streaming engine, compression, planners
+- `afterimage/server/`: the FastAPI control API + web UI
 - `afterimage/probe/`, `afterimage/testing/`, and the modules marked
-  `ARCHIVED` in their own docstrings — the killed Phase-0 branch, kept for
-  traceability, not the current engine (`docs/archive/README.md`)
-- `docs/RESEARCH_METHODS.md` — the H0-H18 opt-in research layer's
+  `ARCHIVED` in their own docstrings: the killed Phase-0 branch, kept for
+  traceability, not the current engine
+- `docs/RESEARCH_METHODS.md`: the H0-H18 opt-in research layer's
   hypotheses, protocols, and kill gates
-- `docs/RESULTS_LOG.md` — the append-only measurement ledger; a real run's
+- `docs/RESULTS_LOG.md`: the append-only measurement ledger; a real run's
   numbers get appended here, never edited retroactively
 
 ## Adding a research hypothesis
@@ -51,13 +51,13 @@ If you're extending the H0-H18 program: read
 [RESEARCH_METHODS.md](docs/RESEARCH_METHODS.md) section 4 (the experiment
 contract) first. Every hypothesis needs a named `MethodProfile`, a named
 control, a numeric kill gate declared *before* running it, and its result
-recorded in `docs/RESULTS_LOG.md` regardless of outcome — a negative result
+recorded in `docs/RESULTS_LOG.md` regardless of outcome. A negative result
 is still a result and must not be deleted or silently retried away.
 
 ## Pull requests
 
 Describe what changed and, if it's a performance claim, how it was
-measured (hardware, cache state, repeat count) — see
+measured (hardware, cache state, repeat count). See
 `docs/RESEARCH_METHODS.md` section 4 for what a credible measurement needs.
 Small, focused PRs over large ones.
 

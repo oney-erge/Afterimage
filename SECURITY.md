@@ -5,7 +5,7 @@
 Afterimage is a local inference engine and control server. It is designed
 to run on hardware you control, not as a multi-tenant public service. The
 FastAPI server (`afterimage serve`) has no authentication by default and
-binds to `127.0.0.1` unless you explicitly pass `--host 0.0.0.0` — do not
+binds to `127.0.0.1` unless you explicitly pass `--host 0.0.0.0`. Do not
 expose it to an untrusted network without putting a reverse proxy with
 authentication in front of it.
 

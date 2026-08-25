@@ -14,3 +14,9 @@ venv/
 results/**/*.json.partial
 results/cross_model_*/**/*.log
 results/cross_model_*/INTERIM_RESULTS.md
+
+# Local-only working material. Superseded planning documents and personal
+# session scripts are kept on disk for traceability but stay out of the
+# published repository.
+docs/archive/
+scripts/local/

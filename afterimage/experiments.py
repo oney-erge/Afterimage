@@ -40,7 +40,7 @@ class MethodProfile:
 class MeasuredOutcome:
     """What was actually measured, in the words a non-researcher needs, not
     just the numeric gate. Single-sourced from docs/RESULTS_LOG.md and
-    docs/FINAL_TEST_RESULTS_2026-08-21.md so the UI's Lab cards and the
+    docs/ALL_HYPOTHESES_AND_BASELINES.md so the UI's Lab cards and the
     written record can never silently drift apart.
 
     verdict is one of:

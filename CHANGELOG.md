@@ -1,19 +1,19 @@
 # Changelog
 
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
-No tagged releases yet — everything below is `main`.
+No tagged releases yet. Everything below is `main`.
 
 ## [Unreleased]
 
 ### Added
-- `afterimage quickstart` — compress + run a small model end to end (~2 GB,
+- `afterimage quickstart`: compress + run a small model end to end (~2 GB,
   minutes) to prove an install works before committing to a 14B-class model.
 - `--profile {min-memory,balanced,fast}` and `--auto` on `afterimage run` --
   the README's measured operating points as presets, with automatic
   selection from detected VRAM.
 - Speculative decoding reachable from the CLI (`--draft-model`, `--spec-k`,
   `--spec-temperature`) and the API (`draft_model`, `spec_k` on
-  `/v1/chat/completions`) — previously only reachable by writing Python
+  `/v1/chat/completions`), previously only reachable by writing Python
   against `generate_adaptive` directly.
 - `afterimage compress --dry-run` and an automatic disk-space preflight
   before a real compression pass.
@@ -55,7 +55,7 @@ No tagged releases yet — everything below is `main`.
   drifted out of sync; now single-sourced via package metadata.
 
 ### Removed
-- `configs/hardware.yaml` and `configs/models.yaml` — read by no code
+- `configs/hardware.yaml` and `configs/models.yaml`, read by no code
   (`pyyaml` was not even a dependency) and described a stale pre-measurement
   state of the project (no GPU, `transformers` not installed) that
   contradicted the extensive real-hardware measurements now in
@@ -65,4 +65,4 @@ No tagged releases yet — everything below is `main`.
 
 Not tracked as discrete releases. See `git log` for the full commit history;
 `docs/RESULTS_LOG.md` for the append-only measurement history;
-`docs/archive/` for superseded design documents kept for traceability.
+git history for superseded design documents.

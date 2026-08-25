@@ -3,7 +3,7 @@
 
 entropy.py and gpu_decode_v2.py operate on the exponent field alone, since
 that's the only field with exploitable structure (mantissa entropy measured
-at 6.97/7 bits -- see docs/archive/LOSSLESS_ENGINE.md #2). This module is the piece
+at 6.97/7 bits -- see the archived lossless-engine design note #2). This module is the piece
 that was still missing: taking a REAL weight tensor apart into its three
 fields, entropy-coding only the compressible one, and putting the exact
 original value back together from the pieces. Nothing here is new
@@ -119,7 +119,7 @@ def recombine_exponent_and_sign_mantissa(exponent, sign_mantissa,
     """Public entry point for combining an ALREADY-decoded exponent field
     with its sign_mantissa field into the final bf16 tensor -- for callers
     that decoded the exponent by some means other than decompress_layer_gpu
-    (e.g. runtime/cpu_decode.py's CPU Huffman path, docs/archive/PROPOSAL.md's
+    (e.g. runtime/cpu_decode.py's CPU Huffman path, the archived streaming proposal's
     own H2 -- CPU/GPU split decode, unrelated to the current H2 hazard-cost
     speculative-stopping hypothesis in docs/RESEARCH_METHODS.md)
     and just need the same bit-exact recombination math applied. Accepts

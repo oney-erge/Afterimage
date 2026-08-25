@@ -16,7 +16,7 @@ CLI-to-API mapping.
 | Draft model | `--draft-model` | `draft_model` | none (no speculation) | A small resident model (e.g. `Qwen/Qwen3-0.6B`) that enables speculative decoding, the largest lossless speedup measured (3.15x). Must share the target's tokenizer and vocabulary. |
 | Draft chain length | `--spec-k` | `spec_k` | 8 | How many tokens the draft model proposes per sweep, when a draft model is set. |
 | Chunked output head | `--lm-head-slice-rows` | `lm_head_slice_rows` | 0 (whole head, exact) | Above 0, computes logits in row blocks instead of materializing the whole 1.5+ GB output head. Lowers the VRAM floor by about 43%, but is **not bit-exact** (see [HOW_IT_WORKS.md's Method 3](HOW_IT_WORKS.md#method-3--chunked-output-head-approximate)). |
-| Quantization | `--quantize` (compress only) | — | none (lossless) | `q8` trades bit-exactness for a smaller store. Set at compression time, not per-run. |
+| Quantization | `--quantize` (compress only) | n/a | none (lossless) | `q8` trades bit-exactness for a smaller store. Set at compression time, not per-run. |
 
 ## Profiles: the measured operating points, as presets
 

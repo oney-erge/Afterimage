@@ -105,10 +105,8 @@ flowchart LR
   L2 -.->|futility or regression| S["stop current candidate"]
 ```
 
-The current H0–H18 interpretation is summarized in
-[ALL_HYPOTHESES_AND_BASELINES.md](ALL_HYPOTHESES_AND_BASELINES.md), with
-the controlling measurements in
-[FINAL_TEST_RESULTS_2026-08-21.md](FINAL_TEST_RESULTS_2026-08-21.md).
+The current H0-H18 interpretation and the controlling measurements are both in
+[ALL_HYPOTHESES_AND_BASELINES.md](ALL_HYPOTHESES_AND_BASELINES.md).
 
 ## Main implementation boundaries
 

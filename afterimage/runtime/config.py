@@ -148,7 +148,7 @@ class EngineConfig:
         so every subsequent token pays only a memcpy to GPU.
         "compressed" -- cache the COMPRESSED bytes instead (plain, unpinned
         host memory). Fits ~1.45x more tensors in the same ram_budget_gb
-        (docs/archive/PROPOSAL.md's own H1 -- unrelated to the current H1
+        (the archived streaming proposal's own H1 -- unrelated to the current H1
         critical-path-residency hypothesis in docs/RESEARCH_METHODS.md), at
         the cost of a real GPU Huffman decode on every token instead of a
         memcpy.
@@ -215,7 +215,7 @@ class EngineConfig:
         "self" -- generate_adaptive drafts using THIS model's own first
         `draft_exit_layer` layers, reusing the existing model.norm/lm_head
         as the exit head (LayerSkip-style self-speculation,
-        docs/archive/PROPOSAL_ADAPTIVE.md mechanism A). No new parameters, nothing
+        the archived adaptive-speculation proposal mechanism A). No new parameters, nothing
         trained: the draft literally IS the target, run shallow.
 
     draft_exit_layer
@@ -257,7 +257,7 @@ class EngineConfig:
         Only meaningful with draft_mode="self". When True, the residency
         planner treats layers [0, draft_exit_layer) as used (spec_k + 1)
         times per sweep instead of once, and ranks them accordingly (see
-        vram_planner's `uses` field and docs/archive/PROPOSAL_ADAPTIVE.md mechanism
+        vram_planner's `uses` field and the archived adaptive-speculation proposal mechanism
         C). Requires vram_budget_gb to be set: there is no tiering decision
         to influence under the legacy fixed-residency policy. Default False
         because self-drafting WITHOUT pinning re-streams the draft layers

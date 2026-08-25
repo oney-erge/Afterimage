@@ -1002,7 +1002,7 @@ class StreamingLosslessModel:
                     self._set_param(self.model, key, self._load_tensor(key))
                 elif tier == "ram":
                     if self.ram_tier_format == "compressed":
-                        # docs/archive/PROPOSAL.md's own H1 (unrelated to the
+                        # the archived streaming proposal's own H1 (unrelated to the
                         # current H1 critical-path-residency hypothesis):
                         # cache the COMPRESSED bytes (fits ~1.45x more
                         # tensors in ram_budget_gb) instead of a decoded
@@ -1757,7 +1757,7 @@ class StreamingLosslessModel:
     @torch.no_grad()
     def draft_self_logits(self, input_ids: torch.Tensor, exit_layer: int) -> torch.Tensor:
         """Early-exit forward for self-speculative drafting
-        (docs/archive/PROPOSAL_ADAPTIVE.md mechanism A): embeddings -> layers
+        (the archived adaptive-speculation proposal mechanism A): embeddings -> layers
         [0, exit_layer) -> model.norm -> lm_head, reusing the model's
         existing final norm and output head as the exit head. No new
         parameters, nothing trained -- the draft is literally the target
@@ -1909,7 +1909,7 @@ class StreamingLosslessModel:
                           generator: torch.Generator | None = None,
                           on_token=None, stop_token_ids=()):
         """generate_speculative, but with the two things
-        docs/archive/PROPOSAL_ADAPTIVE.md proposes making adaptive:
+        the archived adaptive-speculation proposal proposes making adaptive:
 
           - EngineConfig.draft_mode="self": draft with THIS model's own
             first draft_exit_layer layers (draft_self_logits) instead of a
@@ -1928,7 +1928,7 @@ class StreamingLosslessModel:
         docstrings. At temperature<=0 specifically, verify.temperature_probs
         makes this provably reproduce generate_greedy's argmax sequence
         token-for-token, for ANY draft_mode/k/policy -- see its docstring
-        and docs/archive/ADAPTIVE_TEST_PLAN.md §3.
+        and the archived adaptive test plan §3.
 
         Returns (sequence, policy) -- the policy is returned (not just its
         k) so a caller can inspect state_dict() / log() without needing a

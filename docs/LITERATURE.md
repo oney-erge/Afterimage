@@ -1,4 +1,4 @@
-# Literature Review — Running Models Larger Than VRAM
+# Literature Review: Running Models Larger Than VRAM
 
 Survey through August 2026. Every claim here is sourced; where a number came from
 a paper abstract rather than the full text it is marked *(abstract)*.
@@ -11,13 +11,13 @@ A 27B model at Q4 is ~16 GB. A consumer GPU has 8 GB. The weights do not fit.
 
 ```mermaid
 flowchart LR
-    subgraph GPU["GPU — 8 GB VRAM (fast, ~270 GB/s)"]
+    subgraph GPU["GPU, 8 GB VRAM (fast, ~270 GB/s)"]
         V["about half<br/>the model"]
     end
-    subgraph HOST["Host RAM — 16 GB (medium, ~20 GB/s over PCIe)"]
+    subgraph HOST["Host RAM, 16 GB (medium, ~20 GB/s over PCIe)"]
         R["some more"]
     end
-    subgraph SSD["NVMe SSD — big (slow, ~6 GB/s)"]
+    subgraph SSD["NVMe SSD, big (slow, ~6 GB/s)"]
         D["the rest"]
     end
     D --> R --> V
@@ -35,7 +35,7 @@ That single sentence organises the whole literature below.
 
 ---
 
-## 2. AirLLM — stream one layer at a time
+## 2. AirLLM: stream one layer at a time
 
 **Idea:** never hold the whole model. Load layer 1, use it, discard it, load
 layer 2, and so on. Peak VRAM becomes one layer instead of the whole model.
@@ -62,7 +62,7 @@ update reported roughly a 10% improvement *(project notes)*.
 
 ---
 
-## 3. FlexGen — solve placement with a cost model
+## 3. FlexGen: solve placement with a cost model
 
 **Idea:** don't hand-place anything. Given GPU/CPU/disk capacities and
 bandwidths, solve for where each tensor should live to maximise throughput.
@@ -84,7 +84,7 @@ heterogeneous CPU/GPU/disk execution, not single-user interactive decoding.
 
 ---
 
-## 4. LLM in a Flash — fetch only what will be used
+## 4. LLM in a Flash: fetch only what will be used
 
 **Idea:** exploit activation sparsity. Predict which neurons will be non-zero and
 load only those rows/columns; window and reuse recent activations; lay flash
@@ -97,7 +97,7 @@ activations; modern SwiGLU/GeGLU models are markedly less sparse.
 
 ---
 
-## 5. SpecExec — amortise the sweep across many tokens
+## 5. SpecExec: amortise the sweep across many tokens
 
 **This is the conceptual pivot of the whole field.**
 
@@ -113,7 +113,7 @@ flowchart TD
     subgraph V["ONE sweep of the big model"]
         VV["score every candidate<br/>in the tree at once"]
     end
-    V --> ACC["accept the longest<br/>verified path — often 10-20 tokens"]
+    V --> ACC["accept the longest<br/>verified path, often 10-20 tokens"]
     ACC -.->|"next sweep"| DRAFT
 ```
 
@@ -130,7 +130,7 @@ restating SpecExec.
 
 ---
 
-## 6. SpecOffload — put the draft model in idle VRAM
+## 6. SpecOffload: put the draft model in idle VRAM
 
 **Idea:** during offloaded inference the GPU sits idle waiting for weights. Fill
 that idle capacity with a draft model and interleave drafting with target
@@ -140,19 +140,19 @@ streaming, so drafting is effectively free.
 
 ---
 
-## 7. SubSpec — build the draft *out of* the target
+## 7. SubSpec: build the draft *out of* the target
 
 **The strongest published result at our exact operating point.**
 
 **Idea:** acceptance rate is everything, and acceptance is highest when the draft
-closely matches the target. So don't use a separate small model — build the draft
+closely matches the target. So don't use a separate small model; build the draft
 from the target itself:
 
-1. **Quantized substitute weights** — cheap data-free 4-bit approximations of the
+1. **Quantized substitute weights**: cheap data-free 4-bit approximations of the
    offloaded layers, kept entirely in VRAM.
-2. **GPU-resident layer sharing** — layers that fit in VRAM are shared verbatim
+2. **GPU-resident layer sharing**: layers that fit in VRAM are shared verbatim
    between draft and target.
-3. **Unified KV cache** — one cache for both, halving KV memory.
+3. **Unified KV cache**: one cache for both, halving KV memory.
 
 ```mermaid
 flowchart TD
@@ -177,7 +177,7 @@ speculation, and KV sharing. Offload tier is CPU RAM.
 
 ---
 
-## 8. ATSInfer — placement at tensor granularity
+## 8. ATSInfer: placement at tensor granularity
 
 **Idea:** layer-level and expert-level placement ignores heterogeneity *within* a
 layer. Schedule at tensor granularity instead, with load-aware dynamic transfer
@@ -196,10 +196,10 @@ explicitly hybrid CPU/GPU architecture.
 
 | Work | Idea | Why it matters here |
 |---|---|---|
-| **Gated Subspace Inference** (2026) | Split each activation into a subspace component and a residual; gate whether to compute the residual. Offline-calibrated basis, **VRAM bandwidth** target, **lossy** | Closest mechanism to Afterimage — but deployed where weights are already resident, so the gate saves only FLOPs |
-| **ASVD / SVD-LLM / IO-SVD** | Activation-aware low-rank weight compression, offline and static | Reports only **10–30%** compression — direct evidence that the composed object is not very low-rank |
+| **Gated Subspace Inference** (2026) | Split each activation into a subspace component and a residual; gate whether to compute the residual. Offline-calibrated basis, **VRAM bandwidth** target, **lossy** | Closest mechanism to Afterimage: but deployed where weights are already resident, so the gate saves only FLOPs |
+| **ASVD / SVD-LLM / IO-SVD** | Activation-aware low-rank weight compression, offline and static | Reports only **10–30%** compression: direct evidence that the composed object is not very low-rank |
 | **Any-Precision LLM / AnyBCQ / RRQ** | One checkpoint serving many bit-widths via nested residual bit-planes | Provides the storage layout for progressive fetch. Precision is chosen **statically**; RRQ explicitly is not designed for streaming from disk |
-| **MARS** (2026) | Accept draft tokens when the target's top-2 margin is small | Margin as a decision signal — but **lossy**, and changes no I/O |
+| **MARS** (2026) | Accept draft tokens when the target's top-2 margin is small | Margin as a decision signal: but **lossy**, and changes no I/O |
 | **Spec-Spec Decoding** (2026) | Overlap drafting with verification by pre-computing speculations for predicted outcomes | Removes drafting from the critical path |
 | **Endor** | Hardware-friendly sparse format for offloaded inference | Storage-format engineering for the same bottleneck |
 
@@ -224,9 +224,9 @@ flowchart TD
     COST --- L4["lever 4<br/>bandwidth"]
 
     L1 --- A1["SpecExec, SpecOffload, SubSpec<br/>about 10-20x"]
-    L2 --- A2["FlexGen, ATSInfer, residency,<br/>LLM in a Flash — about 1.6x"]
-    L3 --- A3["quantization — chosen OFFLINE,<br/>never revisited at runtime"]
-    L4 --- A4["GPUDirect Storage —<br/>NOT available on GeForce"]
+    L2 --- A2["FlexGen, ATSInfer, residency,<br/>LLM in a Flash, about 1.6x"]
+    L3 --- A3["quantization, chosen OFFLINE,<br/>never revisited at runtime"]
+    L4 --- A4["GPUDirect Storage:<br/>NOT available on GeForce"]
 ```
 
 **Two structural facts constrain any new work here:**
@@ -239,7 +239,7 @@ flowchart TD
 
 ---
 
-## 11. What is genuinely unclaimed *(historical — written for the abandoned Phase-0 bet)*
+## 11. What is genuinely unclaimed *(historical: written for the abandoned Phase-0 bet)*
 
 > **This section describes the subspace-cache hypothesis, which was tested and
 > failed** (archive/PHASE0_RESULTS.md). It is kept because the framing of the gap is
@@ -258,7 +258,7 @@ flowchart LR
 ```
 
 8.5 GB of information; ~280 GB of traffic. **No system in the literature retains
-the value of a fetch across sweeps.** That is the gap Afterimage targets — see
+the value of a fetch across sweeps.** That is the gap Afterimage targets. See
 [HYPOTHESIS.md](archive/HYPOTHESIS.md) for the mechanism, the mathematics, and an honest
 account of why the available evidence on activation rank makes it a risky bet.
 
@@ -278,7 +278,7 @@ Endor arXiv:2406.11674 · FlexGen, AirLLM, LLM in a Flash (original releases)
 ---
 ---
 
-# Part II — Survey update, August 2026
+# Part II: Survey update, August 2026
 
 Everything above was written before the lossless streaming engine existed and
 before the Phase-0 subspace-cache bet was tested and dropped. Part II is the
@@ -295,7 +295,7 @@ What Part II adds is a second axis: *spare compute is not only on the GPU.*
 
 ---
 
-## 13. Lossless weight compression — the codec is a solved problem
+## 13. Lossless weight compression: the codec is a solved problem
 
 | Work | Venue | Ratio | Runs on | Streams from disk |
 |---|---|---|---|---|
@@ -304,7 +304,7 @@ What Part II adds is a second axis: *spare compute is not only on the GPU.*
 | **NeuZip** | 2024 | 1.5x | single GPU, runtime memory | no |
 | **ZipNN** | 2024 | 1.2-1.5x | checkpoint storage | n/a |
 | **Approaching Shannon Bound** ([2606.15789](https://arxiv.org/pdf/2606.15789)) | 2026 | toward ceiling | analysis + rANS | no |
-| **Afterimage** (this repo) | — | **1.453x** | single consumer GPU | **yes** |
+| **Afterimage** (this repo) | n/a | **1.453x** | single consumer GPU | **yes** |
 
 **DFloat11 is convergent evidence, not competition.** It independently derived
 the same insight (bf16 exponents are low-entropy, sign and mantissa are not),
@@ -327,7 +327,7 @@ the current codec: expect to trade ratio for fusability.
 
 ---
 
-## 14. Heterogeneous CPU/GPU execution — the second pool of spare compute
+## 14. Heterogeneous CPU/GPU execution: the second pool of spare compute
 
 This is the line of work that has moved most since Part I, and the one most
 directly relevant to this engine's next step.
@@ -344,7 +344,7 @@ otherwise would be wrong.
 **Dovetail** ([2412.18934](https://arxiv.org/pdf/2412.18934), EMNLP'25) inverts
 the usual arrangement: **draft model on the GPU, target model on the CPU**, with
 the target doing parallel verification. 1.79-10.1x on 13B models, losslessly.
-The lesson is not the specific placement but the principle — the two devices run
+The lesson is not the specific placement but the principle: the two devices run
 *different stages of the same pipeline concurrently* rather than one waiting on
 the other.
 
@@ -362,16 +362,16 @@ on recent server parts.
 
 ---
 
-## 15. MoE offloading — where 40B-class models become tractable
+## 15. MoE offloading: where 40B-class models become tractable
 
 For a **dense** model, per-token weight traffic equals the whole model; there is
 no way around it. For a **Mixture-of-Experts** model, per-token traffic equals
-the *activated* experts, and activation is highly skewed — which changes the
+the *activated* experts, and activation is highly skewed, which changes the
 arithmetic for 40B-class models completely.
 
 The literature converges on one framing:
 
-> For Mixtral-8x7B, fetching experts over PCIe consumes **98.9% of total time** —
+> For Mixtral-8x7B, fetching experts over PCIe consumes **98.9% of total time**,
 > offloaded MoE inference is fundamentally a data-movement problem.
 > ([2511.05814](https://arxiv.org/pdf/2511.05814))
 
@@ -388,7 +388,7 @@ Which is exactly the problem this engine is built for. The main techniques:
 | Importance-driven scheduling | [2508.18983](https://arxiv.org/html/2508.18983v1) |
 
 **None of these compress the experts.** An expert cache holding *losslessly
-compressed* experts holds ~1.45x more of them per GB — a direct, unclaimed
+compressed* experts holds ~1.45x more of them per GB, a direct, unclaimed
 composition of this repo's codec with the MoE offloading line.
 
 ---
@@ -400,10 +400,10 @@ numbers rather than intuition.
 
 - Classic inflate (dynamic Huffman): **~1.3-1.4 GB/s** single-threaded.
 - SIMD-optimised Huffman (**PivCo-Huffman**): **0.02-0.07 ns/symbol** on modern
-  x86/ARM — order 15-50 GB/s/core for byte symbols, on hand-tuned kernels.
+  x86/ARM: order 15-50 GB/s/core for byte symbols, on hand-tuned kernels.
 - The known hard part: *codeword start positions are not known until the previous
   codeword is decoded*, so naive parallelism is impossible. **Chunked formats
-  solve this by construction** — which is precisely what
+  solve this by construction**, which is precisely what
   `runtime/huffman_chunked.py` already does, for GPU reasons.
 
 **The convenient accident:** the chunk-parallel layout built to make GPU decode
@@ -426,7 +426,7 @@ speedup over AirLLM at matched or lower VRAM.
 
 **b. Heterogeneous *decode*, not heterogeneous *compute*.** The CPU/GPU
 literature (§14) splits *matrix multiplication* across devices. Nobody splits
-*entropy decoding* across them — because nobody else has entropy decoding on the
+*entropy decoding* across them, because nobody else has entropy decoding on the
 inference path at all. Given §16's throughput numbers and this engine's measured
 profile (decode ≈ 13 s/token against disk ≈ 14 s/token, with CPU cores idle),
 this is the clearest open opportunity.
@@ -436,7 +436,7 @@ weights in host RAM. Caching *compressed* weights fits ~1.45x more model in the
 same RAM, trading a little GPU decode for a lot of avoided disk I/O. Trivial to
 state; nobody does it, because it requires a decoder on the streaming path.
 
-**d. Compressed MoE expert caching** (§15) — the composition of (a) and (c) that
+**d. Compressed MoE expert caching** (§15): the composition of (a) and (c) that
 makes 40B-class models genuinely interesting on 8 GB.
 
 These four are the basis of [PROPOSAL.md](archive/PROPOSAL.md).
@@ -451,10 +451,10 @@ LIA ISCA'25 · CAM ICDE'25
 ---
 ---
 
-# Part III — Adaptive control and reinforcement learning, August 2026
+# Part III: Adaptive control and reinforcement learning, August 2026
 
 Parts I and II surveyed *what to move and how to encode it*. Part III surveys
-*how to decide, at runtime, using feedback* — which is the natural next question
+*how to decide, at runtime, using feedback*, which is the natural next question
 once an engine has as many interacting knobs as this one now does
 (`vram_budget_gb`, `ram_budget_gb`, `io_prefetch_depth`, `decode_slice_elems`,
 `ram_tier_format`, per-tensor tier assignment, and speculative draft length k).
@@ -468,7 +468,7 @@ One structural property of this engine shapes everything below, so it goes first
 - Tier placement (VRAM / RAM / disk) changes *where a weight is read from*,
   never its value.
 - `io_prefetch_depth` changes *when* bytes are read.
-- `decode_slice_elems` changes how decode work is *chunked* — asserted
+- `decode_slice_elems` changes how decode work is *chunked*, asserted
   bit-identical across settings in `tests/`.
 - Speculative draft length k changes how many tokens are *proposed*; the
   accept/reject/resample step (`runtime/verify.py`) samples the target's exact
@@ -477,9 +477,9 @@ One structural property of this engine shapes everything below, so it goes first
 So a controller exploring this action space can make a token **slower**, never
 **wrong**. The reward is pure latency with no accuracy term to trade against.
 
-That is not the usual situation. The entire RL-for-model-compression line —
+That is not the usual situation. The entire RL-for-model-compression line,
 **ADC**, **DECORE**, **HiReLC** ([2606.26002](https://arxiv.org/pdf/2606.26002),
-hierarchical agents assigning per-block pruning/quantization budgets) — has
+hierarchical agents assigning per-block pruning/quantization budgets), has
 agents choosing *lossy* configurations, so every exploratory action risks model
 quality and the reward must balance size against accuracy. **None of that
 machinery is needed here, and none of that risk is taken.** It is worth being
@@ -491,7 +491,7 @@ The practical consequence: aggressive, adversarially-robust exploration
 
 ---
 
-## 19. Adaptive speculative decoding — the best-evidenced fit
+## 19. Adaptive speculative decoding: the best-evidenced fit
 
 This is where the literature is strongest, and where this engine's own measured
 data most clearly shows headroom.
@@ -501,15 +501,15 @@ data most clearly shows headroom.
 | **SpecDec++** ([2405.19715](https://arxiv.org/pdf/2405.19715), ICML'24 / COLM'25) | Candidate length as an **MDP**; trains an acceptance-prediction head on the draft | 2.04x on Alpaca (+7.2% over fixed-k) |
 | **BanditSpec** ([2505.15141](https://arxiv.org/pdf/2505.15141), ICML'25) | Multi-armed bandit over speculation hyperparameters (model, window, tree); UCBSpec / EXP3Spec; "stopping time regret" | near-oracle, training-free |
 | **GammaTune / GammaTune+** ([2504.00030](https://arxiv.org/pdf/2504.00030)) | Heuristic switching on recent acceptance + exponential smoothing | +15–16% throughput, **reduced variance** |
-| **Learning to Draft** ([2603.01639](https://arxiv.org/pdf/2603.01639)) | RL for adaptive drafting | — |
-| **Nightjar** ([2512.22420](https://arxiv.org/pdf/2512.22420)) | Dynamic adaptive speculation for serving | — |
+| **Learning to Draft** ([2603.01639](https://arxiv.org/pdf/2603.01639)) | RL for adaptive drafting | n/a |
+| **Nightjar** ([2512.22420](https://arxiv.org/pdf/2512.22420)) | Dynamic adaptive speculation for serving | n/a |
 
 Two results matter most for us:
 
 **SpecDec++ proves the shape of the optimal policy.** Formulated as an MDP, the
 optimal policy is a **threshold policy**: stop speculating and verify once the
 probability that some token will be rejected exceeds a threshold. That is a
-strong structural prior — it means we do not need a general policy network, we
+strong structural prior: it means we do not need a general policy network, we
 need a *good rejection-probability signal and a well-chosen threshold*. A
 one-parameter learner is defensible where a deep RL agent would be overkill.
 
@@ -526,17 +526,17 @@ large swings from one static configuration.
 
 ---
 
-## 20. RL for placement, caching and prefetching — the systems line
+## 20. RL for placement, caching and prefetching: the systems line
 
 | Work | Domain | Result |
 |---|---|---|
 | **Sibyl** ([ISCA'22, 2205.07394](https://arxiv.org/pdf/2205.07394), CMU-SAFARI) | Online RL for **data placement in hybrid storage** | +21.6% / +19.9% over the best prior placement technique |
 | **Pythia** | RL data prefetcher for on-chip caches | outperforms hand-designed prefetchers |
-| **RL-CoPref** | RL coordination of multiple prefetchers; adjusts **prefetch degree** | — |
-| **Hermes** | Perceptron off-chip load predictor | — |
-| Cloud-block-storage DRL cache replacement ([TC'23](https://dl.acm.org/doi/abs/10.1109/TC.2023.3325625)) | Learned eviction | — |
+| **RL-CoPref** | RL coordination of multiple prefetchers; adjusts **prefetch degree** | n/a |
+| **Hermes** | Perceptron off-chip load predictor | n/a |
+| Cloud-block-storage DRL cache replacement ([TC'23](https://dl.acm.org/doi/abs/10.1109/TC.2023.3325625)) | Learned eviction | n/a |
 
-**Sibyl is the closest structural analogue to this engine's tier planner** —
+**Sibyl is the closest structural analogue to this engine's tier planner**,
 "place each item in the best-fit device, adaptively, using online feedback" is
 exactly the VRAM/RAM/disk decision. Its stated motivation is also exactly our
 situation: prior placement techniques are *rigid*, which limits adaptivity
@@ -547,24 +547,24 @@ But the reason Sibyl works is worth reading carefully before copying it:
 feedback. Our tier planner, by contrast, makes ~443 placement decisions and then
 observes **one** wall-clock number per generation run. That is catastrophic
 credit assignment, and it is the difference between "RL applies" and "RL is the
-wrong tool" — see §21.
+wrong tool", see §21.
 
 **Pythia / RL-CoPref map cleanly onto `io_prefetch_depth`**, which is a small
-discrete action with per-layer feedback (~40 decisions per token) — dense enough
+discrete action with per-layer feedback (~40 decisions per token), dense enough
 for a bandit, unlike placement.
 
 ---
 
-## 21. What this means for Afterimage — honest fit assessment
+## 21. What this means for Afterimage: honest fit assessment
 
 Sorted by credit-assignment quality, which is what actually determines whether a
 learned controller can work:
 
 | Decision | Feedback density | Non-stationary? | Verdict |
 |---|---|---|---|
-| **Speculative draft length k** | per sweep (~1000s/run) | **yes** — acceptance varies with context | **Strong RL/bandit fit** |
+| **Speculative draft length k** | per sweep (~1000s/run) | **yes**, acceptance varies with context | **Strong RL/bandit fit** |
 | **Prefetch depth** | per layer (~40/token) | mildly (page-cache state) | Plausible bandit fit, small lever |
-| **Tier placement** | **one scalar per run**, 443 decisions | **no** — optimum is fixed per (model, budget) | **RL is the wrong tool** |
+| **Tier placement** | **one scalar per run**, 443 decisions | **no**, optimum is fixed per (model, budget) | **RL is the wrong tool** |
 | Codec params (chunk_size, max_bits) | compression-time, offline | no | Offline search, not RL |
 
 **The tier-placement row deserves elaboration, because it is where the
@@ -572,7 +572,7 @@ temptation to reach for RL is strongest and the argument against is clearest.**
 
 For a fixed model and a fixed budget, the optimal placement does not *change
 during the run*. There is nothing to adapt to. What is wrong with the current
-planner is not that it fails to learn — it is that its cost model is an
+planner is not that it fails to learn; it is that its cost model is an
 **analytical proxy** rather than a measurement:
 
 ```
@@ -581,7 +581,7 @@ value_density = compressed_bytes / uncompressed_bytes
 
 That proxy assumes traffic-avoided-per-byte is fully determined by compression
 ratio. **We have direct evidence it mis-ranks:** measured on the real 14B, a
-4 GB budget gave 14.15 s/token and a 6 GB budget gave 14.25 s/token — *more*
+4 GB budget gave 14.15 s/token and a 6 GB budget gave 14.25 s/token, *more*
 residency, no improvement, slightly worse. A model that says "more residency ⇒
 strictly less traffic ⇒ faster" does not predict that.
 
@@ -595,8 +595,8 @@ assignment from a single scalar.
 speculation knob, where feedback is dense and the environment genuinely shifts
 mid-run. It does not belong on placement, where the honest gap is measurement.
 
-The concrete plan built on this assessment — including the one place where the
-two interact in a way nobody in the literature has tuned jointly — is
+The concrete plan built on this assessment, including the one place where the
+two interact in a way nobody in the literature has tuned jointly, is
 [PROPOSAL_ADAPTIVE.md](archive/PROPOSAL_ADAPTIVE.md).
 
 Sources for Part III: SpecDec++ arXiv:2405.19715 · BanditSpec arXiv:2505.15141 ·

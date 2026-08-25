@@ -2,7 +2,7 @@
 
 Every entry is a real run on the RTX 3080 Laptop (8 GB VRAM, 19 GB RAM,
 WSL2, NVMe), Qwen3-14B unless noted, cold page cache before every timed run.
-Entries are append-only — a regression stays in the log, it doesn't get
+Entries are append-only. A regression stays in the log, it doesn't get
 edited away. This is what lets us tell "we improved it" from "we broke it
 and didn't notice," which has happened twice before in this project
 (the `imap_unordered` locality regression, the prefetch race).
@@ -40,24 +40,24 @@ All paired token IDs were exact. No candidate advances.
 | 2026-08-19 | AirLLM | 1.57 GB | 28.12 | 29.54 | reference |
 
 Time split at the 2 GB config: **io ≈ 14 s/tok, decode ≈ 13 s/tok, compute ≈
-0.0 s/tok** — decode and disk are co-bottlenecks, which is the premise
+0.0 s/tok**, decode and disk are co-bottlenecks, which is the premise
 PROPOSAL.md's H2 is built on.
 
 ---
 
-## H2 gate — CPU decode throughput microbenchmark
+## H2 gate: CPU decode throughput microbenchmark
 
 Real tensor from the store (`model.layers.10.mlp.down_proj.weight`,
 89.1M weights, 87,040 chunks), gate threshold ≥1 GB/s decoded output.
 
-**Attempt 1 — numpy fancy-indexing, vectorized across chunks.** Bit-exact
+**Attempt 1: numpy fancy-indexing, vectorized across chunks.** Bit-exact
 (verified against the reference decoder, including a partial-chunk-range
 test proving the cross-chunk-boundary read is provably safe). Throughput:
 **0.037 GB/s peak at 4 threads, then regresses** (0.007 GB/s at 16 threads
-— more threads made it *worse*, real contention, not just "needs tuning").
+more threads made it *worse*, real contention, not just "needs tuning").
 **27x below gate. Failed.**
 
-**Attempt 2 — numba `@njit(parallel=True)`, per-chunk-bounded (mirrors
+**Attempt 2: numba `@njit(parallel=True)`, per-chunk-bounded (mirrors
 `ChunkedBitReader` exactly, no cross-chunk-boundary reads needed).**
 Bit-exact. Throughput:
 
@@ -71,18 +71,18 @@ Bit-exact. Throughput:
 
 **Clears the gate at 8+ threads.** For context: this engine's own GPU
 decode, measured in situ, runs at ~1.1 GB/s aggregate (20.33 GB compressed
-/ ~13 s at the 2 GB config) — the CPU path at 16 threads is now in the
+/ ~13 s at the 2 GB config), the CPU path at 16 threads is now in the
 *same order of magnitude as the GPU*, which is what makes splitting work
 between them plausible rather than pointless.
 
 **Decision: H2 proceeds, using the numba path exclusively.** The numpy
 path is kept in the codebase (documented as a failed approach, not
-deleted — same policy as every other negative result in this project) but
+deleted, same policy as every other negative result in this project) but
 is not used by the engine.
 
 ---
 
-## H2 — real engine measurement (Qwen3-14B, `vram_budget_gb=2.0`, N=4 tokens)
+## H2: real engine measurement (Qwen3-14B, `vram_budget_gb=2.0`, N=4 tokens)
 
 Isolated gate passed clearly (1.33 GB/s at 16 threads, same order as GPU).
 **Wired into the engine, the result reverses:**
@@ -91,11 +91,11 @@ Isolated gate passed clearly (1.33 GB/s at 16 threads, same order as GPU).
 |---|---|---|---|---|---|
 | 0.00 | 19.05 | 93.1 | 67.4 | 0.0 | 1.00x |
 | 0.25 | 19.04 | 100.1 | 57.7 | 18.2 | 1.00x (flat, not the win the gate predicted) |
-| 0.50 | 21.54 | 113.6 | 48.8 | 34.4 | **0.88x — regression** |
-| 0.75 | 26.47 | 123.5 | 24.7 | 60.5 | **0.72x — regression** |
-| 1.00 | 36.69 | 175.9 | 4.7 | 84.9 | **0.52x — nearly 2x worse** |
+| 0.50 | 21.54 | 113.6 | 48.8 | 34.4 | **0.88x: regression** |
+| 0.75 | 26.47 | 123.5 | 24.7 | 60.5 | **0.72x: regression** |
+| 1.00 | 36.69 | 175.9 | 4.7 | 84.9 | **0.52x: nearly 2x worse** |
 
-`gpu_decode_s` drops exactly as predicted as more tensors move to CPU — that
+`gpu_decode_s` drops exactly as predicted as more tensors move to CPU, that
 part of the mechanism works. But `io_s` grows in lockstep (93→176s), and
 total wall time is flat-at-best, monotonically worse beyond 25%.
 
@@ -108,7 +108,7 @@ the REST of that layer's tensors become available too) rather than running
 concurrently with GPU work on other tensors. It also puts a
 16-thread-wide `numba.prange` call, repeated per tensor (up to 1063 times
 at fraction=1.0), directly in the path of the thread doing the actual
-`read()` syscalls — plausibly starving it of scheduling time, which would
+`read()` syscalls, plausibly starving it of scheduling time, which would
 explain `io_s` inflating even though the measured disk-read boundary
 didn't move.
 
@@ -133,7 +133,7 @@ negative result, not deleted.
 
 ---
 
-## H1 — real engine measurement (Qwen3-14B, `vram_budget_gb=2.0`, N=4 tokens)
+## H1: real engine measurement (Qwen3-14B, `vram_budget_gb=2.0`, N=4 tokens)
 
 **`ram_tier_format="decoded"` (the pre-existing default) failed with a CUDA
 OOM on this machine, reproduced 3 times across ram_budget_gb ∈ {4.0, 1.5,
@@ -195,13 +195,13 @@ and the `--cpu-decode-fraction` CLI flag. The prefetch path is back to the
 GPU-only 2-tuple form it had before. 223 tests pass after removal.
 
 Kept, repurposed rather than deleted:
-- **`afterimage/runtime/cpu_decode.py`** — now documented as (a) the basis for
+- **`afterimage/runtime/cpu_decode.py`**: now documented as (a) the basis for
   a **CPU-only fallback** path, since the Triton kernels need CUDA and this is
   the only decoder that runs without a GPU, and (b) a verified negative result
   with its failure mode recorded in the module docstring.
-- **`tests/test_cpu_decode.py`** (7 tests) — the decoder is bit-exact and
+- **`tests/test_cpu_decode.py`** (7 tests): the decoder is bit-exact and
   stays proven so.
-- **`scripts/cpu_decode_gate.py`**, **`scripts/h2_cpu_decode_sweep.py`** — the
+- **`scripts/cpu_decode_gate.py`**, **`scripts/h2_cpu_decode_sweep.py`**: the
   evidence, re-runnable.
 
 **The transferable lesson, recorded because it cost a full implementation
@@ -222,56 +222,56 @@ France?". **Scale note, disclosed up front:** the test plan specifies 8
 prompts x 32 tokens per cell; these runs use 1 prompt x 4-16 tokens (same
 reduced-N convention as the H1/H2 sweeps above), to keep real GPU wall-clock
 inside this session. T0 in particular is too small-N to be conclusive (see
-below) — everywhere else, the effect sizes are large enough that N=4-16 still
+below); everywhere else, the effect sizes are large enough that N=4-16 still
 gives a clean, decisive read, which is stated explicitly per result, not
 implied.
 
-### T1 — matched-VRAM arm comparison (the headline)
+### T1: matched-VRAM arm comparison (the headline)
 
 Total budget 6.0 GB. Arm B's engine budget = 6.0 − 1.3 (draft model's own
 measured resident footprint); Arm C's is the full 6.0 (self-drafting has no
-cost outside the planner's own budget — see adaptive_bench.py's docstring).
+cost outside the planner's own budget, see adaptive_bench.py's docstring).
 
 | Arm | peak VRAM | s/token | tok/sweep | vs A |
 |---|---|---|---|---|
-| A — greedy | 5.87 GB | 20.58 | 1.00 (n/a) | 1.00x |
-| **B — small draft model** | **5.77 GB** | **6.06** | **4.00** | **3.40x** |
-| C — self-draft (layers 0-3 pinned) | 5.84 GB | 19.71 | 1.00 | 1.04x (noise) |
+| A: greedy | 5.87 GB | 20.58 | 1.00 (n/a) | 1.00x |
+| **B: small draft model** | **5.77 GB** | **6.06** | **4.00** | **3.40x** |
+| C: self-draft (layers 0-3 pinned) | 5.84 GB | 19.71 | 1.00 | 1.04x (noise) |
 
 **B is a real, matched-VRAM win: 3.4x faster at slightly LESS peak VRAM than
 greedy** (draft model resident cost roughly cancels the VRAM the shrunk
 engine budget gives up). tok/sweep=4.00 at n_tokens=4 means every drafted
-token in the single sweep was accepted — a strong, clean result, though a
+token in the single sweep was accepted, a strong, clean result, though a
 longer run (T2 below) shows acceptance is not usually this high.
 
-**C is flat — self-drafting produced no benefit over greedy at this budget.**
+**C is flat: self-drafting produced no benefit over greedy at this budget.**
 tok/sweep=1.00 means the draft was rejected essentially every time; every
 sweep degraded to exactly the one-token "resample" case verify.py's
 mechanism guarantees regardless of draft quality. Investigated further below.
 
-### Self-draft acceptance vs depth (mechanism A — investigating the flat result)
+### Self-draft acceptance vs depth (mechanism A: investigating the flat result)
 
 | exit_layer | depth | tok/sweep | pin_draft_layers=True s/tok | =False s/tok |
 |---|---|---|---|---|
 | 4 / 40 | 10% | 1.00 | 19.71 | 22.17 |
 | 8 / 40 | 20% | 1.00 | 20.25 | 31.80 |
 
-Doubling draft depth (4→8 layers) did not move acceptance at all — still
+Doubling draft depth (4→8 layers) did not move acceptance at all, still
 effectively 0%. **This falsifies mechanism A as implemented: an untrained
 Qwen3-14B checkpoint's own early layers do not produce next-token logits
 useful enough to accept, at either depth tested.** This was flagged as the
 leading risk in PROPOSAL_ADAPTIVE.md §6 before any of this was run ("Early-
 exit drafts may be poor without training... exactly what step 2 measures
-before anything is built on it") — the risk materialized. LayerSkip's
+before anything is built on it"), the risk materialized. LayerSkip's
 published 2.16x depends on training the model with an early-exit auxiliary
 loss; nothing here was trained. Going deeper still (e.g. 20/40 layers) was
-not tested — 20 layers alone is ~13 GB, infeasible on this 8 GB card
+not tested, 20 layers alone is ~13 GB, infeasible on this 8 GB card
 regardless of outcome, so the question is moot for this hardware even if
 deeper exit layers would eventually help.
 
 **Mechanism C (pinning) is CONFIRMED independently of A's failure.** At both
 depths, unpinned self-draft is markedly slower than pinned (1.13x at depth 4,
-**1.57x at depth 8** — the gap widens with depth, exactly as predicted: more
+**1.57x at depth 8**: the gap widens with depth, exactly as predicted: more
 draft layers means more re-streamed bytes per sweep when they aren't pinned).
 The vram_planner ranking change (TensorInfo.uses, docs in vram_planner.py)
 does exactly what it was built to do. It currently has no working consumer
@@ -279,8 +279,8 @@ does exactly what it was built to do. It currently has no working consumer
 infrastructure is real, tested, and would immediately benefit a *trained*
 early-exit draft if one were ever added.
 
-### T2 — bandit policy vs fixed k (mechanism B, tested against the WORKING
-### arm — small draft model, since self-draft had nothing to adapt)
+### T2: bandit policy vs fixed k (mechanism B, tested against the WORKING
+### arm: small draft model, since self-draft had nothing to adapt)
 
 16 tokens, spec_k initial/max=6, total budget 6.0 GB, temperature=1.0
 (realistic sampling regime, not the temp=0 correctness check):
@@ -291,13 +291,13 @@ early-exit draft if one were ever added.
 | gamma | 7.66 (**worse**) | 8 | 1 (collapsed) |
 | threshold | 7.07 (~tied, within noise) | 7 | 6 |
 
-**Neither adaptive policy beat the tuned constant — T2's own pre-stated kill
+**Neither adaptive policy beat the tuned constant, T2's own pre-stated kill
 criterion.** GammaTune's EWMA saw a run of low-acceptance sweeps under
 realistic temperature=1.0 sampling and contracted k all the way to 1, which
-then can't recover within the ~7 sweeps this run had — exactly risk #2 from
+then can't recover within the ~7 sweeps this run had, exactly risk #2 from
 PROPOSAL_ADAPTIVE.md §6 ("too few sweeps per run for a bandit to converge").
 `spec_policy_state` persistence (letting a policy carry state across runs)
-is implemented and unit-tested but was not exercised live in this pass —
+is implemented and unit-tested but was not exercised live in this pass. An
 open item, not a claimed result.
 
 **Verdict: per the test plan's own rule, ship the constant.** `spec_k_policy`
@@ -305,18 +305,18 @@ stays available (opt-in, off by default) as tested, working infrastructure,
 but `"fixed"` is the one actually recommended pending either longer runs or
 cross-run state persistence being verified live.
 
-### T0 — coupling check (best-k vs VRAM budget)
+### T0: coupling check (best-k vs VRAM budget)
 
 k ∈ {2,4,8}, budget ∈ {2.5, 6.0} GB, n_tokens=4. **Not conclusive at this
-N** — flagging this rather than overclaiming: with only 4 tokens per cell,
+N**, flagging this rather than overclaiming: with only 4 tokens per cell,
 `tok_per_sweep` was 2.00 for every single cell regardless of k or budget,
 and s/token varied by less than 25% across the whole grid (9.6-12.2s) with
-no clean monotonic pattern — consistent with run-to-run noise dominating any
+no clean monotonic pattern, consistent with run-to-run noise dominating any
 real coupling signal at this sample size, not with a confident "yes/no" on
 whether best-k shifts with budget. The plan's full 12-run x more-tokens
 version would be needed to actually answer this; what ran here does not
 retroactively justify skipping §1.4 (the planner change) OR confirm it was
-needed — it's an open question, correctly left open rather than guessed at.
+needed; it's an open question, correctly left open rather than guessed at.
 
 ### Disposition (2026-08-19)
 
@@ -336,7 +336,7 @@ needed — it's an open question, correctly left open rather than guessed at.
   section a real per-run correctness check, not a distributional assumption.
 - **Mechanism C (draft-layer-aware VRAM planning): CONFIRMED mechanically**
   (1.13-1.57x from pinning alone), **but currently has no working draft
-  mechanism to pair with** — A is what C was built to make cheap, and A
+  mechanism to pair with**, A is what C was built to make cheap, and A
   doesn't work yet. Kept as tested, correct, opt-in infrastructure.
 - **spec_k_policy (bandit-tuned k): NOT justified at the sweep counts a
   single short generation provides.** Ships as opt-in, defaults to
@@ -347,10 +347,10 @@ needed — it's an open question, correctly left open rather than guessed at.
 `generate_adaptive` entry point** (functionally similar to the pre-existing
 `generate_speculative`, but with the temperature=0 correctness guarantee and
 a shared entry point with the other mechanisms). A and C remain real,
-tested, opt-in code with a documented negative/inconclusive result each —
+tested, opt-in code with a documented negative/inconclusive result each:
 not vaporware, not deleted, not oversold.
 
-### T4 — final head-to-head vs AirLLM, VRAM-matched sweep, temperature=0
+### T4: final head-to-head vs AirLLM, VRAM-matched sweep, temperature=0
 
 `scripts/adaptive_bench.py t4`, prompt "What is the capital of France?",
 8 tokens, cold cache, real 14B, real AirLLM. temperature=0 chosen
@@ -359,16 +359,16 @@ verify.temperature_probs) rather than diverging under sampling.
 
 | system | budget requested | peak VRAM (measured) | s/token | answer |
 |---|---|---|---|---|
-| AirLLM | — | 1.57 GB | 29.38 | *(see caveat below)* |
+| AirLLM | n/a | 1.57 GB | 29.38 | *(see caveat below)* |
 | Afterimage greedy | 2.1 GB | 1.99 GB | 22.57 | " The capital of France is Paris. It" |
 | Afterimage greedy | 4.0 GB | 3.89 GB | 19.14 | " The capital of France is Paris. It" |
 | Afterimage greedy | 6.0 GB | 5.87 GB | 16.67 | " The capital of France is Paris. It" |
-| Afterimage + small draft model | 2.1 GB | **INFEASIBLE** | — | — |
+| Afterimage + small draft model | 2.1 GB | **INFEASIBLE** | n/a | n/a |
 | Afterimage + small draft model | 4.0 GB | 3.78 GB | **3.24** | " The capital of France is Paris. It" |
 | Afterimage + small draft model | 6.0 GB | 5.78 GB | **3.39** | " The capital of France is Paris. It" |
 
 **Data-quality caveat, reported rather than hidden:** AirLLM's own generated
-text this run was " What is the largest city in the United" — off-topic,
+text this run was " What is the largest city in the United", off-topic,
 not "Paris." AirLLM printed `The attention mask is not set... you may
 observe unexpected behavior` for this exact call (`return_attention_mask=
 False`, inherited unchanged from the existing vram_matched_bench.py
@@ -376,17 +376,17 @@ baseline call, not something changed in this pass). Its peak-VRAM and
 wall-time numbers are unaffected (pure instrumentation, independent of which
 tokens came out) and are reported as measured; its answer text should not be
 read as "AirLLM got the question wrong" so much as "this baseline call has a
-known rough edge" — worth fixing (pass a real attention_mask) before ever
+known rough edge", worth fixing (pass a real attention_mask) before ever
 publishing a worked-example transcript that shows AirLLM's text.
 
 **The VRAM-matching mistake this whole workstream exists to avoid, caught in
 its own output:** `adaptive_bench.py`'s auto-generated summary line labelled
-the small-draft-model numbers "speedup at comparable peak VRAM" — 8.67-9.06x.
+the small-draft-model numbers "speedup at comparable peak VRAM": 8.67-9.06x.
 That label is not accurate at face value: 3.78-5.78 GB is 2.4-3.7x AirLLM's
 1.57 GB, not comparable. The honest statements are:
 
 - **At genuinely matched, AirLLM-level VRAM (~1.6-2.1 GB), the small-draft-
-  model arm does not run at all** — infeasible, confirmed by measurement
+  model arm does not run at all**, infeasible, confirmed by measurement
   (`vram_budget 0.80 GB is below the 1.73 GB needed`). The draft model's own
   ~1.3 GB plus the target's own ~1.7 GB minimum (lm_head + scratch) floor is
   structurally above AirLLM's footprint. This is a real, previously-unstated
@@ -402,18 +402,18 @@ That label is not accurate at face value: 3.78-5.78 GB is 2.4-3.7x AirLLM's
   specifically so the second one never gets published as if it were the
   first.
 - tok/sweep=8.00 (every proposed token accepted) for this specific easy,
-  high-agreement prompt at temperature=0 — a clean, real, verified result,
+  high-agreement prompt at temperature=0, a clean, real, verified result,
   but not a general acceptance-rate claim; T2's 16-token/temperature=1 run
   above shows real acceptance is well under 100% on a less trivial sample.
 
 ---
 
-## Chunked lm_head projection — lowers the VRAM floor, but is NOT lossless
+## Chunked lm_head projection: lowers the VRAM floor, but is NOT lossless
 ## (2026-08-19)
 
 **Why it was attempted.** Peak VRAM for a layer-streaming engine is bounded
 below by the largest tensor it must hold at once. On Qwen3-14B that is
-`lm_head` at 1.556 GB — and AirLLM sits at 1.57 GB for the same reason.
+`lm_head` at 1.556 GB, and AirLLM sits at 1.57 GB for the same reason.
 **Both systems were pinned to the same floor by the same tensor**, so no
 "we use less memory than AirLLM" claim was reachable at all.
 
@@ -443,7 +443,7 @@ unaligned case.
 cuBLAS selects a different kernel and split-K reduction strategy per output
 shape, so a blocked product accumulates in a different order than one full
 product and bf16 rounding diverges. **Forcing fp32 accumulation does not fix
-it** — that was tested specifically, and the deviation only fell from 2.0
+it**, that was tested specifically, and the deviation only fell from 2.0
 to 1.0.
 
 **Caught only because it was checked at real dimensions.** At the tiny
@@ -462,11 +462,11 @@ comparison against AirLLM is a lossless-vs-lossless comparison.
 `tests/test_chunked_lm_head_gpu.py::test_blocked_matmul_is_not_bit_exact_at_production_shape`
 is a characterization test: if a future cuBLAS makes the two agree, it
 fails, and that failure is the signal to re-evaluate promoting this to the
-lossless path — not to loosen the assertion.
+lossless path, not to loosen the assertion.
 
 ---
 
-## CORRECTION — the matched-VRAM AirLLM claim was wrong (2026-08-19)
+## CORRECTION: the matched-VRAM AirLLM claim was wrong (2026-08-19)
 
 `scripts/matched_vram_final.py`, 8 tokens, cold cache, same peak-VRAM
 counter for both, lossless both sides. This run was built specifically to
@@ -476,8 +476,8 @@ speedup at whatever memory happened to be convenient.
 | System | peak VRAM | s/token | GB read/token |
 |---|---|---|---|
 | AirLLM | **1.57 GB** | **29.10** | 29.2 |
-| Afterimage, budget 1.69 GB | — | **planner refused** | — |
-| Afterimage, budget 1.70 GB | — | **planner refused** | — |
+| Afterimage, budget 1.69 GB | n/a | **planner refused** | n/a |
+| Afterimage, budget 1.70 GB | n/a | **planner refused** | n/a |
 | Afterimage, budget 1.80 GB | 1.68 GB | **30.71** | 14.7 |
 | Afterimage, budget 2.10 GB | 1.99 GB | 20.18 | 11.8 |
 
@@ -487,18 +487,18 @@ speedup at whatever memory happened to be convenient.
    must be materialized; plus decode scratch and activation slack the floor
    is ~1.68 GB. Budgets of 1.69 and 1.70 GB were refused up front.
 
-2. **At the closest reachable point (1.68 GB — still 7% MORE memory than
+2. **At the closest reachable point (1.68 GB, still 7% MORE memory than
    AirLLM) we are SLOWER: 30.71 vs 29.10 s/token.** Reported plainly
    because it is the number the whole comparison rests on.
 
 3. **The previously logged "1.30x faster at 1.99 GB vs AirLLM 1.57 GB" was
-   not a matched-VRAM result** — 1.99 GB is 27% more memory. The speedup was
+   not a matched-VRAM result**, 1.99 GB is 27% more memory. The speedup was
    real; the label was wrong. Same class of error as the original 2.66 GB
    vs 1.57 GB mistake this project already corrected once. Corrected here
    rather than edited away, per the append-only rule.
 
 4. **Compression works, and it is still not enough at the floor.** Disk
-   reads halve (14.7 vs 29.2 GB/token) — the mechanism does exactly what it
+   reads halve (14.7 vs 29.2 GB/token), the mechanism does exactly what it
    claims. But wall time does not improve, because the saved I/O is spent on
    GPU decode that AirLLM never performs. At a 1.80 GB budget only ~3 MB
    remains after headroom (170 tiny norm tensors), so nothing stays
@@ -507,7 +507,7 @@ speedup at whatever memory happened to be convenient.
 
    **The compression advantage converts to wall-clock only once there is
    enough VRAM headroom to decode in large slices and keep tensors
-   resident** — visible as the crossover at 1.99 GB (1.44x) and above.
+   resident**, visible as the crossover at 1.99 GB (1.44x) and above.
 
 **Standing claim after this correction:** at equal memory this engine is
 NOT faster than AirLLM on this hardware. Its real advantage is the ability
@@ -517,7 +517,7 @@ do. That is a genuine capability difference and it is a different claim from
 "faster at the same memory."
 
 **Path to an actual matched-VRAM win:** the floor is `lm_head`, and the
-chunked projection above removes it — but is not bit-exact, so it cannot
+chunked projection above removes it, but is not bit-exact, so it cannot
 carry a lossless number. Making it shape-stable (pad every block to
 identical dimensions so cuBLAS selects one kernel throughout, or a Triton
 kernel with a fixed reduction order) would restore bit-exactness AND drop
@@ -532,7 +532,7 @@ worked-example comparison without forcing `do_sample=False`.
 
 ---
 
-## Chunked lm_head on the real 14B — the VRAM floor does drop, a lot
+## Chunked lm_head on the real 14B: the VRAM floor does drop, a lot
 ## (2026-08-19)
 
 Same protocol, 4 tokens, cold cache, `decode_slice_elems=1<<20`,
@@ -541,17 +541,17 @@ Same protocol, 4 tokens, cold cache, `decode_slice_elems=1<<20`,
 
 | `vram_budget_gb` | `lm_head_slice_rows` | peak VRAM | s/token | vs AirLLM VRAM |
 |---|---|---|---|---|
-| AirLLM (reference) | — | 1.57 GB | 29.10 | — |
+| AirLLM (reference) | n/a | 1.57 GB | 29.10 | n/a |
 | 1.20 | 8192 | **1.557 GB** | 28.55 | −1% |
 | 0.80 | 4096 | **1.159 GB** | 29.08 | **−26%** |
 | 0.50 | 2048 | **0.855 GB** | 29.25 | **−46%** |
 
 **The floor really is gone.** The engine previously could not go below
-1.68 GB; it now runs the same 14B in **0.855 GB — 46% less VRAM than
-AirLLM — at the same speed** (29.25 vs 29.10 s/token, within noise).
+1.68 GB; it now runs the same 14B in **0.855 GB, 46% less VRAM than
+AirLLM, at the same speed** (29.25 vs 29.10 s/token, within noise).
 Generated text was identical across all three (" The capital of France"),
 matching the lossless runs, so the bf16 blocking deviation did not flip an
-argmax on this prompt — evidence that it is small in practice, though not a
+argmax on this prompt, evidence that it is small in practice, though not a
 guarantee, which is exactly why the config still declares itself lossy.
 
 **Speed is flat across the whole sweep** (28.55-29.25 s/token). Blocking the
@@ -562,7 +562,7 @@ memory, essentially for free, and buys no speed.
 ### What this does and does not license as a claim
 
 - **Legitimate:** "runs a 14B in 0.855 GB of VRAM, 46% less than AirLLM, at
-  the same tokens/second, with output that matched on the prompts tested" —
+  the same tokens/second, with output that matched on the prompts tested",
   stated together with "this configuration is not bit-exact."
 - **NOT legitimate:** any lossless claim, and any speed claim. At equal
   memory and equal losslessness this engine is still *slower* than AirLLM
@@ -571,8 +571,8 @@ memory, essentially for free, and buys no speed.
   (pad every block to identical dimensions, or a Triton kernel with a fixed
   reduction order) would move this entire table onto the lossless path and
   make it the headline result rather than a footnote. It would also let
-  speculative decoding — which needs 1.3 GB for the draft model and
-  currently cannot fit under ~3 GB — run in roughly 2 GB total, where its
+  speculative decoding, which needs 1.3 GB for the draft model and
+  currently cannot fit under ~3 GB, run in roughly 2 GB total, where its
   measured 3.24 s/token would be a genuine matched-VRAM win over AirLLM's
   29.10.
 
@@ -603,7 +603,7 @@ Swept block size N against a single full matmul at the real lm_head shape
 **The pattern is not a pattern.** N=1024 is bit-exact at M=1 and wrong at
 M=5. N=37984 is wrong at M=1 and exact at M=5. Kernel selection depends on
 the full (M, N, K) triple in a way that is not monotone, not
-alignment-based, and not predictable from the outside — so there is no
+alignment-based, and not predictable from the outside, so there is no
 "safe block size" to pin, and any that appeared safe would silently stop
 being safe the moment the sequence length changed. A speculative sweep
 alone varies M from call to call.
@@ -621,22 +621,22 @@ inherently a lossy option, not a not-yet-finished one.** The earlier
 optimistic and is corrected here.
 
 What remains legitimately checkable is whether the deviation ever changes
-the emitted token — measured in the next section.
+the emitted token, measured in the next section.
 
 ---
 
-## ALL METHODS vs AirLLM — one table, one protocol (2026-08-19)
+## ALL METHODS vs AirLLM: one table, one protocol (2026-08-19)
 
 `scripts/methods_vs_airllm.py`, Qwen3-14B, 8 tokens, cold page cache before
 every run, peak VRAM from the same counter for every row including AirLLM's.
-**AirLLM now runs with `do_sample=False`** — without it HF `generate()`
+**AirLLM now runs with `do_sample=False`**, without it HF `generate()`
 honoured Qwen3's sampling `generation_config` and the baseline produced
 different text than our greedy path, making transcripts incomparable. With
 it, every row below returns the identical string.
 
 | method | peak VRAM | s/token | lossless | vs AirLLM | VRAM vs AirLLM |
 |---|---|---|---|---|---|
-| **AirLLM (baseline)** | 1.568 GB | 27.37 | yes | 1.00x | — |
+| **AirLLM (baseline)** | 1.568 GB | 27.37 | yes | 1.00x | n/a |
 | 1. Compression only | 1.677 GB | 28.01 | yes | **0.98x** | +7% |
 | 2. + residency @2.1 GB | 1.990 GB | 17.20 | yes | 1.59x | +27% |
 | 2. + residency @4.0 GB | 3.888 GB | 15.22 | yes | 1.80x | +148% |
@@ -664,7 +664,7 @@ re-litigated later: the retracted "1.30x at matched VRAM" was inside the
 noise band as well as at the wrong memory; and run 2's favourable 1.02x
 must not be quoted as a win either. **The supported statement is parity.**
 
-### Token agreement — does the non-bit-exact path change the answer?
+### Token agreement: does the non-bit-exact path change the answer?
 
 Every method, including both LOSSY chunked-head rows, produced
 **token-identical output** to the lossless greedy path on this prompt. The
@@ -680,17 +680,17 @@ itself lossy, correctly.
 1. **Compression alone does not beat AirLLM.** It halves disk I/O
    (14.7 vs 29.2 GB/token, measured earlier) and spends the saving on GPU
    decode that AirLLM never performs. Net: parity.
-2. **Residency is where compression pays off** — but it is bought with
+2. **Residency is where compression pays off**, but it is bought with
    memory, not cleverness. Note the diminishing return: 2.0→3.9 GB (2x the
    memory) buys 17.20→15.22 s/token (13%).
-3. **Chunked head is the only row that beats AirLLM on memory** — 45% less,
+3. **Chunked head is the only row that beats AirLLM on memory**: 45% less,
    at parity speed. Not bit-exact.
 4. **Speculation is by far the largest lossless win: 12.48x.** It is also
-   the least novel part of this engine — standard draft/verify — but it
+   the least novel part of this engine, standard draft/verify, but it
    composes with everything else and costs only the draft model's 1.3 GB.
 5. **The two levers compose.** Chunked head frees ~0.8 GB, which is roughly
    what the draft model needs, so speculation now fits in 2.05 GB instead of
-   the ~3 GB floor it had before — 8.34x at +31% VRAM rather than 12.48x at
+   the ~3 GB floor it had before, 8.34x at +31% VRAM rather than 12.48x at
    +141%. This configuration did not exist before this pass.
 
 ### Standing summary
@@ -699,7 +699,7 @@ itself lossy, correctly.
 - **Lossless, more VRAM: 1.6x-1.8x (residency), 12.5x (speculation).**
   Real, and honestly attributable to spending memory AirLLM cannot spend.
 - **Lossy, less VRAM: 45% below AirLLM's footprint at parity speed.**
-- **Lossy, balanced: 8.3x at +31% VRAM** — arguably the most useful
+- **Lossy, balanced: 8.3x at +31% VRAM**: arguably the most useful
   operating point on an 8 GB card, and the one to reach for if the
   bit-exactness requirement is ever relaxed.
 
@@ -733,18 +733,16 @@ was 30.5% lower-throughput and pruned only 0.084% of rows. H3/H8 were gated;
 H6 lacked alternative artifacts; H7 was inapplicable to this dense checkpoint.
 
 Full analysis, literature boundary, caveats, and raw-file links:
-[BOUNDED_RESEARCH_REPORT_2026-08-21.md](BOUNDED_RESEARCH_REPORT_2026-08-21.md).
+[ALL_HYPOTHESES_AND_BASELINES.md](ALL_HYPOTHESES_AND_BASELINES.md).
 
 ---
 
 ## H9-H15 exploratory screens (2026-08-21)
 
 One-prompt-class mechanism screens, not the five-repeat confirmatory protocol.
-Full narrative, literature boundary and gates:
-[NOVEL_METHODS_2026-08-21.md](NOVEL_METHODS_2026-08-21.md) (H9-H13),
-[RESEARCH_METHODS.md](RESEARCH_METHODS.md#h14-h15----storage-layout-as-a-residency-action)
-(H14-H15), and current evidence-level interpretation:
-[REGULATED_TEST_PLAN_2026-08-21.md](REGULATED_TEST_PLAN_2026-08-21.md).
+Method designs, literature boundaries, gates, and the L0-L3 evidence levels that
+interpret them are in
+[RESEARCH_METHODS.md](RESEARCH_METHODS.md#5-evidence-levels).
 
 | ID | Method | Measured | Gate | Verdict |
 |---|---|---:|---:|---|
@@ -819,7 +817,7 @@ rewriting their chronology.
   accepted as H9 evidence.
 
 Concise tables and raw links:
-[`FINAL_TEST_RESULTS_2026-08-21.md`](FINAL_TEST_RESULTS_2026-08-21.md).
+[ALL_HYPOTHESES_AND_BASELINES.md](ALL_HYPOTHESES_AND_BASELINES.md).
 
 ## 2026-08-22 final reevaluation and external baseline
 

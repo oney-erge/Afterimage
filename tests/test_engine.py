@@ -9,7 +9,7 @@ from afterimage.testing.toy_lm import ToyLM
 
 import pytest
 
-pytestmark = pytest.mark.archive  # Phase-0 subspace-activation-cache branch, killed -- see docs/archive/README.md
+pytestmark = pytest.mark.archive  # Phase-0 subspace-activation-cache branch, killed per its own gate
 def test_full_decode_loop_runs_and_produces_more_than_one_token_per_sweep(tmp_path):
     """End-to-end integration: draft proposes, batched offloaded verification
     checks the whole chain in one sweep, Afterimage cache serves some of

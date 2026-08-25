@@ -2,7 +2,7 @@
 measured this subspace-cache idea against real hardware and got a NO-GO:
 functional error 250-450x above threshold. The current engine is
 runtime/streaming_engine.py (lossless compressed weight streaming) -- see
-README.md and docs/archive/MASTER_PLAN.md. Kept, not deleted: the code is correct
+README.md and the archived master plan. Kept, not deleted: the code is correct
 and tested (67 passing tests), and the negative result has standalone value.
 
 Online orthonormal basis for the Afterimage cache.

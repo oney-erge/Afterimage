@@ -6,7 +6,7 @@ from afterimage.runtime.gate import GlobalController, JLGate
 
 import pytest
 
-pytestmark = pytest.mark.archive  # Phase-0 subspace-activation-cache branch, killed -- see docs/archive/README.md
+pytestmark = pytest.mark.archive  # Phase-0 subspace-activation-cache branch, killed per its own gate
 def test_jl_estimate_tracks_true_output_norm_within_bound():
     torch.manual_seed(0)
     d_in, d_out, m = 200, 300, 64

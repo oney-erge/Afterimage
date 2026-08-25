@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Real-hardware harness for docs/archive/ADAPTIVE_TEST_PLAN.md / docs/archive/PROPOSAL_ADAPTIVE.md.
+"""Real-hardware harness for the archived adaptive test plan / the archived adaptive-speculation proposal.
 
 Enforces the test plan's Rule 1 (every arm gets the SAME total VRAM budget,
 they differ only in how they spend it) mechanically:
@@ -23,7 +23,7 @@ Correctness for every arm that uses generate_adaptive / generate_speculative
 is checked by running at temperature=0.0: verify.temperature_probs makes
 speculative decoding provably reproduce generate_greedy's argmax sequence
 token-for-token regardless of draft quality/k/policy (see its docstring and
-docs/archive/ADAPTIVE_TEST_PLAN.md Sec 3) -- callers of this script that want that
+the archived adaptive test plan Sec 3) -- callers of this script that want that
 guarantee checked should pass --temperature 0 and diff token_ids against a
 run_greedy() result themselves; this harness does not assert it inline so it
 can also be used for the realistic temperature>0 regime.

@@ -98,7 +98,7 @@ def hardware() -> dict:
 
 
 # MEASURED_REFERENCE (imported above): Qwen3-14B on the RTX 3080 Laptop
-# (README's benchmark table / docs/FINAL_TEST_RESULTS_2026-08-21.md).
+# (README's benchmark table / docs/ALL_HYPOTHESES_AND_BASELINES.md).
 # Extrapolating to other sizes assumes the same architecture family and
 # roughly linear scaling of store size and streamed-read time with
 # parameter count -- true to first order for same-precision dense
@@ -701,8 +701,8 @@ def start_experiment(hypothesis_id: str, req: ExperimentRunRequest) -> dict:
             raise HTTPException(
                 400, "%s requires existing replay_plan_state and "
                 "critical_path_profile files" % hypothesis_id)
-        # The Placement family's shared L1 prerequisite (REGULATED_TEST_PLAN
-        # section "Protocol by hypothesis family") is that the frozen plan
+        # The Placement family's shared L1 prerequisite (docs/RESEARCH_METHODS.md
+        # section 5, "Evidence levels") is that the frozen plan
         # actually differs from its control -- a search that returns its own
         # seed cannot support or falsify anything about the search method,
         # only about the seed. H13 and H15 previously both failed exactly

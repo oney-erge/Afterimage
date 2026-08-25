@@ -43,8 +43,9 @@ jobs:
       - run: python -m pytest -q
 
   archive-tests:
-    # Phase-0 subspace-activation-cache branch (docs/archive/README.md):
-    # kept and still correct, excluded from the default run by pyproject's
+    # Phase-0 subspace-activation-cache branch: killed per its own
+    # pre-registered gate, kept and still correct, excluded from the default
+    # run by pyproject's
     # `-m "not archive"`, verified here on every push so "kept, not deleted"
     # doesn't quietly rot.
     runs-on: ubuntu-latest

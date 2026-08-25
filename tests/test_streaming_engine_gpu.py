@@ -389,7 +389,7 @@ def test_compute_seconds_does_not_double_count_io_and_decode(tmp_path, monkeypat
 
 
 def test_compressed_ram_tier_is_bit_exact_and_persists_across_tokens(tmp_path, monkeypatch):
-    """docs/archive/PROPOSAL.md's own H1 (unrelated to the current H1
+    """the archived streaming proposal's own H1 (unrelated to the current H1
     critical-path-residency hypothesis): caching compressed bytes instead of
     a decoded tensor trades a memcpy for a real GPU decode every token --
     must still be bit-exact, and the cache must hold RAW bytes (not a
@@ -738,7 +738,7 @@ def test_draft_self_logits_rejects_out_of_range_exit_layer(tmp_path, monkeypatch
 @pytest.mark.parametrize("spec_k_policy", ["fixed", "gamma", "threshold"])
 def test_generate_adaptive_self_draft_matches_greedy_at_temperature_zero(
         tmp_path, monkeypatch, spec_k_policy):
-    """The correctness argument from docs/archive/ADAPTIVE_TEST_PLAN.md §3: at
+    """The correctness argument from the archived adaptive test plan §3: at
     temperature<=0, verify.temperature_probs makes draft and target
     distributions one-hot, so speculative_sample_step's accept/reject
     collapses to 'accept iff draft's argmax == target's argmax, else emit

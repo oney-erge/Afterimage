@@ -169,7 +169,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         print("      not been run on real AMD hardware by this project -- treat it as")
         print("      untested, not unsupported. block_chunks (Triton kernel tuning) was")
         print("      tuned for NVIDIA's 32-wide warp; AMD's 64-wide wavefront likely")
-        print("      wants a different value -- see docs/archive/MASTER_PLAN.md.")
+        print("      wants a different value -- see the archived master plan.")
 
     print()
     if args.skip_disk_check:

@@ -91,7 +91,7 @@ def main():
     except OSError as e:
         print(f"\nO_DIRECT read FAILED on this filesystem: {e}")
         print("This filesystem (likely DrvFs /mnt/*) does not support O_DIRECT.")
-        print("Move the weight store to native ext4 -- see docs/archive/EXECUTION_PLAN.md A.5.")
+        print("Move the weight store to native ext4 -- see the archived Phase-0 execution plan A.5.")
         path.unlink(missing_ok=True)
         return 1
 
