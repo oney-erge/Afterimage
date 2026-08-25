@@ -3,4 +3,4 @@
 # First run sets things up; every run after that just starts the server.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
-exec ./install.sh "$@"
+exec ./run.sh "$@"

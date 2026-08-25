@@ -9,7 +9,7 @@
 set -uo pipefail
 cd "$(dirname "$0")" || exit 1
 
-./install.sh
+./run.sh "$@"
 status=$?
 if [ "$status" -ne 0 ] && [ "$status" -ne 130 ] && [ "$status" -ne 143 ]; then
   echo
