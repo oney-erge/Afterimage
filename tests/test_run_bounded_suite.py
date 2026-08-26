@@ -139,3 +139,87 @@ def test_aggregate_treats_legacy_rows_without_a_repeat_field_as_one_repeat():
     summary = aggregate(rows)
     assert summary["repeats_completed"] == 1
     assert summary["seconds_per_token"] == pytest.approx(10.0)
+
+
+def test_throttle_decoding_matches_nvml_reason_bits():
+    """The raw reason field is hex; nobody scanning a result file decodes it
+    by eye, so the boolean is what actually surfaces the confound."""
+    from scripts.run_bounded_suite import is_throttled
+
+    assert is_throttled({"throttle_reasons_active": "0x0000000000000000"}) is False
+    # GpuIdle alone is a normal state, not a performance throttle.
+    assert is_throttled({"throttle_reasons_active": "0x0000000000000001"}) is False
+    # SwThermalSlowdown -- the one measured on this project's own reference
+    # machine while an uncooled campaign degraded 1.51x across repeats.
+    assert is_throttled({"throttle_reasons_active": "0x0000000000000020"}) is True
+    assert is_throttled({"throttle_reasons_active": "0x0000000000000004"}) is True  # SwPowerCap
+    assert is_throttled({"throttle_reasons_active": "0x0000000000000040"}) is True  # HwThermal
+    # Unknown / unavailable must be None, never a confident False.
+    assert is_throttled({"throttle_reasons_active": "[N/A]"}) is None
+    assert is_throttled({}) is None
+    assert is_throttled({"throttle_reasons_active": "not-hex"}) is None
+
+
+def test_aggregate_reports_thermal_integrity():
+    from scripts.run_bounded_suite import aggregate
+
+    clean = [_row("a", 10.0, gpu_thermal={"throttled": False, "temperature_c": "55"}),
+             _row("b", 11.0, gpu_thermal={"throttled": False, "temperature_c": "58"})]
+    summary = aggregate(clean)
+    assert summary["thermally_clean"] is True
+    assert summary["thermally_throttled_cells"] == 0
+    assert summary["gpu_temperature_c_max"] == 58.0
+
+    dirty = clean + [_row("c", 30.0, gpu_thermal={"throttled": True, "temperature_c": "87"})]
+    summary = aggregate(dirty)
+    assert summary["thermally_clean"] is False
+    assert summary["thermally_throttled_cells"] == 1
+
+
+def test_aggregate_thermal_integrity_is_none_when_unobserved():
+    """Legacy results and non-NVIDIA hosts have no thermal data; that must
+    read as 'unknown', not as 'clean'."""
+    from scripts.run_bounded_suite import aggregate
+
+    summary = aggregate([_row("a", 10.0)])
+    assert summary["thermally_throttled_cells"] is None
+    assert "thermally_clean" not in summary
+
+
+def test_cool_down_reports_recovery_only_when_cool_and_unthrottled(monkeypatch):
+    """Regression test for the exact failure mode measured on this project's
+    reference machine: a throttled GPU can read a LOW temperature (it is
+    generating less heat because it is clocked down), so a temperature-only
+    gate would misreport recovery. cool_down() must require the throttle
+    flag to also be clear."""
+    from scripts import run_bounded_suite as bounded
+
+    # Cool AND clear -- must report reached, on the very first snapshot, so
+    # this exercises the real wait loop without waiting on real time.
+    monkeypatch.setattr(bounded, "gpu_thermal_snapshot", lambda: {
+        "temperature_c": "59", "throttle_reasons_active": "0x0000000000000000",
+        "throttled": False})
+    result = bounded.cool_down(0.0, max_temperature_c=65.0)
+    assert result["cooldown_reached_target"] is True
+
+
+def test_cool_down_never_reports_recovery_from_temperature_alone(monkeypatch):
+    """Same failure mode, but the GPU never actually clears (a stuck driver
+    state). Must give up at the hard ceiling rather than loop forever, and
+    must not fake-report recovery just because it gave up. Time itself is
+    mocked so this does not spend real wall-clock time on the ceiling."""
+    from scripts import run_bounded_suite as bounded
+
+    monkeypatch.setattr(bounded, "gpu_thermal_snapshot", lambda: {
+        "temperature_c": "59", "throttle_reasons_active": "0x0000000000000020",
+        "throttled": True})
+    monkeypatch.setattr(bounded.time, "sleep", lambda _seconds: None)
+    clock = {"t": 0.0}
+
+    def fake_perf_counter():
+        clock["t"] += 120.0  # jump 2 minutes per poll; ceiling trips in ~6 polls
+        return clock["t"]
+
+    monkeypatch.setattr(bounded.time, "perf_counter", fake_perf_counter)
+    result = bounded.cool_down(0.0, max_temperature_c=65.0)
+    assert result["cooldown_reached_target"] is False

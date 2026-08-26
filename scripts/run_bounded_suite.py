@@ -42,6 +42,13 @@ MODEL = "Qwen/Qwen3-14B"
 DRAFT_MODEL = "Qwen/Qwen3-0.6B"
 STORE = "/root/afterimage/store_14b"
 
+# Inter-cell cooldown, set once from --cooldown-seconds / --cooldown-max-temp-c.
+# Module-level because every timed cell in every runner must observe the same
+# policy; a per-runner argument would silently diverge between methods, which
+# is exactly the kind of asymmetry that makes a comparison invalid.
+COOLDOWN_SECONDS = 0.0
+COOLDOWN_MAX_TEMPERATURE_C: float | None = None
+
 
 @dataclasses.dataclass(frozen=True)
 class Method:
@@ -325,7 +332,95 @@ def gpu_thermal_snapshot() -> dict:
         return {"raw": raw.strip()}
     keys = ("sm_clock_mhz", "mem_clock_mhz", "temperature_c", "power_draw_w",
             "power_limit_w", "throttle_reasons_active")
-    return dict(zip(keys, parts, strict=True))
+    snapshot = dict(zip(keys, parts, strict=True))
+    snapshot["throttled"] = is_throttled(snapshot)
+    return snapshot
+
+
+# NVML clocks-event-reason bits that mean the GPU is being held below its
+# requested clocks *while doing work*. GpuIdle (0x1) and the applications /
+# display clock settings are deliberately excluded: they are not a
+# performance confound, they are normal states.
+_THROTTLE_MASK = (
+    0x0000000000000004  # SwPowerCap
+    | 0x0000000000000008  # HwSlowdown
+    | 0x0000000000000020  # SwThermalSlowdown
+    | 0x0000000000000040  # HwThermalSlowdown
+    | 0x0000000000000080  # HwPowerBrakeSlowdown
+)
+
+
+def is_throttled(snapshot: dict) -> bool | None:
+    """Whether a thermal/power throttle was active in this snapshot.
+
+    A sustained campaign on a laptop GPU will throttle, and a throttled cell
+    is not comparable to an unthrottled one. Recording the raw reason bits
+    is not enough on its own: nobody reads hex when scanning a result file,
+    so the decoded boolean is what makes the confound visible.
+    """
+    raw = snapshot.get("throttle_reasons_active")
+    if raw in (None, "", "[N/A]", "N/A"):
+        return None
+    try:
+        return bool(int(str(raw), 16) & _THROTTLE_MASK)
+    except ValueError:
+        return None
+
+
+def cool_down(seconds: float, max_temperature_c: float | None) -> dict:
+    """Idle between timed cells so thermal state does not accumulate.
+
+    Without this the benchmark measures method *order* as much as method
+    quality: the first system runs on a cool GPU and the last runs on a hot
+    one.
+
+    Gating on temperature alone is provably insufficient, not just
+    theoretically: measured on this project's own reference machine mid-
+    campaign, `sm_clock_mhz` collapsed from a 1890 MHz boost clock to a flat
+    780 MHz while `temperature_c` simultaneously *dropped* to 59-63 C --
+    below any reasonable cooldown target -- because a GPU clocked that low
+    no longer generates enough heat to look hot. A temperature-only gate
+    would have measured "cool enough" and immediately resumed the still-
+    throttled run. This additionally requires ``is_throttled()`` to read
+    False before considering the GPU recovered, regardless of temperature.
+    """
+    if seconds <= 0 and max_temperature_c is None:
+        return {}
+    started = time.perf_counter()
+    deadline = started + max(seconds, 0.0)
+    reached = None
+    while True:
+        now = time.perf_counter()
+        snapshot = gpu_thermal_snapshot()
+        try:
+            temperature = float(snapshot.get("temperature_c"))
+        except (TypeError, ValueError):
+            temperature = None
+        throttled = snapshot.get("throttled")
+        if max_temperature_c is not None and temperature is not None:
+            reached = temperature <= max_temperature_c and throttled is not True
+            # Honour the floor wait even once cool, so a fast-cooling run
+            # still gets a consistent inter-cell gap.
+            if reached and now >= deadline:
+                break
+        elif now >= deadline:
+            break
+        if now >= deadline and max_temperature_c is None:
+            break
+        # Hard ceiling: never wait more than 10 minutes for a GPU that is
+        # simply not cooling, and say so in the record rather than hanging.
+        if now - started > 600:
+            reached = False
+            break
+        time.sleep(2.0)
+    final = gpu_thermal_snapshot()
+    return {
+        "cooldown_seconds": time.perf_counter() - started,
+        "cooldown_target_c": max_temperature_c,
+        "cooldown_reached_target": reached,
+        "temperature_after_cooldown_c": final.get("temperature_c"),
+        "throttled_after_cooldown": final.get("throttled"),
+    }
 
 
 def model_revision(model_id: str) -> str | None:
@@ -438,6 +533,7 @@ def run_airllm(method: Method, rendered: list[dict], n_tokens: int,
             kwargs = {}
             if enc.get("attention_mask") is not None:
                 kwargs["attention_mask"] = enc["attention_mask"].cuda()
+            cooldown = cool_down(COOLDOWN_SECONDS, COOLDOWN_MAX_TEMPERATURE_C)
             cache = drop_caches()
             reset_cuda_peak()
             t0 = time.perf_counter()
@@ -464,7 +560,7 @@ def run_airllm(method: Method, rendered: list[dict], n_tokens: int,
                 item["case"], method, item["prompt"], item["input_tokens"],
                 generated, answer, wall, torch.cuda.max_memory_allocated() / 1e9,
                 cache, {"generation_mode": "greedy", "repeat": repeat,
-                        "gpu_thermal": gpu_thermal_snapshot()}))
+                        "gpu_thermal": gpu_thermal_snapshot(), **cooldown}))
             if rows_checkpoint is not None:
                 rows_checkpoint(rows)
             log("  %-18s %.2f s/token  %r%s" %
@@ -497,6 +593,7 @@ def run_accelerate(method: Method, rendered: list[dict], n_tokens: int,
         for repeat, item in [(r, it) for r in range(repeats) for it in rendered]:
             if time.perf_counter() >= deadline:
                 break
+            cooldown = cool_down(COOLDOWN_SECONDS, COOLDOWN_MAX_TEMPERATURE_C)
             cache = drop_caches()
             result = baseline.generate(item["prompt"], n_tokens)
             generated = result["output_token_ids"]
@@ -508,7 +605,8 @@ def run_accelerate(method: Method, rendered: list[dict], n_tokens: int,
                  "device_map": baseline.device_map,
                  "offload_dir": baseline.offload_dir,
                  "gpu_memory_limit": method.overrides["gpu_memory"],
-                 "cpu_memory_limit": method.overrides["cpu_memory"]}))
+                 "cpu_memory_limit": method.overrides["cpu_memory"],
+                 "gpu_thermal": gpu_thermal_snapshot(), **cooldown}))
             if rows_checkpoint is not None:
                 rows_checkpoint(rows)
             log("  %-18s %.2f s/token  %r%s" %
@@ -591,6 +689,7 @@ def run_afterimage(method: Method, rendered: list[dict], n_tokens: int,
             if time.perf_counter() >= deadline:
                 break
             ids = tokenizer(item["prompt"], return_tensors="pt").input_ids.cuda()
+            cooldown = cool_down(COOLDOWN_SECONDS, COOLDOWN_MAX_TEMPERATURE_C)
             cache = drop_caches()
             engine.stats.reset()
             reset_cuda_peak()
@@ -626,6 +725,7 @@ def run_afterimage(method: Method, rendered: list[dict], n_tokens: int,
                 "storage_read_calls": stats.storage_read_calls,
                 "storage_extent_bytes": stats.storage_extent_bytes,
                 "gpu_thermal": gpu_thermal_snapshot(),
+                **cooldown,
                 "pageable_ram_fallback_keys": sorted(
                     engine._ram_cache_pageable_keys),
                 "tier_assignment_fingerprint": sha256_json(engine._tier),
@@ -860,7 +960,41 @@ def aggregate(rows: list[dict]) -> dict:
         "all_cache_drops_succeeded": all(row["cache_drop_succeeded"] for row in rows),
     }
     summary.update(_repeat_dispersion(rows))
+    summary.update(_thermal_integrity(rows))
     return summary
+
+
+def _thermal_integrity(rows: list[dict]) -> dict:
+    """How many timed cells ran while the GPU was throttling.
+
+    A throttled cell is not comparable to an unthrottled one, and on a
+    laptop GPU a long campaign will throttle unless cooled between cells.
+    Measured on this project's own reference machine, an uncooled Qwen3-14B
+    run degraded 1.51x between its first and third repeat with SW Thermal
+    Slowdown active -- large enough to invert a method ranking. Surfacing
+    the count here means a contaminated run reports that fact next to its
+    mean instead of looking clean.
+    """
+    seen = [row.get("gpu_thermal", {}).get("throttled") for row in rows]
+    known = [value for value in seen if value is not None]
+    if not known:
+        return {"thermally_throttled_cells": None}
+    throttled = sum(bool(value) for value in known)
+    temperatures = []
+    for row in rows:
+        try:
+            temperatures.append(float(row.get("gpu_thermal", {}).get("temperature_c")))
+        except (TypeError, ValueError):
+            pass
+    integrity = {
+        "thermally_throttled_cells": throttled,
+        "thermally_observed_cells": len(known),
+        "thermally_clean": throttled == 0,
+    }
+    if temperatures:
+        integrity["gpu_temperature_c_min"] = min(temperatures)
+        integrity["gpu_temperature_c_max"] = max(temperatures)
+    return integrity
 
 
 def _repeat_dispersion(rows: list[dict]) -> dict:
@@ -948,6 +1082,17 @@ def main() -> int:
                         help="comma-separated IDs; choices: %s" % ",".join(METHODS))
     parser.add_argument("--max-new-tokens", type=int, default=4)
     parser.add_argument(
+        "--cooldown-seconds", type=float, default=0.0,
+        help="minimum idle time before each timed cell (default 0). A "
+             "sustained campaign heats a laptop GPU until it throttles, which "
+             "makes later methods look slower than earlier ones purely from "
+             "run order.")
+    parser.add_argument(
+        "--cooldown-max-temp-c", type=float, default=None,
+        help="additionally wait before each timed cell until the GPU is at or "
+             "below this temperature (capped at 10 minutes per cell). Use with "
+             "--cooldown-seconds to set a floor as well as a ceiling.")
+    parser.add_argument(
         "--repeats", type=int, default=1,
         help="complete sweeps of every case per method (default 1). Each "
              "repeat re-drops the page cache per cell and contributes one "
@@ -981,6 +1126,11 @@ def main() -> int:
         parser.error("--max-new-tokens must be positive")
     if args.repeats < 1:
         parser.error("--repeats must be positive")
+    if args.cooldown_seconds < 0:
+        parser.error("--cooldown-seconds must not be negative")
+    global COOLDOWN_SECONDS, COOLDOWN_MAX_TEMPERATURE_C
+    COOLDOWN_SECONDS = args.cooldown_seconds
+    COOLDOWN_MAX_TEMPERATURE_C = args.cooldown_max_temp_c
     if args.ram_overlay_vram_budget_gb is not None:
         if args.ram_overlay_vram_budget_gb <= 0:
             parser.error("--ram-overlay-vram-budget-gb must be positive")
@@ -1050,6 +1200,8 @@ def main() -> int:
         "calibration_case_ids": [case.id for case in prompt_cases("calibration")],
         "max_new_tokens": args.max_new_tokens,
         "repeats_requested": args.repeats,
+        "cooldown_seconds": args.cooldown_seconds,
+        "cooldown_max_temp_c": args.cooldown_max_temp_c,
         "time_budget_minutes": args.time_budget_minutes,
         "cache_regime": "cold page cache before every timed cell",
         "metric_definitions": {
