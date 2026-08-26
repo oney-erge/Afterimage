@@ -42,10 +42,20 @@ class LayoutSpec:
 
     ``container_attr`` is the attribute on the top-level model holding the
     decoder (``model`` for Llama-family, ``transformer`` for GPT-2-family,
-    ``gpt_neox`` for NeoX).  ``layers_attr`` and ``embed_attr`` are the
-    attribute names *inside* that container.  Everything else in the engine
-    addresses weights by string key, so these three names are the whole
-    difference between families.
+    ``gpt_neox`` for NeoX). It is used only as a literal string prefix for
+    building weight keys (see ``.prefix``); ``resolve_model_adapter`` walks
+    the actual object graph by hand for each layout family, since the depth
+    and attribute names genuinely differ (a single `getattr` for most
+    families, two hops for the nested vision layout, a different two hops
+    again for Llama 4). ``layers_attr`` and ``embed_attr`` are the attribute
+    names *inside* that container.
+
+    ``head_owner_attr``, when non-empty, is the attribute on the top-level
+    model that owns ``lm_head`` -- empty means the top-level model itself
+    does, which is true for every family except Llama 4's conditional-
+    generation wrapper, where the output head lives on the inner
+    ``language_model`` (itself a complete CausalLM), not on the outer
+    vision+text wrapper.
     """
 
     layout: str
@@ -54,6 +64,7 @@ class LayoutSpec:
     embed_attr: str
     modality: str = "text"
     supports_certified_head: bool = True
+    head_owner_attr: str = ""
 
     @property
     def prefix(self) -> str:
@@ -84,6 +95,18 @@ VISION_LAYOUT = LayoutSpec(
     "vision-language", "model.language_model", "layers", "embed_tokens",
     modality="vision-text", supports_certified_head=False)
 
+#: Llama 4's conditional-generation wrapper is a third, distinct shape, not a
+#: parametrization of VISION_LAYOUT: `language_model` sits directly on the
+#: outer model (not nested under `model.language_model`) and is itself a
+#: complete Llama4ForCausalLM, with its own `.model.layers`/`.model.
+#: embed_tokens` and its own `.lm_head` -- the output head is on
+#: language_model, not on the outer model. Verified against a real (meta-
+#: device) Llama4Config build, not assumed from the family name.
+LLAMA4_VISION_LAYOUT = LayoutSpec(
+    "llama4-vision-language", "language_model.model", "layers", "embed_tokens",
+    modality="vision-text", supports_certified_head=False,
+    head_owner_attr="language_model")
+
 
 class ModelAdapter:
     """Access the language decoder without hard-coding one object path."""
@@ -92,6 +115,8 @@ class ModelAdapter:
         self.model = model
         self.spec = spec
         self.language_model = language_model
+        self._head_owner = (
+            getattr(model, spec.head_owner_attr) if spec.head_owner_attr else model)
         self.layer_prefix = f"{spec.prefix}.{spec.layers_attr}"
         self.embedding_prefix = f"{spec.prefix}.{spec.embed_attr}"
         model_type = str(getattr(getattr(model, "config", None), "model_type", ""))
@@ -123,7 +148,7 @@ class ModelAdapter:
 
     @property
     def output_head(self):
-        return self.model.lm_head
+        return self._head_owner.lm_head
 
     @property
     def language_config(self):
@@ -132,6 +157,13 @@ class ModelAdapter:
 
     @property
     def vision_model(self):
+        # Llama 4 carries its vision tower as `vision_model` directly on the
+        # outer model; the earlier Qwen-VL-style layout nests it as
+        # `model.visual`. Checked in that order so a family exposing neither
+        # (the common, non-vision case) cleanly falls through to None.
+        direct = getattr(self.model, "vision_model", None)
+        if direct is not None:
+            return direct
         return getattr(getattr(self.model, "model", None), "visual", None)
 
     def is_layer_key(self, key: str) -> bool:
@@ -154,6 +186,18 @@ def resolve_model_adapter(model: Any) -> ModelAdapter:
     """Resolve a supported structural layout or raise a direct error."""
 
     inner = getattr(model, "model", None)
+
+    # Llama 4's `language_model` sits directly on the outer model and is
+    # itself a complete CausalLM (its own `.model.layers`/`.model.
+    # embed_tokens`, its own `.lm_head`) -- checked before the nested
+    # vision layout below, which looks one level too shallow for this shape
+    # and would not match it.
+    direct_language = getattr(model, "language_model", None)
+    direct_inner = getattr(direct_language, "model", None)
+    if (_matches(direct_inner, LLAMA4_VISION_LAYOUT)
+            and hasattr(direct_language, "lm_head")
+            and hasattr(model, "vision_model")):
+        return ModelAdapter(model, spec=LLAMA4_VISION_LAYOUT, language_model=direct_inner)
 
     # Vision-language is checked before the plain causal path: these models
     # also expose ``model.layers`` on some releases, and the deeper decoder
@@ -215,6 +259,18 @@ ARCHITECTURE_LAYOUTS: dict[str, str] = {
     "SmolLM3ForCausalLM": "causal-language",
     "HeliumForCausalLM": "causal-language",
     "ZambaForCausalLM": "causal-language",
+    # Added 2026-08-26 after checking current (post-2025) model families
+    # against real Hub configs, not name-guessing: fetched each repo's
+    # config.json directly and, where the class was available in the
+    # installed transformers, built a real (meta-device) model and
+    # confirmed it resolves through resolve_model_adapter with a verified
+    # real parameter-name match, exactly like the original nine.
+    "DeepseekV32ForCausalLM": "causal-language",  # DeepSeek-V3.2 (MoE)
+    "Glm4MoeForCausalLM": "causal-language",  # GLM-4.5/4.6 (MoE)
+    "Qwen3NextForCausalLM": "causal-language",  # Qwen3-Next (hybrid linear attn)
+    "GptOssForCausalLM": "causal-language",  # OpenAI gpt-oss (MoE)
+    "JambaForCausalLM": "causal-language",  # AI21 Jamba (hybrid Mamba+attention)
+    "GraniteMoeHybridForCausalLM": "causal-language",  # IBM Granite 4 (hybrid Mamba+attention)
     # --- transformer.h / wte ---------------------------------------------
     "GPT2LMHeadModel": "gpt2-transformer",
     "GPTJForCausalLM": "gpt2-transformer",
@@ -228,7 +284,29 @@ ARCHITECTURE_LAYOUTS: dict[str, str] = {
     # --- gpt_neox.layers / embed_in --------------------------------------
     "GPTNeoXForCausalLM": "neox",
     "StableLMEpochForCausalLM": "neox",
+    # --- language_model.model.layers / embed_tokens, head on language_model
+    "Llama4ForConditionalGeneration": "llama4-vision-language",
 }
+
+#: Known Hub architectures that require `trust_remote_code=True` to load at
+#: all (their config.json has an `auto_map` pointing at custom modeling
+#: code on the repo itself). afterimage/server/acquisition.py's
+#: inspect_snapshot() deliberately calls AutoConfig.from_pretrained with
+#: trust_remote_code=False, so these can never resolve through Afterimage's
+#: normal pipeline regardless of anything in this table -- listed here so
+#: that fact is written down once, not so any code currently reads it.
+#: Confirmed 2026-08-26 by checking each repo's real config.json for an
+#: `auto_map` entry, not assumed: MiniMax (MiniMaxM1ForCausalLM/
+#: MiniMaxText01ForCausalLM), Baichuan (BaichuanForCausalLM), Ant Group's
+#: Ling/Bailing (BailingMoeForCausalLM), and Apple's OpenELM
+#: (OpenELMForCausalLM) all require it as of the checked snapshots.
+REQUIRES_TRUST_REMOTE_CODE = frozenset({
+    "MiniMaxM1ForCausalLM",
+    "MiniMaxText01ForCausalLM",
+    "BaichuanForCausalLM",
+    "BailingMoeForCausalLM",
+    "OpenELMForCausalLM",
+})
 
 #: Families with real Afterimage end-to-end evidence in ``results/``.
 #: Everything else that resolves structurally is "expected": the engine can
@@ -241,6 +319,19 @@ VERIFIED_ARCHITECTURES = frozenset({
     "Phi3ForCausalLM",
 })
 
+#: Architectures that are Mixture-of-Experts even though their class name
+#: does not contain the substring "moe" (DeepSeek's and GLM's naming does
+#: not follow that convention), so the cheap substring check in
+#: classify_config() would otherwise miss them and under-classify a real
+#: sparse MoE model as fully "expected" rather than "experimental".
+MOE_ARCHITECTURES_WITHOUT_MOE_IN_NAME = frozenset({
+    "DeepseekV2ForCausalLM",
+    "DeepseekV3ForCausalLM",
+    "DeepseekV32ForCausalLM",
+    "Glm4MoeForCausalLM",
+    "GptOssForCausalLM",
+})
+
 
 def classify_config(config: dict[str, Any] | Any) -> dict[str, Any]:
     """Return an honest metadata classification without loading weights."""
@@ -248,13 +339,31 @@ def classify_config(config: dict[str, Any] | Any) -> dict[str, Any]:
     if isinstance(config, dict):
         architectures = [str(value) for value in config.get("architectures", [])]
         model_type = str(config.get("model_type", ""))
+        has_vision_config = "vision_config" in config
     else:
         architectures = [str(value) for value in getattr(config, "architectures", []) or []]
         model_type = str(getattr(config, "model_type", ""))
+        has_vision_config = getattr(config, "vision_config", None) is not None
     joined = " ".join([model_type, *architectures]).lower()
-    vision = any(token in joined for token in ("vision", "vl", "image"))
-    moe = "moe" in joined or "mixtral" in joined
+    # Substring matching on the family name catches most cases (Qwen3-VL,
+    # anything with "vision" in its model_type) but missed a real one:
+    # Llama4ForConditionalGeneration / model_type "llama4" contains neither
+    # "vision", "vl", nor "image". A text+vision config almost universally
+    # carries a `vision_config` sub-config -- checking for it directly is a
+    # structural signal, not a name guess, and catches that case.
+    vision = has_vision_config or any(
+        token in joined for token in ("vision", "vl", "image"))
     architecture_set = set(architectures)
+    # "moe" as a substring catches most families by convention (Qwen3Moe,
+    # GraniteMoe, ...) but DeepSeek and GLM's MoE releases do not follow it
+    # (DeepseekV3ForCausalLM, Glm4MoeForCausalLM's own model_type
+    # "glm4_moe" does contain it, but the class name check runs on
+    # `joined`, which also includes model_type, so this line still needs
+    # the explicit set for the DeepSeek family specifically) -- the
+    # explicit set is the precise signal, the substring check is the
+    # cheap first pass.
+    moe = ("moe" in joined or "mixtral" in joined
+           or bool(architecture_set & MOE_ARCHITECTURES_WITHOUT_MOE_IN_NAME))
     known = {name: ARCHITECTURE_LAYOUTS[name]
              for name in architecture_set if name in ARCHITECTURE_LAYOUTS}
 

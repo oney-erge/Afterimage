@@ -20,6 +20,7 @@ transformers = pytest.importorskip("transformers")
 from afterimage.runtime.adapters import (  # noqa: E402
     ARCHITECTURE_LAYOUTS,
     LAYOUTS,
+    LLAMA4_VISION_LAYOUT,
     classify_config,
     resolve_model_adapter,
 )
@@ -49,6 +50,22 @@ LAYOUT_CASES = [
     ("neox", "GPTNeoXConfig",
      dict(hidden_size=32, intermediate_size=64, num_hidden_layers=2,
           num_attention_heads=4, vocab_size=128)),
+    # Verified 2026-08-26 against real Hub config.json files (web research
+    # into current model families, not name-guessing) plus a real
+    # meta-device build per family here: all four still fit the plain
+    # ``model.layers``/``embed_tokens`` shape despite being MoE or hybrid
+    # linear-attention/Mamba architectures internally.
+    ("causal-language", "Glm4MoeConfig", TINY),  # GLM-4.5/4.6 (MoE)
+    ("causal-language", "DeepseekV32Config", TINY),  # DeepSeek-V3.2 (MoE)
+    ("causal-language", "Qwen3NextConfig", TINY),  # Qwen3-Next (hybrid linear attn)
+    ("causal-language", "GptOssConfig",
+     dict(hidden_size=32, intermediate_size=64, num_hidden_layers=2,
+          num_attention_heads=4, num_key_value_heads=2, vocab_size=128,
+          num_local_experts=4)),  # OpenAI gpt-oss (MoE)
+    ("causal-language", "JambaConfig", TINY),  # AI21 Jamba (hybrid Mamba+attention)
+    ("causal-language", "GraniteMoeHybridConfig",
+     dict(TINY, mamba_n_heads=8)),  # IBM Granite 4 (hybrid Mamba+attention);
+    # mamba_n_heads must divide mamba_expand * hidden_size (2 * 32 = 64).
 ]
 
 
@@ -107,10 +124,92 @@ def test_classifier_agrees_with_resolver(expected_layout, config_cls_name, kwarg
 
 
 def test_every_registered_architecture_maps_to_a_real_layout():
-    known_layouts = {spec.layout for spec in LAYOUTS} | {"vision-language"}
+    known_layouts = (
+        {spec.layout for spec in LAYOUTS}
+        | {"vision-language", LLAMA4_VISION_LAYOUT.layout}
+    )
     for architecture, layout in ARCHITECTURE_LAYOUTS.items():
         assert layout in known_layouts, (
             f"{architecture} maps to unknown layout {layout!r}")
+
+
+def _build_llama4():
+    """Llama4ForConditionalGeneration on the meta device: the smallest
+    Llama4Config that still has a real vision_config (so the classifier's
+    vision_config-based detection has something real to find) and a real
+    text_config (so the decoder stack exists to resolve against)."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        text_config = transformers.Llama4TextConfig(
+            hidden_size=32, intermediate_size=64, intermediate_size_mlp=64,
+            num_hidden_layers=2, num_attention_heads=4, num_key_value_heads=2,
+            head_dim=8, vocab_size=128, num_local_experts=2,
+            num_experts_per_tok=1)
+        vision_config = transformers.Llama4VisionConfig(
+            hidden_size=16, num_hidden_layers=1, num_attention_heads=2,
+            intermediate_size=32, image_size=32, patch_size=16)
+        config = transformers.Llama4Config(
+            text_config=text_config, vision_config=vision_config)
+        with torch.device("meta"):
+            return transformers.AutoModelForImageTextToText.from_config(config)
+
+
+def test_llama4_resolves_the_dedicated_vision_layout():
+    model = _build_llama4()
+    adapter = resolve_model_adapter(model)
+    assert adapter.capabilities.layout == "llama4-vision-language"
+    assert adapter.capabilities.modality == "vision-text"
+
+
+def test_llama4_output_head_is_on_language_model_not_the_outer_wrapper():
+    """The structurally novel part of this layout: unlike every other
+    registered family, the lm_head is not on the top-level model itself but
+    on the inner ``language_model`` -- a distinct object with its own
+    lm_head, not the outer vision+text wrapper's."""
+    model = _build_llama4()
+    adapter = resolve_model_adapter(model)
+    assert adapter.output_head is model.language_model.lm_head
+    assert adapter.output_head is not getattr(model, "lm_head", None)
+
+
+def test_llama4_vision_model_and_layer_weights_resolve_to_real_parameters():
+    model = _build_llama4()
+    adapter = resolve_model_adapter(model)
+    names = set(dict(model.named_parameters()))
+
+    embed_key = adapter.embedding_prefix + ".weight"
+    assert embed_key in names, f"{embed_key} not among {sorted(names)[:6]}"
+    assert len(adapter.layers) == 2
+    assert any(n.startswith(adapter.layer_key(0) + ".") for n in names)
+    assert adapter.vision_model is not None
+
+
+def test_llama4_classifier_detects_vision_via_vision_config_not_name_substring():
+    """model_type "llama4" and the class name contain none of "vision",
+    "vl", or "image" -- the substring heuristic alone would miss this
+    family entirely. The fix checks for a real vision_config instead."""
+    verdict = classify_config({
+        "architectures": ["Llama4ForConditionalGeneration"],
+        "model_type": "llama4",
+        "vision_config": {"hidden_size": 16},
+    })
+    assert verdict["modality"] == "vision-text"
+    assert verdict["layout"] == "llama4-vision-language"
+
+
+def test_deepseek_and_glm_moe_are_classified_as_moe_without_moe_in_the_name():
+    """DeepseekV3ForCausalLM and DeepseekV32ForCausalLM carry no "moe"
+    substring in either the class name or "deepseek_v3"/"deepseek_v32"
+    model_type, so the cheap substring check alone would under-classify a
+    real sparse MoE model as fully "expected" rather than "experimental"."""
+    for architecture, model_type in [
+        ("DeepseekV3ForCausalLM", "deepseek_v3"),
+        ("DeepseekV32ForCausalLM", "deepseek_v32"),
+    ]:
+        verdict = classify_config({
+            "architectures": [architecture], "model_type": model_type})
+        assert verdict["mixture_of_experts"] is True, architecture
+        assert verdict["execution"] == "experimental", architecture
 
 
 def test_genuinely_unknown_architecture_is_still_reported_as_download_only():
