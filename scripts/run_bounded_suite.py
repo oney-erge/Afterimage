@@ -14,6 +14,7 @@ import dataclasses
 import gc
 import hashlib
 import json
+import os
 import pathlib
 import platform
 import statistics
@@ -248,11 +249,94 @@ def command_output(command: list[str]) -> str | None:
         return None
 
 
-def environment_manifest(repo_root: pathlib.Path, tokenizer) -> dict:
+def cpu_model() -> str | None:
+    """CPU model string. /proc/cpuinfo on Linux; falls back to platform.processor()
+    elsewhere (typically empty on Windows without extra tooling, which is
+    honest -- this suite has never been run for real outside WSL2/Linux)."""
+    try:
+        text = pathlib.Path("/proc/cpuinfo").read_text(encoding="utf-8", errors="replace")
+        for line in text.splitlines():
+            if line.lower().startswith("model name"):
+                return line.split(":", 1)[1].strip()
+    except OSError:
+        pass
+    return platform.processor() or None
+
+
+def storage_device_info(path: pathlib.Path) -> dict:
+    """Best-effort storage identity for the filesystem holding `path`.
+
+    This is the single most important hardware fact for a disk-bound
+    benchmark and was previously not logged at all. Under WSL2 the real
+    NVMe device is virtualized (`lsblk` reports "Virtual Disk"), so the
+    filesystem type/mount is what WSL2 itself can see; the underlying
+    physical device should additionally be recorded once, by hand, in the
+    run's accompanying notes -- this function cannot see through the
+    virtualization layer from inside the guest, and pretending otherwise
+    would be a fabricated hardware claim, not a measured one.
+    """
+    info: dict = {"path": str(path)}
+    fs = command_output(["df", "-T", str(path)])
+    if fs:
+        lines = fs.strip().splitlines()
+        if len(lines) >= 2:
+            parts = lines[1].split()
+            if len(parts) >= 2:
+                info["filesystem"] = parts[0]
+                info["fstype"] = parts[1]
+    block = command_output(["lsblk", "-d", "-o", "NAME,MODEL,ROTA", "-n"])
+    if block:
+        info["lsblk_devices"] = block.strip()
+        info["note"] = (
+            "device MODEL above is virtualized under WSL2 (typically "
+            "'Virtual Disk'); the real physical NVMe backing the WSL2 vhdx "
+            "is a Windows-host fact this guest cannot see and must be "
+            "recorded separately, e.g. via Windows Get-PhysicalDisk")
+    return info
+
+
+def gpu_thermal_snapshot() -> dict:
+    """Instantaneous clocks/temperature/power. Call once for the environment
+    manifest and again per timed cell (see per-cell logging in run_afterimage
+    / run_airllm) -- a laptop GPU throttles under sustained load, and a
+    manifest-level snapshot alone cannot show drift across a multi-hour
+    campaign."""
+    raw = command_output([
+        "nvidia-smi",
+        "--query-gpu=clocks.sm,clocks.mem,temperature.gpu,power.draw,"
+        "enforced.power.limit,clocks_throttle_reasons.active",
+        "--format=csv,noheader,nounits"])
+    if not raw:
+        return {}
+    parts = [p.strip() for p in raw.strip().split(",")]
+    if len(parts) < 6:
+        return {"raw": raw.strip()}
+    keys = ("sm_clock_mhz", "mem_clock_mhz", "temperature_c", "power_draw_w",
+            "power_limit_w", "throttle_reasons_active")
+    return dict(zip(keys, parts, strict=True))
+
+
+def model_revision(model_id: str) -> str | None:
+    """The exact commit SHA of the HF Hub model used, independent of the
+    tokenizer's own (separately tracked) revision. A network lookup, not a
+    download; failures (offline, rate-limited) degrade to None rather than
+    failing the run, since this is provenance metadata, not a correctness
+    requirement."""
+    try:
+        from huggingface_hub import HfApi
+        return HfApi().model_info(model_id).sha
+    except Exception:
+        return None
+
+
+def environment_manifest(repo_root: pathlib.Path, tokenizer,
+                         store: pathlib.Path | None = None) -> dict:
     gpu = torch.cuda.get_device_properties(0)
     return {
         "python": sys.version,
         "platform": platform.platform(),
+        "cpu": cpu_model(),
+        "cpu_count": os.cpu_count(),
         "torch": torch.__version__,
         "cuda": torch.version.cuda,
         "gpu": gpu.name,
@@ -260,12 +344,15 @@ def environment_manifest(repo_root: pathlib.Path, tokenizer) -> dict:
         "driver": command_output([
             "nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader"
         ]),
+        "gpu_thermal_at_start": gpu_thermal_snapshot(),
         "host_memory": command_output(["free", "-b"]),
+        "storage": storage_device_info(store or pathlib.Path.home()),
         "packages": {name: package_version(name) for name in (
             "airllm", "transformers", "accelerate", "safetensors", "numpy")},
         "git_commit": command_output(["git", "-C", str(repo_root), "rev-parse", "HEAD"]),
         "git_status": command_output(["git", "-C", str(repo_root), "status", "--short"]),
         "tokenizer_commit": getattr(tokenizer, "init_kwargs", {}).get("_commit_hash"),
+        "model_revision": model_revision(MODEL),
     }
 
 
@@ -314,6 +401,7 @@ def result_row(case: PromptCase, method: Method, prompt: str, input_tokens: int,
 def run_airllm(method: Method, rendered: list[dict], n_tokens: int,
                deadline: float,
                rows_checkpoint: Callable[[list[dict]], None] | None = None,
+               repeats: int = 1,
                ) -> tuple[list[dict], dict]:
     from airllm import AutoModel
 
@@ -326,7 +414,11 @@ def run_airllm(method: Method, rendered: list[dict], n_tokens: int,
     init_s = time.perf_counter() - init_t0
     rows = []
     try:
-        for item in rendered:
+        # Repeats are the outer dimension so a truncated run (deadline hit)
+        # still holds a complete sweep of every case for the repeats it did
+        # finish, rather than many repeats of the first case and none of the
+        # last. aggregate() reports dispersion across repeats.
+        for repeat, item in [(r, it) for r in range(repeats) for it in rendered]:
             if time.perf_counter() >= deadline:
                 break
             enc = model.tokenizer(item["prompt"], return_tensors="pt", truncation=True)
@@ -359,11 +451,13 @@ def run_airllm(method: Method, rendered: list[dict], n_tokens: int,
             rows.append(result_row(
                 item["case"], method, item["prompt"], item["input_tokens"],
                 generated, answer, wall, torch.cuda.max_memory_allocated() / 1e9,
-                cache, {"generation_mode": "greedy"}))
+                cache, {"generation_mode": "greedy", "repeat": repeat,
+                        "gpu_thermal": gpu_thermal_snapshot()}))
             if rows_checkpoint is not None:
                 rows_checkpoint(rows)
-            log("  %-18s %.2f s/token  %r" %
-                (item["case"].id, rows[-1]["seconds_per_token"], answer))
+            log("  %-18s %.2f s/token  %r%s" %
+                (item["case"].id, rows[-1]["seconds_per_token"], answer,
+                 "" if repeats == 1 else "  [repeat %d/%d]" % (repeat + 1, repeats)))
             del output, sequence, ids
     finally:
         del model
@@ -398,6 +492,7 @@ def run_afterimage(method: Method, rendered: list[dict], n_tokens: int,
                    burn_in_rendered: list[dict] | None = None,
                    burn_in_tokens: int = 0,
                    rows_checkpoint: Callable[[list[dict]], None] | None = None,
+                   repeats: int = 1,
                    ) -> tuple[list[dict], dict]:
     init_t0 = time.perf_counter()
     engine, cfg = engine_for(method, critical_profile=critical_profile,
@@ -427,7 +522,15 @@ def run_afterimage(method: Method, rendered: list[dict], n_tokens: int,
                     if hasattr(engine._prefetch_controller, "state_dict") else None),
             })
             del sequence, ids
-        for case_index, item in enumerate(rendered):
+        # Repeats are the outer dimension so a truncated run (deadline hit)
+        # still holds a complete sweep of every case for the repeats it did
+        # finish. The per-case generator seed deliberately does NOT vary with
+        # repeat: at temperature 0 generation is greedy, so identical seeds
+        # make token IDs comparable across repeats and any mismatch a real
+        # exactness failure rather than sampling noise. Repeats therefore
+        # measure timing variance only, which is what they are for.
+        for repeat, (case_index, item) in [
+                (r, ci) for r in range(repeats) for ci in enumerate(rendered)]:
             if time.perf_counter() >= deadline:
                 break
             ids = tokenizer(item["prompt"], return_tensors="pt").input_ids.cuda()
@@ -450,6 +553,7 @@ def run_afterimage(method: Method, rendered: list[dict], n_tokens: int,
             stats = engine.stats
             extra = {
                 "generation_mode": "speculative_greedy" if cfg.draft_mode != "none" else "greedy",
+                "repeat": repeat,
                 "config": cfg.to_dict(),
                 "config_fingerprint": cfg.fingerprint(),
                 "exactness_contract": cfg.exactness_contract,
@@ -464,6 +568,7 @@ def run_afterimage(method: Method, rendered: list[dict], n_tokens: int,
                 "prefetch_peak_inflight_bytes": stats.prefetch_peak_inflight_bytes,
                 "storage_read_calls": stats.storage_read_calls,
                 "storage_extent_bytes": stats.storage_extent_bytes,
+                "gpu_thermal": gpu_thermal_snapshot(),
                 "pageable_ram_fallback_keys": sorted(
                     engine._ram_cache_pageable_keys),
                 "tier_assignment_fingerprint": sha256_json(engine._tier),
@@ -492,8 +597,9 @@ def run_afterimage(method: Method, rendered: list[dict], n_tokens: int,
                 cache, extra))
             if rows_checkpoint is not None:
                 rows_checkpoint(rows)
-            log("  %-18s %.2f s/token  %r" %
-                (item["case"].id, rows[-1]["seconds_per_token"], answer))
+            log("  %-18s %.2f s/token  %r%s" %
+                (item["case"].id, rows[-1]["seconds_per_token"], answer,
+                 "" if repeats == 1 else "  [repeat %d/%d]" % (repeat + 1, repeats)))
             del sequence, ids
     finally:
         index_build_s = engine.stats.mips_index_build_seconds
@@ -683,7 +789,7 @@ def aggregate(rows: list[dict]) -> dict:
         return {"completed_cases": 0}
     total_wall = sum(row["wall_seconds"] for row in rows)
     total_tokens = sum(row["output_tokens"] for row in rows)
-    return {
+    summary = {
         "completed_cases": len(rows),
         "total_output_tokens": total_tokens,
         "total_wall_seconds": total_wall,
@@ -696,6 +802,59 @@ def aggregate(rows: list[dict]) -> dict:
             bool(row["expected_match"]) for row in rows),
         "all_cache_drops_succeeded": all(row["cache_drop_succeeded"] for row in rows),
     }
+    summary.update(_repeat_dispersion(rows))
+    return summary
+
+
+def _repeat_dispersion(rows: list[dict]) -> dict:
+    """Across-repeat spread for the headline seconds/token, when a run used
+    --repeats > 1.
+
+    A single observation per cell cannot distinguish a real effect from
+    run-to-run noise, and this suite's own noise table (docs/HOW_IT_WORKS.md)
+    puts that noise near 4%. With repeats, each repeat contributes one
+    complete sweep of every case, so the per-repeat seconds/token values are
+    directly comparable and their spread is the quantity a reader needs to
+    judge whether two methods actually differ.
+
+    Reported as median plus min/max and, from three repeats up, the sample
+    standard deviation and relative standard deviation. Deliberately not a
+    confidence interval: three repeats is far too few for one to mean
+    anything, and labelling it as such would invite exactly the overclaim
+    this project's protocol exists to prevent.
+    """
+    by_repeat: dict[int, list[dict]] = {}
+    for row in rows:
+        by_repeat.setdefault(row.get("repeat", 0), []).append(row)
+    if len(by_repeat) < 2:
+        return {"repeats_completed": len(by_repeat)}
+
+    per_repeat = {}
+    for repeat, repeat_rows in sorted(by_repeat.items()):
+        wall = sum(r["wall_seconds"] for r in repeat_rows)
+        tokens = sum(r["output_tokens"] for r in repeat_rows)
+        per_repeat[repeat] = {
+            "cases": len(repeat_rows),
+            "seconds_per_token": wall / max(tokens, 1),
+        }
+    values = [v["seconds_per_token"] for v in per_repeat.values()]
+    dispersion = {
+        "repeats_completed": len(by_repeat),
+        "per_repeat_seconds_per_token": per_repeat,
+        "repeat_median_seconds_per_token": statistics.median(values),
+        "repeat_min_seconds_per_token": min(values),
+        "repeat_max_seconds_per_token": max(values),
+        # Complete sweeps only: a repeat cut short by the deadline has fewer
+        # cases and is not comparable to a full one, so flag rather than
+        # silently average an apples-to-oranges set.
+        "all_repeats_complete": len({v["cases"] for v in per_repeat.values()}) == 1,
+    }
+    if len(values) >= 3:
+        stdev = statistics.stdev(values)
+        dispersion["repeat_stdev_seconds_per_token"] = stdev
+        dispersion["repeat_relative_stdev"] = stdev / max(
+            statistics.mean(values), 1e-12)
+    return dispersion
 
 
 def add_comparisons(result: dict) -> None:
@@ -731,6 +890,13 @@ def main() -> int:
     parser.add_argument("--methods", default=",".join(DEFAULT_METHODS),
                         help="comma-separated IDs; choices: %s" % ",".join(METHODS))
     parser.add_argument("--max-new-tokens", type=int, default=4)
+    parser.add_argument(
+        "--repeats", type=int, default=1,
+        help="complete sweeps of every case per method (default 1). Each "
+             "repeat re-drops the page cache per cell and contributes one "
+             "seconds/token observation, so the summary can report spread "
+             "across repeats instead of a single unreplicated number. "
+             "Multiplies wall time; raise --time-budget-minutes to match.")
     parser.add_argument("--case-ids", default=None,
                         help="comma-separated evaluation case IDs; default is all")
     parser.add_argument("--time-budget-minutes", type=float, default=58.0)
@@ -756,6 +922,8 @@ def main() -> int:
         parser.error("unknown methods: %s" % ", ".join(unknown))
     if args.max_new_tokens < 1:
         parser.error("--max-new-tokens must be positive")
+    if args.repeats < 1:
+        parser.error("--repeats must be positive")
     if args.ram_overlay_vram_budget_gb is not None:
         if args.ram_overlay_vram_budget_gb <= 0:
             parser.error("--ram-overlay-vram-budget-gb must be positive")
@@ -824,6 +992,7 @@ def main() -> int:
         "evaluation_case_ids": [case.id for case in evaluation_cases],
         "calibration_case_ids": [case.id for case in prompt_cases("calibration")],
         "max_new_tokens": args.max_new_tokens,
+        "repeats_requested": args.repeats,
         "time_budget_minutes": args.time_budget_minutes,
         "cache_regime": "cold page cache before every timed cell",
         "metric_definitions": {
@@ -843,7 +1012,7 @@ def main() -> int:
             METHODS["ram-overlay-head"].overrides["vram_budget_gb"]),
         "ram_overlay_host_budget_gb": (
             METHODS["ram-overlay-head"].overrides["ram_budget_gb"]),
-        "environment": environment_manifest(repo_root, tokenizer),
+        "environment": environment_manifest(repo_root, tokenizer, store=pathlib.Path(STORE)),
         "reproducible_from_commit": not bool(dirty),
         "calibration_artifacts": {},
         "methods": [],
@@ -1023,7 +1192,8 @@ def main() -> int:
             try:
                 if method.kind == "airllm":
                     rows, metadata = run_airllm(method, rendered, args.max_new_tokens,
-                                                deadline, save_interim_rows)
+                                                deadline, save_interim_rows,
+                                                repeats=args.repeats)
                 else:
                     rows, metadata = run_afterimage(
                         method, rendered, args.max_new_tokens, deadline,
@@ -1033,7 +1203,8 @@ def main() -> int:
                                      if method_id in replay_plans else None),
                         spec_state=(spec_states[method_id]["path"]
                                     if method_id in spec_states else None),
-                        rows_checkpoint=save_interim_rows)
+                        rows_checkpoint=save_interim_rows,
+                        repeats=args.repeats)
                 entry["rows"] = rows
                 entry["metadata"] = metadata
                 entry["summary"] = aggregate(rows)

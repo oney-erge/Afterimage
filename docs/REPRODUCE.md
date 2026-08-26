@@ -56,6 +56,39 @@ the exact package snapshot behind any one historical benchmark row. When
 comparing against a competitor, check the specific result file's
 `environment.packages` field rather than assuming the current `uv.lock`.
 
+## Replication: `--repeats`
+
+`run_bounded_suite.py` historically ran each (method, case) cell exactly
+once, so every headline seconds/token was a single unreplicated
+observation. `--repeats N` runs N complete sweeps of every case per method,
+re-dropping the page cache before each cell, and the summary then reports
+spread across repeats:
+
+```bash
+python scripts/run_bounded_suite.py --repeats 3 --time-budget-minutes 170 \
+  --out results/YYYY-MM-DD_bounded_qwen3-14b_HARDWARE.json
+```
+
+Each method's `summary` gains `per_repeat_seconds_per_token`,
+`repeat_median_seconds_per_token`, `repeat_min/max_seconds_per_token`,
+`all_repeats_complete`, and (from three repeats up)
+`repeat_stdev_seconds_per_token` and `repeat_relative_stdev`. These are
+deliberately not labelled confidence intervals: three repeats is far too
+few for one to mean anything.
+
+**Budget for it.** `--repeats N` multiplies wall time by roughly N; raise
+`--time-budget-minutes` to match or the later repeats are truncated
+(`all_repeats_complete` goes false and the run says so rather than
+averaging a partial sweep against a full one).
+
+**Expect the first repeat to be the slowest.** In validation on Qwen3-0.6B,
+repeat 0 measured 0.165 s/token against 0.047 and 0.056 for repeats 1 and 2:
+a 74% relative standard deviation driven almost entirely by first-pass
+warmup (CUDA context, Triton JIT, allocator growth). Report repeat 0
+separately or treat it as burn-in; do not average it in silently. This
+effect is proportionally smaller on a 14B model, where per-token streaming
+dominates initialization, but it does not vanish.
+
 ## Power analysis for a confirmatory (L3) run
 
 ```bash
@@ -75,9 +108,19 @@ substitute for preregistering n before a specific confirmatory run.
 
 - **Cache regime.** Every real result requires cold page cache before each
   timed cell (`cache_regime` in the result JSON). `drop_caches` writes
-  `/proc/sys/vm/drop_caches`, which drops the Linux VM's page cache but not a
-  WSL2 host's Windows-side cache or the NVMe device's own cache -- expect a
-  residual warm-cache effect on WSL2 that native Linux does not have.
+  `/proc/sys/vm/drop_caches`, which drops the Linux VM's page cache; it
+  cannot reach a WSL2 host's Windows-side cache directly. Measured on this
+  host (2026-08-26, `dd` reading the full 1.07 GB `weights.bin` of the
+  0.6B store): a genuinely warm read (no intervening drop) hits **16.6
+  GB/s**; a `drop_caches` read measures **2.3 GB/s**, and repeating
+  `drop_caches` immediately after another cold read reproduces the same
+  2.3 GB/s within 2%. `drop_caches` therefore does produce a stable,
+  repeatable cold state on this host -- run-to-run *comparisons* are not
+  confounded by warm-cache drift. Whether 2.3 GB/s is the NVMe's true
+  from-metal cold speed or includes some Windows-side residual is not
+  established (no fully-cold Windows-side baseline was measured); if that
+  distinction matters for a claim, measure it on native Linux instead of
+  assuming either answer.
 - **Pinned memory ceiling.** WSL2 commonly caps `RLIMIT_MEMLOCK` well below
   what H9 needs at 14B scale; see
   [NVIDIA's CUDA-on-WSL guide](https://docs.nvidia.com/cuda/wsl-user-guide/index.html).

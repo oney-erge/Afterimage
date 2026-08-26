@@ -303,7 +303,7 @@ def main() -> int:
         "model": bounded.MODEL,
         "draft_model": bounded.DRAFT_MODEL,
         "store": bounded.STORE,
-        "environment": bounded.environment_manifest(repo_root, tokenizer),
+        "environment": bounded.environment_manifest(repo_root, tokenizer, store=pathlib.Path(bounded.STORE)),
         "reproducible_from_commit": not bool(dirty),
         "trials": [], "airllm_anchor": None, "failures": [],
     }
