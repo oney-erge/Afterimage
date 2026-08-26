@@ -61,9 +61,21 @@ def _installed_airllm_title() -> str:
         return "AirLLM (version unknown -- not importable)"
 
 
+def _installed_accelerate_title() -> str:
+    try:
+        from importlib.metadata import version
+        return "Hugging Face Accelerate %s" % version("accelerate")
+    except Exception:
+        return "Hugging Face Accelerate (version unknown -- not importable)"
+
+
 METHODS = {
     "airllm": Method("airllm", _installed_airllm_title(), "airllm", {},
                      "reference_greedy", 30.0),
+    "accelerate": Method(
+        "accelerate", _installed_accelerate_title(), "accelerate",
+        {"gpu_memory": "1500MB", "cpu_memory": "8GB"},
+        "reference_greedy", 30.0),
     "exact-min": Method(
         "exact-min", "Afterimage exact streaming, minimum-memory control", "afterimage",
         {"vram_budget_gb": 1.80, "decode_slice_elems": 1 << 20,
@@ -464,6 +476,51 @@ def run_airllm(method: Method, rendered: list[dict], n_tokens: int,
         gc.collect()
         torch.cuda.empty_cache()
     return rows, {"initialization_seconds": init_s}
+
+
+def run_accelerate(method: Method, rendered: list[dict], n_tokens: int,
+                   deadline: float,
+                   rows_checkpoint: Callable[[list[dict]], None] | None = None,
+                   repeats: int = 1,
+                   ) -> tuple[list[dict], dict]:
+    from afterimage.baselines.b0_hf_offload import load_hf_offload_baseline
+
+    init_t0 = time.perf_counter()
+    baseline = load_hf_offload_baseline(
+        MODEL, os.environ.get("AFTERIMAGE_HF_OFFLOAD_DIR", "/root/afterimage/hf_offload_14b"),
+        gpu_memory=method.overrides["gpu_memory"],
+        cpu_memory=method.overrides["cpu_memory"])
+    baseline.tokenizer = rendered[0]["tokenizer"]
+    init_s = time.perf_counter() - init_t0
+    rows = []
+    try:
+        for repeat, item in [(r, it) for r in range(repeats) for it in rendered]:
+            if time.perf_counter() >= deadline:
+                break
+            cache = drop_caches()
+            result = baseline.generate(item["prompt"], n_tokens)
+            generated = result["output_token_ids"]
+            rows.append(result_row(
+                item["case"], method, item["prompt"], item["input_tokens"],
+                generated, result["text"], result["wall_seconds"],
+                result["peak_vram_gb"], cache,
+                {"generation_mode": "greedy", "repeat": repeat,
+                 "device_map": baseline.device_map,
+                 "offload_dir": baseline.offload_dir,
+                 "gpu_memory_limit": method.overrides["gpu_memory"],
+                 "cpu_memory_limit": method.overrides["cpu_memory"]}))
+            if rows_checkpoint is not None:
+                rows_checkpoint(rows)
+            log("  %-18s %.2f s/token  %r%s" %
+                (item["case"].id, rows[-1]["seconds_per_token"], rows[-1]["answer"],
+                 "" if repeats == 1 else "  [repeat %d/%d]" % (repeat + 1, repeats)))
+    finally:
+        baseline.model = None
+        del baseline
+        gc.collect()
+        torch.cuda.empty_cache()
+    return rows, {"initialization_seconds": init_s,
+                  "device_map": rows[0]["device_map"] if rows else {}}
 
 
 def engine_for(method: Method, *, critical_profile: str | None = None,
@@ -1194,6 +1251,10 @@ def main() -> int:
                     rows, metadata = run_airllm(method, rendered, args.max_new_tokens,
                                                 deadline, save_interim_rows,
                                                 repeats=args.repeats)
+                elif method.kind == "accelerate":
+                    rows, metadata = run_accelerate(
+                        method, rendered, args.max_new_tokens, deadline,
+                        save_interim_rows, repeats=args.repeats)
                 else:
                     rows, metadata = run_afterimage(
                         method, rendered, args.max_new_tokens, deadline,

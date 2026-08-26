@@ -46,6 +46,19 @@ result JSON records `reproducible_from_commit` accordingly. Do not cite a
 | H9 pinned-RAM overlay (the strongest lead) | Qwen3-0.6B (14B needs a host that can pin ≥1.6 GB; see below) | see the `systemd-run ... LimitMEMLOCK=infinity` command in [ALL_HYPOTHESES_AND_BASELINES.md](ALL_HYPOTHESES_AND_BASELINES.md#reproduce-the-new-runs) | `results/2026-08-22_h9_pinned_overlay_qwen3-0.6b_rtx3080_l1.json` |
 | Any other H1-H18 regulated pair | -- | `python scripts/run_regulated_pair.py --hypothesis H<N> --blocks 2 --max-new-tokens 8 --time-budget-minutes 40 --out results/H<N>_L2.json` | filenames listed under "Raw evidence" in [ALL_HYPOTHESES_AND_BASELINES.md](ALL_HYPOTHESES_AND_BASELINES.md) |
 
+For the canonical five-way Qwen3-14B comparison, prepare the Linux/WSL2
+machine and run:
+
+```bash
+bash benchmark.sh canonical
+```
+
+This runs AirLLM, Hugging Face Accelerate disk offload, exact-min,
+exact-resident, and fixed speculation for five cold-cache repeats. Override
+`AFTERIMAGE_MODEL`, `AFTERIMAGE_STORE`, `AFTERIMAGE_HF_OFFLOAD_DIR`,
+`AFTERIMAGE_BENCHMARK_REPEATS`, `AFTERIMAGE_BENCHMARK_TIME_MINUTES`, or
+`AFTERIMAGE_BENCHMARK_OUT` to use another prepared model or campaign budget.
+
 ## Exact software versions used for the published numbers
 
 Every result JSON's `environment` block is authoritative and per-run (Python,

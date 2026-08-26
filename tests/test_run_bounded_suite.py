@@ -1,6 +1,10 @@
 import pytest
 
-from scripts.run_bounded_suite import _installed_airllm_title, aggregate
+from scripts.run_bounded_suite import (
+    _installed_accelerate_title,
+    _installed_airllm_title,
+    aggregate,
+)
 
 
 def _row(case_id, seconds, tokens=4, repeat=0, **extra):
@@ -39,6 +43,28 @@ def test_airllm_method_title_degrades_gracefully_when_not_installed(monkeypatch)
 
     monkeypatch.setattr("importlib.metadata.version", raising_version)
     title = _installed_airllm_title()
+    assert "unknown" in title.lower()
+
+
+def test_accelerate_method_title_reflects_the_actually_installed_version(monkeypatch):
+    """Mirrors the airllm title fix above: the accelerate Method's title
+    must read the installed package version at call time, not a literal
+    baked in when the module first imports, or upgrading the package would
+    silently mislabel every subsequent result the same way airllm's did."""
+    def fake_version(name):
+        assert name == "accelerate"
+        return "1.14.0"
+
+    monkeypatch.setattr("importlib.metadata.version", fake_version)
+    assert _installed_accelerate_title() == "Hugging Face Accelerate 1.14.0"
+
+
+def test_accelerate_method_title_degrades_gracefully_when_not_installed(monkeypatch):
+    def raising_version(name):
+        raise ModuleNotFoundError(name)
+
+    monkeypatch.setattr("importlib.metadata.version", raising_version)
+    title = _installed_accelerate_title()
     assert "unknown" in title.lower()
 
 

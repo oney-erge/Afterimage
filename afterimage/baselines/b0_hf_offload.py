@@ -36,10 +36,17 @@ class HFDiskOffloadBaseline:
         torch.cuda.empty_cache()
         torch.cuda.reset_peak_memory_stats()
         started = time.perf_counter()
+        pad_token_id = self.tokenizer.pad_token_id
+        if pad_token_id is None:
+            pad_token_id = self.tokenizer.eos_token_id
+        if isinstance(pad_token_id, (list, tuple)):
+            pad_token_id = pad_token_id[0] if pad_token_id else None
+        if pad_token_id is None:
+            pad_token_id = 0
         with torch.no_grad():
             output = self.model.generate(
                 **inputs, max_new_tokens=max_new_tokens, do_sample=False,
-                use_cache=True, eos_token_id=None, pad_token_id=None)
+                use_cache=True, eos_token_id=[], pad_token_id=int(pad_token_id))
         torch.cuda.synchronize()
         wall = time.perf_counter() - started
         generated = output[0, inputs["input_ids"].shape[1]:].detach().cpu()

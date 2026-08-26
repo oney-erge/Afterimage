@@ -17,9 +17,14 @@ function Resolve-Uv {
   }
   return $null
 }
-function Ensure-Uv {
+function Write-Step {
+  param([string]$Message)
+  Write-Host "[Afterimage] $Message" -ForegroundColor Cyan
+}
+function Get-Uv {
   $uv = Resolve-Uv
-  if ($uv) { return $uv }
+  if ($uv) { Write-Step "Using uv at $uv"; return $uv }
+  Write-Step "Installing uv $UvVersion..."
   $installer = Join-Path $env:TEMP "afterimage-uv-$UvVersion.ps1"
   try {
     Save-InstallDownload -Url "https://astral.sh/uv/$UvVersion/install.ps1" -Destination $installer -Label "uv download"
@@ -34,6 +39,9 @@ function Wait-Ready {
     try { Invoke-RestMethod -Uri "$url/health" -TimeoutSec 2 | Out-Null; return $true } catch { Start-Sleep -Milliseconds 500 }
   }
   return $false
+}
+function Test-Ready {
+  try { Invoke-RestMethod -Uri "$url/health" -TimeoutSec 2 | Out-Null; return $true } catch { return $false }
 }
 
 if ($Action -in @("docker", "stop", "logs")) {
@@ -70,14 +78,21 @@ if ($Action -eq "doctor") {
   & $exe doctor; exit $LASTEXITCODE
 }
 Enter-InstallLock
+Write-Step "Checking available disk space..."
 Assert-InstallFreeSpace -Path $PSScriptRoot -RequiredGB 6
-$uv = Ensure-Uv
-Invoke-InstallRetry "Python installation" {
-  $output = & $uv python install 3.11 2>&1
-  if ($LASTEXITCODE -ne 0) { throw "uv python install failed: $($output -join [Environment]::NewLine)" }
-  $output | Write-Host
+$uv = Get-Uv
+Write-Step "Ensuring Python 3.11 is available..."
+if (Test-Path -LiteralPath $python) {
+  Write-Host "The project Python environment is already installed."
+} else {
+  Invoke-InstallRetry "Python installation" {
+    $output = & $uv python install 3.11 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "uv python install failed: $($output -join [Environment]::NewLine)" }
+    $output | Write-Host
+  }
 }
 if (-not (Test-Path -LiteralPath $python)) {
+  Write-Step "Creating the Afterimage virtual environment..."
   & $uv venv --python 3.11 .venv
   if ($LASTEXITCODE -ne 0) { throw "uv venv exited with $LASTEXITCODE" }
 }
@@ -86,7 +101,9 @@ if (Get-Command nvidia-smi -ErrorAction SilentlyContinue) {
   nvidia-smi -L *> $null
   if ($LASTEXITCODE -eq 0) { $gpu = "nvidia" }
 }
-$fingerprint = "$((Get-FileHash pyproject.toml -Algorithm SHA256).Hash)|uv=$UvVersion|python=3.11|$gpu"
+$nativeWindows = [Environment]::OSVersion.Platform -eq "Win32NT"
+$platformTag = if ($nativeWindows) { "windows" } else { "unix" }
+$fingerprint = "$((Get-FileHash pyproject.toml -Algorithm SHA256).Hash)|uv=$UvVersion|python=3.11|$gpu|$platformTag"
 $marker = ".\.venv\.afterimage-sync"
 $installed = if (Test-Path -LiteralPath $marker) { (Get-Content -LiteralPath $marker -Raw).Trim() } else { "" }
 if ($Action -eq "repair" -or $installed -ne $fingerprint -or -not (Test-Path -LiteralPath $exe)) {
@@ -94,21 +111,43 @@ if ($Action -eq "repair" -or $installed -ne $fingerprint -or -not (Test-Path -Li
   if ($Action -eq "repair") { $reinstall = @("--reinstall") }
   $torchIndex = if ($gpu -eq "nvidia") { "https://download.pytorch.org/whl/cu124" } else { "https://download.pytorch.org/whl/cpu" }
   Invoke-InstallRetry "PyTorch installation" {
+    $previousErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
     $output = & $uv pip install --python $python @reinstall torch --index-url $torchIndex 2>&1
-    if ($LASTEXITCODE -ne 0) { throw "PyTorch installation failed: $($output -join [Environment]::NewLine)" }
+    $installExit = $LASTEXITCODE
+    $ErrorActionPreference = $previousErrorActionPreference
     $output | Write-Host
+    if ($installExit -ne 0) { throw "PyTorch installation failed: $($output -join [Environment]::NewLine)" }
   }
   $extras = if ($gpu -eq "nvidia") { ".[gpu,server]" } else { ".[server]" }
+  if ($nativeWindows -and $gpu -eq "nvidia") {
+    $extras = ".\[server]"
+    Write-Host "Native Windows CUDA detected. Installing Windows-compatible server dependencies; Triton GPU kernels are Linux/WSL2-only." -ForegroundColor Yellow
+  }
+  Write-Step "Installing Afterimage and server dependencies..."
   Invoke-InstallRetry "Afterimage installation" {
+    $previousErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
     $output = & $uv pip install --python $python @reinstall --editable $extras 2>&1
-    if ($LASTEXITCODE -ne 0) { throw "Afterimage installation failed: $($output -join [Environment]::NewLine)" }
+    $installExit = $LASTEXITCODE
+    $ErrorActionPreference = $previousErrorActionPreference
     $output | Write-Host
+    if ($installExit -ne 0) { throw "Afterimage installation failed: $($output -join [Environment]::NewLine)" }
   }
   Set-Content -LiteralPath $marker -Value $fingerprint -NoNewline
+} else {
+  Write-Step "Dependencies are already up to date."
 }
+Write-Step "Running hardware and dependency checks..."
 & $exe doctor
 if ($LASTEXITCODE -ne 0) { throw "Afterimage doctor failed with exit $LASTEXITCODE." }
 Complete-Install
+if (Test-Ready) {
+  Write-Host "Afterimage is already running at $url" -ForegroundColor Green
+  if (-not $NoBrowser) { Start-Process $url }
+  exit 0
+}
+Write-Step "Starting the local web UI. This terminal stays attached to the server..."
 $serveArgs = @("serve")
 if (-not $NoBrowser) { $serveArgs += "--open" }
 & $exe @serveArgs
