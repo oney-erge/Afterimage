@@ -46,6 +46,26 @@ afterimage compress MODEL_ID --dry-run
   own cache instead of requesting more, turning a slow creep toward OOM into
   an immediate, legible error at a known ceiling.
 
+## Native Windows: `pip install -e ".[gpu]"` fails resolving `triton`
+
+```
+× No solution found when resolving dependencies:
+  ╰─▶ Because only the following versions of triton are available: ...
+      and triton>=2.2.0 has no wheels with a matching platform tag (e.g.,
+      `win_amd64`), we can conclude that triton>=2.2.0 cannot be used.
+```
+
+This isn't a version pin to chase or a mirror to switch: Triton, which the
+GPU decode kernels (`afterimage/runtime/gpu_decode*.py`) are written in,
+publishes no native Windows wheels at all, only `manylinux` ones. `nvidia-smi`
+and `torch.cuda.is_available()` can both report success on native Windows
+(ordinary CUDA torch ops work fine there) while `[gpu]` still cannot install,
+because the two have entirely different platform requirements. There is no
+native-Windows workaround; run under WSL2, where the identical NVIDIA driver
+already exposes the same GPU (`wsl -d <distro> -- nvidia-smi` should show it)
+and Triton installs normally. This is why `install.sh`, not `install.ps1`, is
+the validated path for the GPU decode kernels on Windows.
+
 ## WSL2: pinned-RAM / `pin_memory()` failures
 
 WSL2 commonly limits locked memory (`ulimit -l`) to 64 MB, smaller than a

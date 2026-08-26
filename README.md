@@ -25,11 +25,11 @@ Afterimage compresses your model's weights losslessly and streams them through
 your GPU a layer at a time. A 29.5 GB model runs on an 8 GB card, bit-for-bit
 identical to the original. No quantization, no accuracy loss.
 
-Turn on speculative decoding with a small draft model and it's 3x faster than
-streaming alone, and faster than Hugging Face's own Accelerate offload at the
-same memory. Every number below is a real run on real hardware, not a
-projection. The tradeoff: this is still disk-bound, so it runs seconds per
-token, not tokens per second.
+Turn on speculative decoding with a small draft model and it's nearly 3x
+faster than streaming alone, and faster than Hugging Face's own Accelerate
+offload at the same memory. Every number below is a real run on real
+hardware, not a projection. The tradeoff: this is still disk-bound, so it
+runs seconds per token, not tokens per second.
 
 It comes with a CLI, a web UI, an OpenAI-compatible server, and a Python API.
 There's also an opt-in research lab where nineteen speedup ideas get tested
@@ -187,19 +187,24 @@ cache, four prompt families × four forced greedy tokens:
 
 | Configuration | Peak VRAM | Seconds/token | vs AirLLM | Exactness |
 |---|---:|---:|---:|---|
-| **Afterimage + fixed speculation** | 3.813 GB | **9.150** | **3.15x** | Greedy-token exact at T=0 |
-| Hugging Face Accelerate GPU/CPU/disk | 3.800 GB | 14.318 | 2.02x | Same BF16 checkpoint and token IDs |
-| Afterimage exact + 4 GB residency | 3.934 GB | 17.360 | 1.66x | Reference-execution equivalent |
-| **AirLLM 3.1.0** | **1.583 GB** | 28.861 | 1.00x | Same BF16 checkpoint and token IDs |
-| Afterimage chunked output head | **0.901 GB** | 29.606 | 0.97x | **Approximate** BF16 matmul |
-| Afterimage exact minimum-memory | 1.723 GB | 32.514 | 0.89x | Reference-execution equivalent |
+| **Afterimage + fixed speculation** | 3.813 GB | **9.150** | **2.93x** | Greedy-token exact at T=0 |
+| Hugging Face Accelerate GPU/CPU/disk | 3.800 GB | 14.318 | 1.87x | Same BF16 checkpoint and token IDs |
+| Afterimage exact + 4 GB residency | 3.934 GB | 17.360 | 1.55x | Reference-execution equivalent |
+| **AirLLM 3.2.0** | **1.583 GB** | 26.828 | 1.00x | Same BF16 checkpoint and token IDs |
+| Afterimage chunked output head | **0.901 GB** | 29.606 | 0.91x | **Approximate** BF16 matmul |
+| Afterimage exact minimum-memory | 1.723 GB | 32.514 | 0.83x | Reference-execution equivalent |
+
+AirLLM's row was refreshed 2026-08-26 from 3.1.0 (28.861 s/token) to 3.2.0
+(26.828 s/token), a measured 7.04% speedup on AirLLM's side with no change to
+any Afterimage number; every ratio above moved accordingly. See
+[RESULTS_LOG.md](docs/RESULTS_LOG.md#2026-08-26-airllm-baseline-refresh-to-320).
 
 The honest reading:
 
 - At the exact low-memory floor, **AirLLM wins**.
 - At about 4 GB without speculation, **Hugging Face Accelerate wins**.
 - With fixed speculation, **Afterimage wins this suite**: 1.56x Accelerate and
-  3.15x AirLLM at 3.813 GB.
+  2.93x AirLLM at 3.813 GB.
 - The 0.901 GB Afterimage point is not lossless execution. Blocking the output
   head changes BF16 reduction order even when the final token happens to agree.
 
@@ -331,6 +336,7 @@ is the web UI's default profile.
 | [Literature](docs/LITERATURE.md) | Survey of running models larger than VRAM, and where this sits in it |
 | [Cross-model benchmark](docs/CROSS_MODEL_BENCHMARK_2026-08-22.md) | Phi-4 Mini, Qwen3, and Mistral Small across families and scale |
 | [Results log](docs/RESULTS_LOG.md) | Chronological corrections and raw-run interpretation |
+| [Reproduce](docs/REPRODUCE.md) | One command per published number, and the environment facts a rerun needs to match |
 | [Contributing](CONTRIBUTING.md) | Development and verification workflow |
 
 Apache-2.0. Contributions and reproducible counter-results are welcome.

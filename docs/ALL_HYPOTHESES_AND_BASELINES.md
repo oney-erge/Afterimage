@@ -7,16 +7,24 @@
 **Scope:** cold page cache, forced greedy decoding, four prompt families unless a row says otherwise
 
 This is the controlling results document. It covers every registered hypothesis
-H0-H18, the stable Afterimage configurations, AirLLM 3.1.0, and Hugging Face
+H0-H18, the stable Afterimage configurations, AirLLM 3.2.0, and Hugging Face
 Accelerate disk offload. A result is not called “failed” merely because an
 upstream gate prevented a meaningless timing comparison.
+
+The Qwen3-14B AirLLM anchor was refreshed from 3.1.0 to 3.2.0 on 2026-08-26
+(28.861 to 26.828 s/token, AirLLM's own 7.04% speedup, no Afterimage number
+changed); every ratio below reflects the current anchor. See
+[RESULTS_LOG.md](RESULTS_LOG.md#2026-08-26-airllm-baseline-refresh-to-320)
+for the refresh protocol and raw comparison. The Phi-4 Mini and Mistral Small
+24B AirLLM numbers referenced later in this document are from the 2026-08-22
+cross-family campaign and still use AirLLM 3.1.0; they have not been rerun.
 
 ## Answer in one paragraph
 
 Afterimage is **not better at the exact low-VRAM floor**: it uses 1.723 GB and
-runs at 0.89x AirLLM. At about 4 GB, exact residency reaches 1.66x AirLLM but is
+runs at 0.83x AirLLM. At about 4 GB, exact residency reaches 1.55x AirLLM but is
 0.82x the speed of Hugging Face Accelerate's 3.80 GB hybrid. Afterimage's best
-configuration is fixed speculative decoding: **9.150 s/token, 3.15x AirLLM and
+configuration is fixed speculative decoding: **9.150 s/token, 2.93x AirLLM and
 1.56x Accelerate at 3.813 GB**, with identical greedy token IDs in the tested
 suite. Of the H0-H18 ideas, H9 is the strongest measured lead (+41.4%
 throughput at matched VRAM on a smaller model), H1 is the strongest positive
@@ -39,12 +47,12 @@ peaked at 3.800 GB; its map put 2 modules on CUDA, 9 on CPU, and 33 on disk.
 
 | Overall rank | System/configuration | Peak VRAM | Seconds/token | vs AirLLM | vs Accelerate | Output contract | What the result means |
 |---:|---|---:|---:|---:|---:|---|---|
-| **1** | **Afterimage + fixed `k=8` speculation** | 3.813 GB | **9.150** | **3.15x** | **1.56x** | Greedy-token exact at T=0; distribution-exact sampler at T>0 | Best measured operating point; the 3x result is real and was never invalidated by H2/H11. |
-| **2** | Hugging Face Accelerate BF16 GPU/CPU/disk offload | 3.800 GB | **14.318** | **2.02x** | 1.00x | Same BF16 checkpoint; same four greedy token IDs | Best non-speculative 4 GB result in this repository's runs. |
-| **3** | Afterimage exact + 4 GB residency | 3.934 GB | 17.360 | **1.66x** | 0.82x | Reference-execution equivalent | Faster than AirLLM, slower than Accelerate at roughly matched VRAM. |
-| **4** | AirLLM 3.1.0 | **1.583 GB** | 28.861 | 1.00x | 0.50x | Same BF16 checkpoint; corrected forced-greedy run | Best measured exact low-VRAM external baseline. |
-| **5** | Afterimage chunked head | **0.901 GB** | 29.606 | 0.97x | 0.48x | **Approximate** matmul; tested token IDs agreed | Lowest VRAM and near AirLLM speed, but not an exact method. |
-| **6** | Afterimage exact minimum-memory | 1.723 GB | 32.514 | 0.89x | 0.44x | Reference-execution equivalent | Compression saves storage, not enough runtime to beat AirLLM at the floor. |
+| **1** | **Afterimage + fixed `k=8` speculation** | 3.813 GB | **9.150** | **2.93x** | **1.56x** | Greedy-token exact at T=0; distribution-exact sampler at T>0 | Best measured operating point; the ~3x result is real and was never invalidated by H2/H11. |
+| **2** | Hugging Face Accelerate BF16 GPU/CPU/disk offload | 3.800 GB | **14.318** | **1.87x** | 1.00x | Same BF16 checkpoint; same four greedy token IDs | Best non-speculative 4 GB result in this repository's runs. |
+| **3** | Afterimage exact + 4 GB residency | 3.934 GB | 17.360 | **1.55x** | 0.82x | Reference-execution equivalent | Faster than AirLLM, slower than Accelerate at roughly matched VRAM. |
+| **4** | AirLLM 3.2.0 | **1.583 GB** | 26.828 | 1.00x | 0.53x | Same BF16 checkpoint; corrected forced-greedy run | Best measured exact low-VRAM external baseline. |
+| **5** | Afterimage chunked head | **0.901 GB** | 29.606 | 0.91x | 0.48x | **Approximate** matmul; tested token IDs agreed | Lowest VRAM and near AirLLM speed, but not an exact method. |
+| **6** | Afterimage exact minimum-memory | 1.723 GB | 32.514 | 0.83x | 0.44x | Reference-execution equivalent | Compression saves storage, not enough runtime to beat AirLLM at the floor. |
 
 The exact minimum cannot honestly be advertised below AirLLM's measured VRAM:
 Qwen3-14B's full BF16 output head is 1.556 GB before transient scratch. Computing
@@ -115,7 +123,7 @@ forced into a meaningless external speed ratio.
 
 ### Use now
 
-1. **Fixed speculation** is Afterimage's strongest result: 3.15x AirLLM and
+1. **Fixed speculation** is Afterimage's strongest result: 2.93x AirLLM and
    1.56x Accelerate. H2 and H11 are adaptive alternatives to this control, not
    renamings of it.
 2. **Hugging Face Accelerate** is the best exact non-speculative 4 GB runtime in
@@ -124,7 +132,9 @@ forced into a meaningless external speed ratio.
    explicit memory dial, or Afterimage API/server matters, but it loses to
    Accelerate on raw non-speculative latency at 4 GB.
 4. **AirLLM** remains the best measured exact low-VRAM point. Afterimage's exact
-   minimum is 8.8% slower and uses 0.140 GB more VRAM.
+   minimum is 17.5% slower (26.828 vs 32.514 s/token, throughput-deficit
+   convention: `1 - candidate_throughput/AirLLM_throughput`) and uses 0.140 GB
+   more VRAM.
 
 ### Research next
 
@@ -163,6 +173,11 @@ by current evidence.
   the forced-greedy protocol. The corrected AirLLM run is 28.861 s/token with
   the same token IDs. Same-session screens can show about 30.0 s/token; that is
   normal run/session variation, not a renamed method.
+- On 2026-08-26 the AirLLM anchor was refreshed from the corrected 3.1.0 run
+  above to AirLLM 3.2.0 (26.828 s/token), a real upstream speedup, not a
+  correction of a previous mistake. Every “vs AirLLM” ratio in this document
+  moved by the same factor because no Afterimage number changed. See
+  [RESULTS_LOG.md](RESULTS_LOG.md#2026-08-26-airllm-baseline-refresh-to-320).
 - H9's old 14B measurements silently used pageable RAM and therefore were not a
   test of pinned memory. Raising memlock exposed the real WSL2 allocation limit;
   the new 0.6B run executes the intended pinned mechanism without fallback.
@@ -182,7 +197,7 @@ that every component is new:
   [ZipNN](https://arxiv.org/abs/2411.05239); layer streaming is the space
   [AirLLM](https://github.com/lyogavin/airllm) already occupies.
 - Speculative execution over an offloaded target has direct prior art in
-  [SpecExec](https://arxiv.org/abs/2406.02532). Afterimage's 3.15x is a valuable
+  [SpecExec](https://arxiv.org/abs/2406.02532). Afterimage's 2.93x is a valuable
   implementation result, not a claim to invent speculation.
 - H3/H8 adapt contextual control and digital-twin RL. They ran, but the observed
   2.56% oracle ceiling and failed simulator ranking remove the practical premise.

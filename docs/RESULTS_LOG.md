@@ -10,6 +10,49 @@ and didn't notice," which has happened twice before in this project
 Baseline for comparison is always the most recent row *before* the change
 being evaluated, not row 1.
 
+## 2026-08-26 AirLLM baseline refresh to 3.2.0
+
+Every prior AirLLM comparison in this repository used AirLLM 3.1.0. AirLLM
+3.2.0 (released August 2026) was installed and the exact Qwen3-14B baseline
+protocol from the 2026-08-21 "corrected AirLLM four-family run" was
+re-executed on the same store, same host, same four evaluation cases
+(`fact-gold`, `arithmetic-17x6`, `code-square`, `retrieval-7319`), same
+4 forced greedy tokens:
+
+```bash
+python scripts/run_bounded_suite.py --model Qwen/Qwen3-14B \
+  --store /root/afterimage/store_14b --methods airllm --max-new-tokens 4 \
+  --case-ids fact-gold,arithmetic-17x6,code-square,retrieval-7319 \
+  --time-budget-minutes 12 --allow-dirty-tree \
+  --out results/2026-08-26_airllm320_qwen3-14b_rtx3080_run1.json
+```
+
+| Metric | AirLLM 3.1.0 (2026-08-21) | AirLLM 3.2.0 (2026-08-26) | Change |
+|---|---:|---:|---:|
+| Seconds/token | 28.861 | 26.828 | **7.04% faster** |
+| Peak VRAM | 1.583 GB | 1.583 GB | unchanged |
+| Token match rate | 4/4 (same IDs) | 4/4 (`expected_match_rate=1.0`) | unchanged |
+
+**AirLLM got measurably faster between 3.1.0 and 3.2.0.** Because every
+Afterimage "vs AirLLM" ratio in this repository divides by AirLLM's own
+seconds/token, and Afterimage's own numbers did not change, every such
+ratio in README.md, ALL_HYPOTHESES_AND_BASELINES.md, and HOW_IT_WORKS.md
+shrinks by the same 7.04% (e.g. fixed speculation's 3.15x becomes 2.93x).
+Those documents have been updated to the 3.2.0 anchor; this row is the
+record of the change, not something to edit away.
+
+**This run's `reproducible_from_commit` is `false`**: the working tree had
+uncommitted repository-hygiene changes at the time (dead-link fixes,
+registry drift corrections, a paired-estimator bug fix, dirty-tree
+enforcement itself, none of which touch `scripts/run_bounded_suite.py`'s
+`run_airllm` path or the AirLLM package). The measurement is real and the
+AirLLM-side code path was unmodified, but a fully clean-tree confirmation
+run is recommended before this number is cited in a publication.
+
+`docs/CROSS_MODEL_BENCHMARK_2026-08-22.md`'s Phi-4 Mini and Mistral Small
+24B rows still use AirLLM 3.1.0 and have not been rerun; only the
+Qwen3-14B anchor used across the rest of this repository was refreshed.
+
 ## 2026-08-22 cross-family and scale campaign
 
 The complete interpretation, protocol, model revisions, invalid-run handling,
@@ -208,8 +251,9 @@ Kept, repurposed rather than deleted:
 cycle to learn:** the isolated throughput gate *passed* (1.33 GB/s, matching
 GPU decode in situ) and the integrated result was still 0.52x. Component
 benchmarks validate a component; only end-to-end wall-clock validates a
-change. Every hypothesis in [PROPOSAL_ADAPTIVE.md](archive/PROPOSAL_ADAPTIVE.md) is
-gated on an end-to-end A/B for exactly this reason.
+change. Every hypothesis in `archive/PROPOSAL_ADAPTIVE.md` (an unpublished
+internal planning document, not part of this repository) is gated on an
+end-to-end A/B for exactly this reason.
 
 ---
 

@@ -28,16 +28,20 @@ row including AirLLM's. Full protocol, per-hypothesis verdicts and raw files:
 
 | Configuration | Peak VRAM | s/token | Contract | vs AirLLM |
 |---|---:|---:|---|---:|
-| **AirLLM 3.1.0** (baseline) | 1.583 GB | 28.861 | BF16 greedy | 1.00x |
-| Minimum-memory exact | 1.723 GB | 32.514 | exact | **0.89x** |
-| + 4 GB residency | 3.934 GB | 17.360 | exact | **1.66x** |
-| Chunked output head | **0.901 GB** | 29.606 | **approximate** | 0.97x |
-| + fixed-k speculation | 3.813 GB | **9.150** | greedy-token exact at T=0 | **3.15x** |
-| + frozen hazard speculation | 3.814 GB | 9.773 | greedy-token exact at T=0 | 2.95x |
-| Chunked head + speculation† | 2.056 GB | 7.949 | approximate | 3.70x |
+| **AirLLM 3.2.0** (baseline) | 1.583 GB | 26.828 | BF16 greedy | 1.00x |
+| Minimum-memory exact | 1.723 GB | 32.514 | exact | **0.83x** |
+| + 4 GB residency | 3.934 GB | 17.360 | exact | **1.55x** |
+| Chunked output head | **0.901 GB** | 29.606 | **approximate** | 0.91x |
+| + fixed-k speculation | 3.813 GB | **9.150** | greedy-token exact at T=0 | **2.93x** |
+| + frozen hazard speculation | 3.814 GB | 9.773 | greedy-token exact at T=0 | 2.75x |
+| Chunked head + speculation† | 2.056 GB | 7.949 | approximate | 3.38x |
 
 † One factual prompt only, not the 4-prompt suite: a promising low-memory
 screen, not a confirmed result.
+
+AirLLM row refreshed 2026-08-26 from 3.1.0 (28.861 s/token) to 3.2.0 (26.828
+s/token); see
+[RESULTS_LOG.md](RESULTS_LOG.md#2026-08-26-airllm-baseline-refresh-to-320).
 
 Every row answered every shared prompt with the same token IDs as the
 corrected AirLLM baseline (see "Does the lossy path change the answer?"
@@ -55,14 +59,14 @@ measured; the proven ceiling for bf16 is ~1.51x).
 **What it costs:** the GPU must decode the bytes back, work AirLLM never
 does, because AirLLM reads raw weights.
 
-**Result: 0.89x at the memory floor, 11% *slower* than AirLLM.**
+**Result: 0.83x at the memory floor, 17% *slower* than AirLLM.**
 
 The saving is spent entirely on decode. This is the single most important
 number here and the easiest one to overclaim, so it is stated plainly:
 **compression alone, at the same memory, is a loss, not a wash.** The
 richer four-prompt suite is less forgiving than the historical one-prompt
-screen, which had shown roughly parity (0.89x–1.02x across three repeats;
-see the noise table below).
+screen, which had shown roughly parity (0.89x–1.02x against AirLLM 3.1.0
+across three repeats; see the noise table below).
 
 ---
 
@@ -76,14 +80,14 @@ compresses *badly* costs the most disk traffic per byte of VRAM it occupies,
 so pin those first. Counterintuitive, and only visible once compression is
 on the streaming path.
 
-**Result: 1.66x at 3.93 GB** (2.48x the memory of the minimum-memory row).
+**Result: 1.55x at 3.93 GB** (2.48x the memory of the minimum-memory row).
 
 **This is where compression finally pays off.** With headroom, decode runs
 in big slices and some weights stop being re-read at all. It is not a better
 algorithm, it is more memory; the honest framing throughout this project.
 
 A two-prompt placement control that instead kept the *full output head*
-resident measured 2.09x at only 2.68 GB, faster than the 4 GB traffic-density
+resident measured 1.92x at only 2.68 GB, faster than the 4 GB traffic-density
 plan despite reading slightly more bytes. That is the clue behind H14/H15
 (coalesced/extent-aware residency, see [HYPOTHESIS_LINEAGE.md](HYPOTHESIS_LINEAGE.md)).
 Measured since, that clue did not survive: coalescing storage reads made
@@ -104,8 +108,8 @@ logits[..., a:b] = x @ W[a:b].T
 
 So compute it a block at a time and never hold the whole thing.
 
-**Result: 0.901 GB, 43% less VRAM than AirLLM's floor, at parity speed
-(0.97x).** The only row that beats AirLLM on memory.
+**Result: 0.901 GB, 43% less VRAM than AirLLM's floor, at near-parity speed
+(0.91x).** The only row that beats AirLLM on memory.
 
 **What it costs, and this is the catch:** it is **not bit-exact.** Blocking
 changes the matmul's reduction order, and cuBLAS picks a different kernel per
@@ -141,12 +145,13 @@ attacks the *numerator* (reads per token), which no other method here does.
 
 **What it costs:** 1.3 GB of VRAM for the draft model, permanently.
 
-**Result: 9.150 s/token, 3.15x vs AirLLM, exact at greedy decoding (T=0).**
+**Result: 9.150 s/token, 2.93x vs AirLLM, exact at greedy decoding (T=0).**
 By far the largest legitimate full-suite win here. Effect size varied by
-prompt family (1.88x–5.36x observed across the suite), which is why a
-four-prompt average, not one lucky prompt, is the number to trust. An
-earlier one-prompt screen had reported 12.5x, and that number was real for
-that prompt but does not generalise (see
+prompt family (1.88x–5.36x observed across the suite, against the AirLLM
+3.1.0 anchor these per-family figures predate; not recomputed against
+3.2.0), which is why a four-prompt average, not one lucky prompt, is the
+number to trust. An earlier one-prompt screen had reported 12.5x, and that
+number was real for that prompt but does not generalise (see
 [RESULTS_LOG.md](RESULTS_LOG.md)'s bounded-screen entry for the full history).
 
 A learned rejection-hazard stopping policy (H2) was tested against this fixed
@@ -171,7 +176,7 @@ The chunked head frees ~0.8 GB, which is roughly what the draft model needs.
 Speculation then fits in **2.056 GB** instead of the ~3.8 GB floor it has on
 its own.
 
-**Result (one prompt only): 7.949 s/token at 2.056 GB, 3.70x vs the matching
+**Result (one prompt only): 7.949 s/token at 2.056 GB, 3.38x vs the matching
 AirLLM cell.** This is a promising low-memory screen, not a suite-confirmed
 result; it has not yet been measured across all four prompt families.
 
@@ -205,9 +210,10 @@ Mean 0.98x, spread ±4%. The bounded protocol treats **anything under ~10% as
 not resolvable on a single run**, which is why the four-prompt screen is
 directional rather than confirmatory: it is one repeat, not the five-repeat
 protocol [RESEARCH_METHODS.md](RESEARCH_METHODS.md) requires for a performance
-claim. The 1.66x, 3.15x and
-0.89x results are far outside this band; a result inside it (like Method 1's
-0.97x-parity chunked-head row) means parity, not a directional win or loss.
+claim. The 1.55x, 2.93x and
+0.83x results (current AirLLM 3.2.0 anchor) are far outside this band; a
+result inside it (like Method 1's 0.91x chunked-head row) means near-parity,
+not a directional win or loss.
 
 ---
 
@@ -227,13 +233,13 @@ claim. The 1.66x, 3.15x and
 ## The honest bottom line
 
 1. **At equal memory and equal losslessness, we currently lose to AirLLM
-   (0.89x)** at the four-prompt bounded screen. Compression alone trades disk
+   (0.83x)** at the four-prompt bounded screen. Compression alone trades disk
    time for decode time, and on this richer suite it does not break even.
-2. **Our real lossless advantage is spending memory AirLLM cannot:** 1.66x
-   from residency, and **3.15x from speculative decoding.**
+2. **Our real lossless advantage is spending memory AirLLM cannot:** 1.55x
+   from residency, and **2.93x from speculative decoding.**
 3. **Our real memory advantage needs the lossy head:** 43% below AirLLM's
-   footprint at parity speed.
-4. **The best low-memory operating point (unconfirmed)** is method 5, 3.70x
+   footprint at near-parity speed.
+4. **The best low-memory operating point (unconfirmed)** is method 5, 3.38x
    at 2.06 GB on one prompt, available only if bit-exactness can be relaxed
    and only after it is measured across the full suite.
 

@@ -1,9 +1,18 @@
 # Cross-family and scale benchmark, 2026-08-22
 
-**Status:** hardware campaign complete
+**Status:** hardware campaign complete, as run on this date -- see note below
 **Host:** RTX 3080 Laptop GPU (8 GB), WSL2, BF16, cold page cache
 **Question:** do Afterimage's Qwen3-14B conclusions transfer to a smaller
 checkpoint and a different, substantially larger model family?
+
+All AirLLM numbers in this document, including the Qwen3-14B row below, are
+AirLLM 3.1.0, as run on 2026-08-22. The Qwen3-14B AirLLM anchor used
+elsewhere in this repository (README.md, ALL_HYPOTHESES_AND_BASELINES.md,
+HOW_IT_WORKS.md) was refreshed to AirLLM 3.2.0 on 2026-08-26; this campaign
+report is left as the historical record of what actually ran that day and
+has not been reopened. The Phi-4 Mini and Mistral Small 24B rows have not
+been rerun on 3.2.0. See
+[RESULTS_LOG.md](RESULTS_LOG.md#2026-08-26-airllm-baseline-refresh-to-320).
 
 ## Result in one paragraph
 

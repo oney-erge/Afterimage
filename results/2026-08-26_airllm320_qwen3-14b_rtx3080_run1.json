@@ -1,0 +1,312 @@
+{
+  "cache_regime": "cold page cache before every timed cell",
+  "calibration_artifacts": {},
+  "calibration_case_ids": [
+    "summary-photosynthesis",
+    "logic-glippets",
+    "copy-nonce",
+    "json-status",
+    "code-squares",
+    "logic-ravens",
+    "retrieval-tulip",
+    "transform-sequence"
+  ],
+  "completed_at_unix": 1787758101.3570907,
+  "confirmatory_protocol_satisfied": false,
+  "draft_model": "Qwen/Qwen3-0.6B",
+  "elapsed_seconds": 438.621746269,
+  "environment": {
+    "cuda": "12.4",
+    "driver": "596.49",
+    "git_commit": "8bfc0f91fd3fe82bd47e7f35627cee5b4f8822ab",
+    "git_status": "M .github/workflows/ci.yml\n M CHANGELOG.md\n M CITATION.cff\n M README.md\n M afterimage/experiments.py\n M docs/LITERATURE.md\n M docs/RESULTS_LOG.md\n M pyproject.toml\n M results/README.md\n M scripts/adaptive_bench.py\n M scripts/cpu_decode_gate.py\n M scripts/run_bounded_suite.py\n M scripts/run_regulated_pair.py\n M tests/test_accuracy_instruments.py\n M tests/test_entropy.py\n M tests/test_experiments.py\n M tests/test_fp16_basis.py\n M tests/test_huffman.py\n M tests/test_sketch.py\n M tests/test_verify.py\n?? docs/REPRODUCE.md\n?? scripts/power_analysis.py\n?? tests/test_measured_outcomes_match_docs.py\n?? tests/test_power_analysis.py",
+    "gpu": "NVIDIA GeForce RTX 3080 Laptop GPU",
+    "gpu_total_bytes": 8589410304,
+    "host_memory": "total        used        free      shared  buff/cache   available\nMem:     20656582656  1356140544 16856903680     3735552  2696409088 19300442112\nSwap:     5368709120           0  5368709120",
+    "packages": {
+      "accelerate": "1.14.0",
+      "airllm": "3.2.0",
+      "numpy": "2.5.2",
+      "safetensors": "0.8.0",
+      "transformers": "5.12.1"
+    },
+    "platform": "Linux-6.18.33.2-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+    "python": "3.12.3 (main, Jun 19 2026, 12:46:00) [GCC 13.3.0]",
+    "tokenizer_commit": null,
+    "torch": "2.6.0+cu124"
+  },
+  "evaluation_case_ids": [
+    "fact-gold",
+    "arithmetic-17x6",
+    "code-square",
+    "retrieval-7319"
+  ],
+  "evidence_level": "L1_mechanism_screen",
+  "exploratory": true,
+  "failures": [],
+  "max_new_tokens": 4,
+  "methods": [
+    {
+      "declared_exactness": "reference_greedy",
+      "metadata": {
+        "initialization_seconds": 1.8801385159999882
+      },
+      "method_id": "airllm",
+      "method_wall_seconds": 438.204281443,
+      "rows": [
+        {
+          "answer": "Au\n",
+          "cache_drop_error": null,
+          "cache_drop_succeeded": true,
+          "case_id": "fact-gold",
+          "committed_tokens_per_second": 0.03661823621261331,
+          "expected_any": [
+            "Au"
+          ],
+          "expected_match": true,
+          "generation_mode": "greedy",
+          "input_tokens": 33,
+          "method": "airllm",
+          "output_token_ids": [
+            65332,
+            151645,
+            198,
+            151643
+          ],
+          "output_tokens": 4,
+          "peak_vram_gb": 1.571434496,
+          "prompt_sha256": "4a1479bcb9d08d15b41b6a857f092c87b2146f88d395e474f9ec2e8b805ff9d8",
+          "seconds_per_token": 27.308797567249997,
+          "semantic_bucket": "factual",
+          "wall_seconds": 109.23519026899999
+        },
+        {
+          "answer": "102",
+          "cache_drop_error": null,
+          "cache_drop_succeeded": true,
+          "case_id": "arithmetic-17x6",
+          "committed_tokens_per_second": 0.03632899238587795,
+          "expected_any": [
+            "102"
+          ],
+          "expected_match": true,
+          "generation_mode": "greedy",
+          "input_tokens": 39,
+          "method": "airllm",
+          "output_token_ids": [
+            16,
+            15,
+            17,
+            151645
+          ],
+          "output_tokens": 4,
+          "peak_vram_gb": 1.572417536,
+          "prompt_sha256": "06acd6288111a3130d729c8c78723b031e1a5c6b4fbef3aca0b0930e8f454df2",
+          "seconds_per_token": 27.526224492500006,
+          "semantic_bucket": "arithmetic",
+          "wall_seconds": 110.10489797000002
+        },
+        {
+          "answer": "x ** 2",
+          "cache_drop_error": null,
+          "cache_drop_succeeded": true,
+          "case_id": "code-square",
+          "committed_tokens_per_second": 0.0377325458851069,
+          "expected_any": [
+            "x * x",
+            "x*x",
+            "x ** 2",
+            "x**2"
+          ],
+          "expected_match": true,
+          "generation_mode": "greedy",
+          "input_tokens": 41,
+          "method": "airllm",
+          "output_token_ids": [
+            87,
+            3070,
+            220,
+            17
+          ],
+          "output_tokens": 4,
+          "peak_vram_gb": 1.572745216,
+          "prompt_sha256": "20779a6e42f04b53b6701f2e53ba0489a1ebe81d41d70e7a3407881863db981b",
+          "seconds_per_token": 26.502319855249993,
+          "semantic_bucket": "code",
+          "wall_seconds": 106.00927942099997
+        },
+        {
+          "answer": "7319",
+          "cache_drop_error": null,
+          "cache_drop_succeeded": true,
+          "case_id": "retrieval-7319",
+          "committed_tokens_per_second": 0.03849803152187162,
+          "expected_any": [
+            "7319"
+          ],
+          "expected_match": true,
+          "generation_mode": "greedy",
+          "input_tokens": 105,
+          "method": "airllm",
+          "output_token_ids": [
+            22,
+            18,
+            16,
+            24
+          ],
+          "output_tokens": 4,
+          "peak_vram_gb": 1.583234048,
+          "prompt_sha256": "95d15edd0bc30864e81e6e9ccd631979ebf4f0ec8d08b882a1fcc246d5bbbcfa",
+          "seconds_per_token": 25.975354075750005,
+          "semantic_bucket": "long_context_retrieval",
+          "wall_seconds": 103.90141630300002
+        }
+      ],
+      "summary": {
+        "all_cache_drops_succeeded": true,
+        "completed_cases": 4,
+        "expected_match_rate": 1,
+        "expected_matches": 4,
+        "median_cell_seconds_per_token": 26.905558711249995,
+        "peak_vram_gb": 1.583234048,
+        "seconds_per_token": 26.8281739976875,
+        "speedup_vs_airllm": 1.0,
+        "total_output_tokens": 16,
+        "total_wall_seconds": 429.250783963,
+        "vram_vs_airllm": 1.0
+      },
+      "title": "AirLLM 3.2.0"
+    }
+  ],
+  "metric_definitions": {
+    "expected_match_rate": "fraction of cases whose bounded text completes the prompt's semantic expected prefix; this is a task score, not an execution-exactness score",
+    "token_agreement_vs_exact_min": "fraction of shared cases with an identical complete output token-id sequence to the exact-min Afterimage control"
+  },
+  "model": "Qwen/Qwen3-14B",
+  "prompt_suite": [
+    {
+      "expected_any": [
+        "Au"
+      ],
+      "id": "fact-gold",
+      "semantic_bucket": "factual",
+      "split": "evaluation",
+      "user_text": "Answer with only the chemical symbol for gold."
+    },
+    {
+      "expected_any": [
+        "102"
+      ],
+      "id": "arithmetic-17x6",
+      "semantic_bucket": "arithmetic",
+      "split": "evaluation",
+      "user_text": "Compute 17 multiplied by 6. Answer with only the integer."
+    },
+    {
+      "expected_any": [
+        "x * x",
+        "x*x",
+        "x ** 2",
+        "x**2"
+      ],
+      "id": "code-square",
+      "semantic_bucket": "code",
+      "split": "evaluation",
+      "user_text": "Fill the blank and output only the missing Python expression: def square(x): return ___"
+    },
+    {
+      "expected_any": [
+        "7319"
+      ],
+      "id": "retrieval-7319",
+      "semantic_bucket": "long_context_retrieval",
+      "split": "evaluation",
+      "user_text": "A maintenance note lists several identifiers. The amber cabinet is 2048, the cobalt cabinet is 5501, and the Orion access code is 7319. A later paragraph discusses inventory counts of 18, 42, and 96; none of those are access codes. What is the Orion access code? Answer with only the four digits."
+    },
+    {
+      "expected_any": [
+        "photosynthesis"
+      ],
+      "id": "summary-photosynthesis",
+      "semantic_bucket": "summarisation",
+      "split": "calibration",
+      "user_text": "Plants use light energy to convert carbon dioxide and water into sugars, releasing oxygen. Name this process with one word."
+    },
+    {
+      "expected_any": [
+        "no"
+      ],
+      "id": "logic-glippets",
+      "semantic_bucket": "logic",
+      "split": "calibration",
+      "user_text": "Every glippet is blue. No blue object is transparent. Can a glippet be transparent? Answer only yes or no."
+    },
+    {
+      "expected_any": [
+        "K7M-42Q-Z9"
+      ],
+      "id": "copy-nonce",
+      "semantic_bucket": "exact_copy",
+      "split": "calibration",
+      "user_text": "Repeat exactly this identifier and nothing else: K7M-42Q-Z9."
+    },
+    {
+      "expected_any": [
+        "{\"status\":\"ok\",\"count\":3}"
+      ],
+      "id": "json-status",
+      "semantic_bucket": "structured_output",
+      "split": "calibration",
+      "user_text": "Output one minified JSON object with status equal to ok and count equal to 3. Do not add prose."
+    },
+    {
+      "expected_any": [
+        "[x * x for x in values]",
+        "[x*x for x in values]"
+      ],
+      "id": "code-squares",
+      "semantic_bucket": "code",
+      "split": "calibration",
+      "user_text": "Fill the blank and output only the Python expression: squares = ___  # square every x in values"
+    },
+    {
+      "expected_any": [
+        "no"
+      ],
+      "id": "logic-ravens",
+      "semantic_bucket": "counterfactual_logic",
+      "split": "calibration",
+      "user_text": "All ravens in a sanctuary are black. Mira is a white bird in that sanctuary. Must Mira be a raven? Answer only yes or no."
+    },
+    {
+      "expected_any": [
+        "9407"
+      ],
+      "id": "retrieval-tulip",
+      "semantic_bucket": "long_context_retrieval",
+      "split": "calibration",
+      "user_text": "The delta ledger assigns 1182 to maple, 9407 to tulip, and 6630 to cedar. A later audit lists invoice totals 94, 207, and 811, none of which are ledger identifiers. Return only tulip's four-digit code."
+    },
+    {
+      "expected_any": [
+        "ivory,cobalt,amber"
+      ],
+      "id": "transform-sequence",
+      "semantic_bucket": "symbolic_transformation",
+      "split": "calibration",
+      "user_text": "Reverse the order of these comma-separated tokens without changing their spelling. Output tokens only: amber,cobalt,ivory"
+    }
+  ],
+  "prompt_suite_version": "bounded-chat-v2",
+  "protocol_schema_version": 1,
+  "ram_overlay_host_budget_gb": 1.6,
+  "ram_overlay_matched_vram_budget_gb": 1.8,
+  "reproducible_from_commit": false,
+  "schema_version": 1,
+  "selected_methods": [
+    "airllm"
+  ],
+  "status": "complete",
+  "store": "/root/afterimage/store_14b",
+  "time_budget_minutes": 12.0
+}
