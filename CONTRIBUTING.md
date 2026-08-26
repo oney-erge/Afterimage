@@ -17,13 +17,27 @@ python -m pytest -q -m ""           # everything, including the Phase-0 branch
 python -m pytest -q -m archive      # only the Phase-0 branch
 ```
 
-GPU-dependent tests (`test_*_gpu.py`) skip automatically without CUDA +
-Triton. `pytest.importorskip` guards optional-dependency tests (`transformers`,
-`fastapi`) the same way. CI runs the default set plus the Phase-0 branch as
-separate jobs (`.github/workflows/ci.yml`) on CPU only.
+GPU-dependent tests skip automatically without CUDA + Triton. Most are named
+`test_*_gpu.py`, but not all (`test_sliced_decompress.py` is guarded the same
+way), so read the skip reasons rather than the filenames:
 
 ```bash
-python -m compileall -q afterimage  # what CI checks before tests
+python -m pytest -q -rs             # -rs prints why each test skipped
+```
+
+`pytest.importorskip` guards optional-dependency tests (`transformers`,
+`fastapi`) the same way. CI runs the default set plus the Phase-0 branch as
+separate jobs (`.github/workflows/ci.yml`) **on CPU only**, so the GPU decode
+kernels, the streaming engine, and the chunked LM head are not covered by any
+automated run. Before a release, run the suite on a CUDA host as well; on
+Windows that means WSL2, because Triton publishes no native Windows wheel
+(see `docs/TROUBLESHOOTING.md`). Reference counts: 366 passed / 0 skipped on
+WSL2+CUDA, 300 passed / 66 skipped on native Windows CPU.
+
+```bash
+python -m compileall -q afterimage           # what CI checks before tests
+python -m ruff check afterimage scripts tests  # narrow ruleset: F + E9
+python scripts/check_prose.py                # zero-em-dash docs check
 ```
 
 ## Code style

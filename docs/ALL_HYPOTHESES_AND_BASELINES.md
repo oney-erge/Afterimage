@@ -263,12 +263,19 @@ format conversion.
 
 ## Reproduce the new runs
 
-Final repository verification after the cross-family campaign:
+Repository verification as of the cross-family campaign (2026-08-22):
 
 - WSL/CUDA: **317 passed, 61 deselected** in 112.25 seconds; one upstream
   Starlette/httpx deprecation warning;
 - focused campaign/CLI regression suite: **12 passed** in 3.08 seconds;
 - changed-scope Ruff, `compileall`, and `git diff --check` passed.
+
+Current verification (2026-08-26, after the AirLLM 3.2.0 refresh and the
+repository-hygiene pass): **366 passed, 61 deselected** on WSL2/CUDA with
+zero skips, **300 passed / 66 skipped** on native Windows CPU (Triton has no
+Windows wheel, so the GPU decode tests cannot run there), Ruff clean across
+`afterimage`, `scripts`, and `tests`. See
+[REPRODUCE.md](REPRODUCE.md).
 
 ```bash
 # Real pinned H9 mechanism test; systemd removes the shell's 64 MiB memlock cap.

@@ -2,8 +2,8 @@
 
 Afterimage is a lossless weight-streaming runtime and research workbench for
 running supported BF16 language models under limited GPU memory. Package code
-lives under `src/afterimage/`; tests and benchmark evidence must distinguish
-measured results from projections.
+lives under `afterimage/` (a flat layout, not `src/`); tests and benchmark
+evidence must distinguish measured results from projections.
 
 ## Focused commands
 

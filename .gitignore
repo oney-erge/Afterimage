@@ -2,6 +2,10 @@ __pycache__/
 .setup/
 *.pyc
 .pytest_cache/
+# pytest-benchmark (a [dev] dependency) writes here; ruff self-ignores its
+# own cache but pytest-benchmark does not.
+.benchmarks/
+.ruff_cache/
 *.egg-info/
 build/
 dist/

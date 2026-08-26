@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Sets up Afterimage on Linux/WSL2/macOS the first time; every time after
-# that, just starts it. Run it with `./start` at the repo root, or this
+# that, just starts it. Run it with `./run.sh` at the repo root, or this
 # file directly -- same thing.
 #
 # Detects your GPU, installs the matching torch build, creates a venv,

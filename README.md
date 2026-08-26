@@ -94,7 +94,7 @@ terminal -- open **http://127.0.0.1:8420** in a browser for the web UI.
 Press Ctrl-C to stop it; run the launcher again any time.
 
 To use the CLI from another terminal while the server (or without it) is
-running, use the virtual environment `./start` created:
+running, use the virtual environment the launcher created:
 
 ```bash
 .venv/bin/afterimage compress Qwen/Qwen3-14B      # macOS/Linux/WSL2

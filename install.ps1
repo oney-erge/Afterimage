@@ -1,6 +1,6 @@
 # Sets up Afterimage on Windows the first time; every time after that,
-# just starts it. Double-click start.bat, or run this file directly --
-# same thing.
+# just starts it. Double-click run.bat, or run this file directly -- same
+# thing.
 #
 # NOTE: this project was developed and its GPU decode kernels validated
 # under WSL2, not native Windows CUDA -- Triton's native-Windows support is
