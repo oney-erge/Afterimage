@@ -31,8 +31,27 @@ DEFAULT_STORE_ROOT = pathlib.Path(
 
 
 def _store_dir_for(model_id: str, store_root: pathlib.Path | None = None) -> pathlib.Path:
-    root = store_root or DEFAULT_STORE_ROOT
-    return root / model_id.replace("/", "__")
+    """The on-disk store directory for one model ID.
+
+    model_id ultimately comes from a client-supplied string (the web API's
+    model-acquisition endpoints pass it straight through), so this must be
+    safe against a hostile value, not just a well-formed "org/name" one.
+    Replacing "/" alone is not enough: a literal backslash is a path
+    separator on Windows and was not being escaped at all (`..\\..\\x`
+    resolved straight out of the store root), and even with every separator
+    replaced, a `model_id` that is *itself* exactly ".." has no separator to
+    replace and still walks up one directory once joined and resolved. The
+    character replacement below handles the common case cleanly; the
+    resolved-path containment check below it is what actually makes this
+    safe, and is what would still catch a construction neither of us has
+    thought of yet.
+    """
+    root = (store_root or DEFAULT_STORE_ROOT).resolve()
+    name = model_id.replace("/", "__").replace("\\", "__")
+    candidate = (root / name).resolve()
+    if candidate != root and root not in candidate.parents:
+        raise ValueError("invalid model id: %r resolves outside the store root" % model_id)
+    return candidate
 
 
 # -- doctor ------------------------------------------------------------
@@ -63,19 +82,9 @@ def _detect_gpu() -> dict:
 
 
 def _detect_ram_gb() -> float | None:
-    try:
-        import psutil
-        return round(psutil.virtual_memory().total / 1e9, 1)
-    except ImportError:
-        try:
-            with open("/proc/meminfo") as f:
-                for line in f:
-                    if line.startswith("MemTotal:"):
-                        kb = int(line.split()[1])
-                        return round(kb * 1024 / 1e9, 1)
-        except FileNotFoundError:
-            pass
-    return None
+    from afterimage.server.hardware import memory_info
+
+    return memory_info()["total_gib"]
 
 
 def _benchmark_disk_read_mb_s(target_dir: pathlib.Path, size_mb: int = 256):
@@ -465,6 +474,18 @@ RUN_PROFILES = {
 }
 
 
+def automatic_run_profile(vram_gib: float | None) -> tuple[str, str]:
+    """Return the automatic profile shared by the CLI and web server."""
+
+    if vram_gib is None:
+        return "min-memory", "no GPU detected"
+    if vram_gib >= 6.0:
+        return "fast", "%.1f GiB VRAM detected" % vram_gib
+    if vram_gib >= 3.0:
+        return "balanced", "%.1f GiB VRAM detected" % vram_gib
+    return "min-memory", "%.1f GiB VRAM detected" % vram_gib
+
+
 def _resolve_run_profile(args: argparse.Namespace) -> None:
     """Applies --profile or --auto onto args in place, in the core fields
     (vram_budget_gb, draft_model) only. An explicit flag the user actually
@@ -473,18 +494,7 @@ def _resolve_run_profile(args: argparse.Namespace) -> None:
     name = args.profile
     if args.auto and name is None:
         vram_gb = _detect_gpu().get("vram_gb")
-        if vram_gb is None:
-            name = "min-memory"
-            reason = "no GPU detected"
-        elif vram_gb >= 6.0:
-            name = "fast"
-            reason = "%.1f GB VRAM detected" % vram_gb
-        elif vram_gb >= 3.0:
-            name = "balanced"
-            reason = "%.1f GB VRAM detected" % vram_gb
-        else:
-            name = "min-memory"
-            reason = "%.1f GB VRAM detected -- too little to spend on residency" % vram_gb
+        name, reason = automatic_run_profile(vram_gb)
         print("[auto] picked --profile %s (%s)" % (name, reason), file=sys.stderr)
     if name is None:
         return
