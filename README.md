@@ -83,6 +83,10 @@ operational interface used by the other projects. The small model quickstart
 is available separately as `afterimage quickstart` and is not an automatic
 multi-gigabyte download.
 
+Setup checks disk space before model tooling is installed, prevents concurrent
+environment changes, retries temporary network failures up to three times, and
+records failures in `.setup/install.log`.
+
 Use `.\run.ps1` from PowerShell.
 
 The script finishes by starting the server and stays running in that
