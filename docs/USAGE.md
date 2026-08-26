@@ -5,24 +5,27 @@
 ```bash
 git clone https://github.com/oney-erge/Afterimage.git
 cd Afterimage
-./start
+./run.sh
 ```
 
-That's it. First run, it sets everything up (detects your GPU, installs
-the matching torch build, creates a `.venv`) and then runs a small model end
-to end so you can watch it work before committing to a real download.
-Every run after that skips straight to the last step. Either way, the
-script finishes by starting the server and stays running in that
+That's it. First run, it detects your GPU, installs the matching Torch build,
+creates a `.venv`, and starts the server. It does not download a model without
+your request. Every run after that reuses the current environment. The
+launcher finishes by starting the server and stays running in that
 terminal -- open **http://127.0.0.1:8420** in a browser for the web UI.
-Run `./start` again any time.
+Run `./run.sh` again any time.
 
-On Windows, double-click `start.bat`. On macOS, double-click
-`start.command` (or run `./start` from a terminal). Same script either
+On Windows, double-click `run.bat`. On macOS, double-click
+`run.command`. Use `run.ps1` from PowerShell. Every root launcher also accepts
+`doctor`, `repair`, `docker`, `logs`, and `stop`. The same script runs either
 way, and it always tells you whether it just installed something or is
 just starting.
 
+When you are ready for the separate small-model check, run `afterimage
+quickstart`. It downloads Qwen3-0.6B and measures the pipeline on your machine.
+
 To use the CLI from another terminal instead of (or alongside) the
-server, use the virtual environment `./start` created directly
+server, use the virtual environment the launcher created directly
 (`.venv/bin/afterimage ...` on macOS/Linux/WSL2,
 `.venv\Scripts\afterimage.exe ...` on Windows), or activate it first
 (`source .venv/bin/activate`, or `.venv\Scripts\Activate.ps1`) and just

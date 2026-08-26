@@ -83,6 +83,8 @@ operational interface used by the other projects. The small model quickstart
 is available separately as `afterimage quickstart` and is not an automatic
 multi-gigabyte download.
 
+Use `.\run.ps1` from PowerShell.
+
 The script finishes by starting the server and stays running in that
 terminal -- open **http://127.0.0.1:8420** in a browser for the web UI.
 Press Ctrl-C to stop it; run the launcher again any time.
