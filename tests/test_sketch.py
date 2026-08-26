@@ -40,7 +40,6 @@ def test_hits_reproduce_exact_output_for_subspace_activations(tmp_path):
 
     store.reset_stats()
     max_rel_err = 0.0
-    hits_seen = 0
     for _ in range(200):
         x = q @ torch.randn(r)
         y_cached = layer.forward(x)

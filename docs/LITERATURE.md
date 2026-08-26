@@ -242,9 +242,11 @@ flowchart TD
 ## 11. What is genuinely unclaimed *(historical: written for the abandoned Phase-0 bet)*
 
 > **This section describes the subspace-cache hypothesis, which was tested and
-> failed** (archive/PHASE0_RESULTS.md). It is kept because the framing of the gap is
-> still correct and still motivates the current engine. For the present
-> assessment of unclaimed ground, see **§17** below.
+> failed** (`archive/PHASE0_RESULTS.md`, an unpublished internal planning
+> document kept locally for traceability, not part of this repository). It is
+> kept because the framing of the gap is still correct and still motivates the
+> current engine. For the present assessment of unclaimed ground, see **§17**
+> below.
 
 Every system in this survey does the same thing at the end of a sweep: it
 **discards the weights it just read.** The next sweep re-reads them.
@@ -259,8 +261,9 @@ flowchart LR
 
 8.5 GB of information; ~280 GB of traffic. **No system in the literature retains
 the value of a fetch across sweeps.** That is the gap Afterimage targets. See
-[HYPOTHESIS.md](archive/HYPOTHESIS.md) for the mechanism, the mathematics, and an honest
-account of why the available evidence on activation rank makes it a risky bet.
+`archive/HYPOTHESIS.md` (an unpublished internal planning document, not part of
+this repository) for the mechanism, the mathematics, and an honest account of
+why the available evidence on activation rank makes it a risky bet.
 
 ---
 
@@ -439,7 +442,8 @@ state; nobody does it, because it requires a decoder on the streaming path.
 **d. Compressed MoE expert caching** (§15): the composition of (a) and (c) that
 makes 40B-class models genuinely interesting on 8 GB.
 
-These four are the basis of [PROPOSAL.md](archive/PROPOSAL.md).
+These four are the basis of `archive/PROPOSAL.md`, an unpublished internal
+planning document kept locally for traceability, not part of this repository.
 
 Sources for Part II: DFloat11 arXiv:2504.11651 · ZipServ ASPLOS'26 ·
 Approaching Shannon Bound arXiv:2606.15789 · PowerInfer arXiv:2312.12456 ·
@@ -597,7 +601,8 @@ mid-run. It does not belong on placement, where the honest gap is measurement.
 
 The concrete plan built on this assessment, including the one place where the
 two interact in a way nobody in the literature has tuned jointly, is
-[PROPOSAL_ADAPTIVE.md](archive/PROPOSAL_ADAPTIVE.md).
+`archive/PROPOSAL_ADAPTIVE.md`, an unpublished internal planning document kept
+locally for traceability, not part of this repository.
 
 Sources for Part III: SpecDec++ arXiv:2405.19715 · BanditSpec arXiv:2505.15141 ·
 GammaTune arXiv:2504.00030 · Learning to Draft arXiv:2603.01639 · Nightjar

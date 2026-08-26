@@ -2,8 +2,14 @@ cff-version: 1.2.0
 message: "If you use this software, please cite it as below."
 title: "Afterimage: Lossless Weight-Compressed Streaming Inference"
 type: software
+version: "0.2.0"
 authors:
-  - alias: oney-erge
+  - given-names: "Oney"
+    family-names: "Erge"
+    alias: "oney-erge"
+    # Add an ORCID here once available: orcid: "https://orcid.org/..."
 url: "https://github.com/oney-erge/Afterimage"
 repository-code: "https://github.com/oney-erge/Afterimage"
 license: Apache-2.0
+# Add a Zenodo DOI here once a tagged release is archived:
+# doi: "10.5281/zenodo.XXXXXXX"

@@ -52,8 +52,16 @@ class Method:
     estimated_s_per_token: float
 
 
+def _installed_airllm_title() -> str:
+    try:
+        from importlib.metadata import version
+        return "AirLLM %s" % version("airllm")
+    except Exception:
+        return "AirLLM (version unknown -- not importable)"
+
+
 METHODS = {
-    "airllm": Method("airllm", "AirLLM 3.1.0", "airllm", {},
+    "airllm": Method("airllm", _installed_airllm_title(), "airllm", {},
                      "reference_greedy", 30.0),
     "exact-min": Method(
         "exact-min", "Afterimage exact streaming, minimum-memory control", "afterimage",
@@ -733,6 +741,12 @@ def main() -> int:
         "--ram-overlay-host-budget-gb", type=float, default=None,
         help="override the pinned-host budget and allocation gate for ram-overlay-head")
     parser.add_argument("--out", required=True)
+    parser.add_argument(
+        "--allow-dirty-tree", action="store_true",
+        help="proceed even with uncommitted changes (git status --short is "
+             "non-empty); the resulting result JSON is still recorded but is "
+             "not reproducible from its git_commit alone -- do not treat it "
+             "as evidence for a publishable claim")
     args = parser.parse_args()
 
     MODEL, DRAFT_MODEL, STORE = args.model, args.draft_model, args.store
@@ -772,6 +786,15 @@ def main() -> int:
         raise RuntimeError("CUDA is required for the hardware comparison")
 
     repo_root = pathlib.Path(__file__).resolve().parent.parent
+    dirty = command_output(["git", "-C", str(repo_root), "status", "--short"])
+    if dirty and not args.allow_dirty_tree:
+        raise RuntimeError(
+            "refusing to run with uncommitted changes (git status --short "
+            "is non-empty): a result's git_commit only reproduces the code "
+            "that produced it if the tree was clean. Commit or stash first, "
+            "or pass --allow-dirty-tree for a deliberately non-reproducible "
+            "local/debugging run.\n" + dirty)
+
     tokenizer = load_tokenizer(MODEL)
     evaluation_cases = prompt_cases("evaluation")
     if args.case_ids:
@@ -821,6 +844,7 @@ def main() -> int:
         "ram_overlay_host_budget_gb": (
             METHODS["ram-overlay-head"].overrides["ram_budget_gb"]),
         "environment": environment_manifest(repo_root, tokenizer),
+        "reproducible_from_commit": not bool(dirty),
         "calibration_artifacts": {},
         "methods": [],
         "failures": [],

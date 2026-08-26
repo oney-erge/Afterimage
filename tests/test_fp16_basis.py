@@ -1,7 +1,6 @@
 import torch
 
 from afterimage.probe.closed_loop import calibrate_bases, closed_loop_error, open_loop_error
-from afterimage.probe.hooks import ActivationCapture
 
 
 

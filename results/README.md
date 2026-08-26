@@ -15,6 +15,16 @@ in `_experiment_results/`. A publishable result copied here should retain:
 - cache regime and cold-cache procedure;
 - failures and excluded trials, without overwriting the original JSON.
 
+`run_bounded_suite.py` and `run_regulated_pair.py` refuse to start a run
+against an uncommitted working tree (`git status --short` non-empty) unless
+`--allow-dirty-tree` is explicitly passed, and every result they write
+records `"reproducible_from_commit": false` when that flag was used. A
+result's `environment.git_commit` only reproduces the code that produced it
+when `reproducible_from_commit` is `true` (or absent, for older results
+predating this field -- check `environment.git_status` directly instead).
+Do not cite a `reproducible_from_commit: false` result as evidence for a
+publishable claim; it is for local iteration only.
+
 Recommended filename:
 
 ```text

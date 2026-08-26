@@ -462,8 +462,6 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    common = dict()
-
     p0 = sub.add_parser("t0")
     p0.add_argument("--prompt", default=PROMPT)
     p0.add_argument("--n-tokens", type=int, default=3)

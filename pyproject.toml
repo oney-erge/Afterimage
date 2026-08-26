@@ -1,5 +1,10 @@
 [project]
-name = "afterimage"
+# The distribution name is "afterimage-llm", not "afterimage": PyPI's
+# "afterimage" is an unrelated synthetic-data package
+# (https://pypi.org/project/afterimage/). `pip install afterimage-llm`
+# still installs the `afterimage` import package and the `afterimage` CLI
+# command below -- only the name typed at `pip install` changes.
+name = "afterimage-llm"
 version = "0.2.0"
 description = "Lossless weight-compressed streaming inference for models larger than your GPU"
 license = {file = "LICENSE"}

@@ -1,14 +1,11 @@
 import numpy as np
-import pytest
 import torch
 
 from afterimage.runtime.huffman import (
     build_lengths,
-    canonical_codes,
     decode_lut_cpu,
     decode_reference,
     encode_exponents,
-    pack_bits,
 )
 
 

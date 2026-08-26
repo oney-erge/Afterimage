@@ -77,7 +77,7 @@ def main() -> int:
     # steady-state throughput.
     print("compiling...", flush=True)
     t0 = time.perf_counter()
-    warm = decode_chunks_numba(enc, 0, min(64, enc.n_chunks))
+    decode_chunks_numba(enc, 0, min(64, enc.n_chunks))
     compile_s = time.perf_counter() - t0
     print("compile + first-call time: %.2fs" % compile_s, flush=True)
 

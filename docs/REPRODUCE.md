@@ -1,0 +1,87 @@
+# Reproducing the published results
+
+One entry point per reported number. This page indexes commands and result
+files; it does not restate protocol detail already documented elsewhere --
+see [RESEARCH_METHODS.md](RESEARCH_METHODS.md) for the L0-L3 evidence levels
+and per-hypothesis protocols, and
+[ALL_HYPOTHESES_AND_BASELINES.md](ALL_HYPOTHESES_AND_BASELINES.md) for what
+every number means.
+
+## What needs no hardware
+
+```bash
+pip install -e ".[dev,server]"
+python -m compileall -q afterimage
+python -m pytest -q
+```
+
+`286` of the tests that can pass without CUDA pass on any machine; the rest
+are skipped, not failed, and are named individually in the output (`-rs`
+shows the reason). This proves the codec, config validation, planners,
+protocols, and API logic are correct. It does not exercise the GPU decode
+kernels, the streaming engine's live generation path, or any wall-clock
+number in the paper -- those need the hardware runs below.
+
+```bash
+python -m pytest -q -rs   # -rs prints why each test was skipped
+python -m ruff check afterimage
+python scripts/check_prose.py
+```
+
+## What needs an NVIDIA GPU
+
+Every command below refuses to run against an uncommitted working tree
+(`git status --short` non-empty) unless `--allow-dirty-tree` is passed; the
+result JSON records `reproducible_from_commit` accordingly. Do not cite a
+`--allow-dirty-tree` result as evidence for a publishable claim -- see
+[results/README.md](../results/README.md).
+
+| Reported number | Model | Command | Result file |
+|---|---|---|---|
+| Headline table (README "Results") | Qwen3-14B | `python scripts/run_bounded_suite.py --time-budget-minutes 58 --max-new-tokens 4 --out results/YYYY-MM-DD_bounded_qwen3-14b_HARDWARE.json` | `results/2026-08-21_bounded_qwen3-14b_rtx3080_run1.json` |
+| Cross-family Pareto table | Phi-4 Mini, Qwen3-14B, Mistral Small 24B | `python scripts/run_cross_model_campaign.py --config configs/cross_model_benchmark_v1.json --out-dir results/cross_model_YYYY-MM-DD --workers 1` (add `--resume` to continue an interrupted run) | `results/cross_model_2026-08-22_full_v2/`, interpreted in [CROSS_MODEL_BENCHMARK_2026-08-22.md](CROSS_MODEL_BENCHMARK_2026-08-22.md) |
+| AirLLM baseline row | Qwen3-14B | `pip install -e ".[bench]"` then the AirLLM path inside `run_bounded_suite.py` / `run_cross_model_campaign.py` | see `packages.airllm` in each result's `environment` block |
+| HF Accelerate baseline row | Qwen3-14B | `python scripts/run_hf_offload_baseline.py --gpu-memory 4000MB --cpu-memory 8GB --max-new-tokens 4 --out results/HF_ACCELERATE.json` | `results/2026-08-22_hf_accelerate_gpu_disk_qwen3-14b_rtx3080_full_l1.json` |
+| H0/H3/H6/H7/H8 offline/artifact rows | -- (no live generation) | `python scripts/run_offline_hypotheses.py --manifest STORE/manifest.json --moe-shard PATH --out results/OFFLINE.json` | `results/2026-08-22_offline_h0_h3_h6_h7_h8.json` |
+| H9 pinned-RAM overlay (the strongest lead) | Qwen3-0.6B (14B needs a host that can pin ≥1.6 GB; see below) | see the `systemd-run ... LimitMEMLOCK=infinity` command in [ALL_HYPOTHESES_AND_BASELINES.md](ALL_HYPOTHESES_AND_BASELINES.md#reproduce-the-new-runs) | `results/2026-08-22_h9_pinned_overlay_qwen3-0.6b_rtx3080_l1.json` |
+| Any other H1-H18 regulated pair | -- | `python scripts/run_regulated_pair.py --hypothesis H<N> --blocks 2 --max-new-tokens 8 --time-budget-minutes 40 --out results/H<N>_L2.json` | filenames listed under "Raw evidence" in [ALL_HYPOTHESES_AND_BASELINES.md](ALL_HYPOTHESES_AND_BASELINES.md) |
+
+## Exact software versions used for the published numbers
+
+Every result JSON's `environment` block is authoritative and per-run (Python,
+Torch, CUDA, driver, GPU, host memory, and `packages.{airllm,transformers,
+accelerate,safetensors,numpy}`). There is no single pinned "the" version
+across all results -- `uv.lock` pins the *application's* dependencies, not
+the exact package snapshot behind any one historical benchmark row. When
+comparing against a competitor, check the specific result file's
+`environment.packages` field rather than assuming the current `uv.lock`.
+
+## Power analysis for a confirmatory (L3) run
+
+```bash
+python scripts/power_analysis.py
+```
+
+Reads every `results/*.json` produced by `run_regulated_pair.py` (anything
+with paired `trials`), estimates the run-to-run variance of the paired
+log-ratio from what already ran, and reports the paired sample count an L3
+confirmation at that hypothesis's registered gate would need at 80%/90%
+power, plus the power the completed screen actually had at its own n. Rows
+built from fewer than 4 pairs are flagged: with 1-2 degrees of freedom the
+variance estimate is not trustworthy. This is retrospective, not a
+substitute for preregistering n before a specific confirmatory run.
+
+## Environment facts a stranger's rerun will not match by default
+
+- **Cache regime.** Every real result requires cold page cache before each
+  timed cell (`cache_regime` in the result JSON). `drop_caches` writes
+  `/proc/sys/vm/drop_caches`, which drops the Linux VM's page cache but not a
+  WSL2 host's Windows-side cache or the NVMe device's own cache -- expect a
+  residual warm-cache effect on WSL2 that native Linux does not have.
+- **Pinned memory ceiling.** WSL2 commonly caps `RLIMIT_MEMLOCK` well below
+  what H9 needs at 14B scale; see
+  [NVIDIA's CUDA-on-WSL guide](https://docs.nvidia.com/cuda/wsl-user-guide/index.html).
+  Native Linux or `systemd-run -p LimitMEMLOCK=infinity` removes the cap.
+- **Clean tree.** See the table above -- a result written with
+  `--allow-dirty-tree` is not reproducible from its `git_commit` alone; the
+  environment block's `git_status` shows what was uncommitted.

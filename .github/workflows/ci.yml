@@ -41,7 +41,9 @@ jobs:
       - run: python -m pip install -e ".[dev]"
       # Narrow ruleset (pyflakes + syntax errors) -- see pyproject.toml's
       # [tool.ruff.lint] comment for why this isn't a full style pass yet.
-      - run: python -m ruff check afterimage
+      # scripts/ is included because it's what a reviewer or artifact
+      # evaluator actually runs to reproduce a result.
+      - run: python -m ruff check afterimage scripts tests
       # Keeps the docs a new user reads first from drifting back into
       # em-dash-heavy, AI-sounding prose. See scripts/check_prose.py.
       - run: python scripts/check_prose.py

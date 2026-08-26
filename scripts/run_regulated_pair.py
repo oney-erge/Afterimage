@@ -220,6 +220,12 @@ def main() -> int:
         "--case-ids", default=None,
         help="comma-separated evaluation cases; default is all four families")
     parser.add_argument("--out", required=True)
+    parser.add_argument(
+        "--allow-dirty-tree", action="store_true",
+        help="proceed even with uncommitted changes (git status --short is "
+             "non-empty); the resulting result JSON is still recorded but is "
+             "not reproducible from its git_commit alone -- do not treat it "
+             "as evidence for a publishable claim")
     args = parser.parse_args()
     if args.blocks < 1 or args.max_new_tokens < 1:
         parser.error("blocks and max-new-tokens must be positive")
@@ -240,6 +246,15 @@ def main() -> int:
     import torch
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA is required")
+    repo_root = pathlib.Path(__file__).resolve().parent.parent
+    dirty = bounded.command_output(["git", "-C", str(repo_root), "status", "--short"])
+    if dirty and not args.allow_dirty_tree:
+        raise RuntimeError(
+            "refusing to run with uncommitted changes (git status --short "
+            "is non-empty): a result's git_commit only reproduces the code "
+            "that produced it if the tree was clean. Commit or stash first, "
+            "or pass --allow-dirty-tree for a deliberately non-reproducible "
+            "local/debugging run.\n" + dirty)
     tokenizer = bounded.load_tokenizer(bounded.MODEL)
     evaluation_cases = prompt_cases("evaluation")
     if args.case_ids:
@@ -288,8 +303,8 @@ def main() -> int:
         "model": bounded.MODEL,
         "draft_model": bounded.DRAFT_MODEL,
         "store": bounded.STORE,
-        "environment": bounded.environment_manifest(
-            pathlib.Path(__file__).resolve().parent.parent, tokenizer),
+        "environment": bounded.environment_manifest(repo_root, tokenizer),
+        "reproducible_from_commit": not bool(dirty),
         "trials": [], "airllm_anchor": None, "failures": [],
     }
     _checkpoint(partial, result)

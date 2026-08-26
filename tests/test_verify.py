@@ -46,7 +46,6 @@ def test_matches_target_distribution_when_draft_disagrees_with_target():
 
 
 def test_full_acceptance_appends_bonus_token():
-    vocab = 4
     target = torch.tensor([[0.7, 0.1, 0.1, 0.1]])
     draft = torch.tensor([[0.7, 0.1, 0.1, 0.1]])
     draft_tokens = [0]
@@ -58,7 +57,6 @@ def test_full_acceptance_appends_bonus_token():
 
 
 def test_certain_rejection_resamples_from_residual():
-    vocab = 4
     # draft is CERTAIN of token 0, target puts zero mass on token 0 -- must
     # always reject and resample from target's remaining mass.
     draft = torch.tensor([[1.0, 0.0, 0.0, 0.0]])

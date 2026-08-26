@@ -122,7 +122,14 @@ PROFILES = {
         {"execution_policy": "model_based_rl"}),
     "ram-overlay-head-v1": MethodProfile(
         "ram-overlay-head-v1", "Liveness-guided RAM overlay for lm_head",
-        {"lm_head_policy": "ram_overlay"}),
+        # require_pinned_ram=True matches scripts/run_bounded_suite.py's
+        # METHODS["ram-overlay-head"], which is what actually produced the
+        # published H9 result: without it, a pin_memory failure silently
+        # degrades to pageable RAM (streaming_engine.py's documented
+        # fallback) instead of failing closed, which would let a live H9
+        # run through this profile violate H9's own kill criterion
+        # ("Kill on ... a pinned-memory failure") without anyone noticing.
+        {"lm_head_policy": "ram_overlay", "require_pinned_ram": True}),
     "replay-cem-v1": MethodProfile(
         "replay-cem-v1", "Digital-twin CEM residency plan",
         {"placement_policy": "replay_cem"}),
@@ -185,8 +192,9 @@ HYPOTHESES = {
             "No -- it's the strongest exact non-speculative candidate measured "
             "so far, but the gain is too small to promise you over the "
             "simpler traffic-density default.",
-            "18.99 s/token, 1.58x AirLLM at 4 GB -- the best exact "
-            "non-speculative row seen, but not confirmed at L3 yet.",
+            "17.084 s/token, ~1.52x the corrected AirLLM run at ~3.934 GB -- "
+            "the best exact non-speculative row seen, but not confirmed at "
+            "L3 yet.",
             effect_pct=1.61)),
     "h2-hazard-cost": Hypothesis(
         "h2-hazard-cost", "Cost-aware rejection hazard",
@@ -227,9 +235,11 @@ HYPOTHESES = {
             "contradicted",
             "No -- feedback-controlled prefetch made things worse, one "
             "variant much worse. Leave prefetch depth fixed.",
-            "PI control was 35.7% slower; MPC regressed further by "
-            "sometimes choosing a prefetch depth of zero.",
-            effect_pct=-35.7)),
+            "PI control was 5.7% slower (21.253 vs 20.040 s/token) and MPC "
+            "was 42.8% slower (35.031 s/token) on the current CUDA screen. "
+            "An earlier screen measured PI at -35.7%; the magnitude changed "
+            "between runs, the negative conclusion did not.",
+            effect_pct=-5.7)),
     "h5-certified-mips": Hypothesis(
         "h5-certified-mips", "Certified greedy LM-head search",
         "Roundoff-aware MIPS bounds avoid most output rows with no token changes.",
@@ -539,17 +549,30 @@ def environment_manifest(repo_root=None) -> dict:
     }
 
 
-def _bootstrap_paired(candidate: list[float], control: list[float], seed: int = 0,
-                      n_bootstrap: int = 2000) -> tuple[float, float]:
+def _paired_log_ratio_effect(candidate: list[float], control: list[float], *,
+                             seed: int = 0, n_bootstrap: int = 2000
+                             ) -> tuple[float, float, float]:
+    """Paired median-log-ratio effect with a bootstrap CI on the *same*
+    statistic, for a higher-is-better metric (candidate/control > 1 is a win).
+
+    Returns (effect, ci_low, ci_high). This mirrors
+    protocols.assess_paired_effect's estimator so the point effect and its
+    interval are never computed from two different statistics -- a ratio of
+    medians was previously reported next to a bootstrapped geometric mean of
+    per-pair ratios, which can disagree at small n and can place the point
+    estimate outside its own interval.
+    """
     if len(candidate) != len(control) or not candidate:
         raise ValueError("paired bootstrap needs equal non-empty samples")
-    ratios = np.asarray(candidate, dtype=np.float64) / np.maximum(control, 1e-12)
+    cand = np.asarray(candidate, dtype=np.float64)
+    ctrl = np.asarray(control, dtype=np.float64)
+    log_ratio = np.log(cand) - np.log(np.maximum(ctrl, 1e-12))
+    effect = float(np.exp(np.median(log_ratio)) - 1.0)
     rng = np.random.default_rng(seed)
-    samples = []
-    for _ in range(n_bootstrap):
-        draw = rng.choice(ratios, size=len(ratios), replace=True)
-        samples.append(float(np.exp(np.log(draw).mean()) - 1.0))
-    return float(np.quantile(samples, 0.025)), float(np.quantile(samples, 0.975))
+    indices = rng.integers(0, len(log_ratio), size=(n_bootstrap, len(log_ratio)))
+    boot_medians = np.median(log_ratio[indices], axis=1)
+    lo, hi = np.quantile(np.exp(boot_medians) - 1.0, [0.025, 0.975])
+    return effect, float(lo), float(hi)
 
 
 def run_paired(hypothesis_id: str, executor: Callable[[MethodProfile, int], dict], *,
@@ -589,8 +612,7 @@ def run_paired(hypothesis_id: str, executor: Callable[[MethodProfile, int], dict
             right = control_by_repeat[repeat].get("output_token_ids")
             if left is not None and right is not None and left != right:
                 exact = False
-    effect = statistics.median(cand) / max(statistics.median(ctrl), 1e-12) - 1.0
-    lo, hi = _bootstrap_paired(cand, ctrl, seed=seed)
+    effect, lo, hi = _paired_log_ratio_effect(cand, ctrl, seed=seed)
     run.summary = {"metric": metric, "candidate_median": statistics.median(cand),
                    "control_median": statistics.median(ctrl), "effect": effect,
                    "ci95": [lo, hi], "exact": exact}

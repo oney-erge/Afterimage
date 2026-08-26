@@ -35,8 +35,33 @@ No tagged releases yet. Everything below is `main`.
   QUBO residency) research candidates.
 - `docs/CONFIGURATION.md`, `docs/USAGE.md`, `docs/TROUBLESHOOTING.md`,
   `docs/HYPOTHESIS_LINEAGE.md`.
+- `docs/REPRODUCE.md`: one command per published number, plus the
+  environment facts (cache regime, pinned-memory ceiling, clean tree) a
+  stranger's rerun needs to match.
+- `scripts/power_analysis.py`: estimates the paired sample count an L3
+  confirmatory run needs from the run-to-run variance already observed in
+  existing L1/L2 regulated-pair results, and the retrospective power a
+  completed screen actually had at its own n.
+- `scripts/run_bounded_suite.py` and `scripts/run_regulated_pair.py` refuse
+  to start a run against an uncommitted working tree (`git status --short`
+  non-empty) unless `--allow-dirty-tree` is passed; every result they write
+  now records `reproducible_from_commit`, since a result's `git_commit`
+  only reproduces the code that produced it when the tree was clean. See
+  `results/README.md`.
+
+### Changed
+- PyPI distribution renamed from `afterimage` to `afterimage-llm`: the
+  `afterimage` name on PyPI belongs to an unrelated synthetic-data package.
+  `pip install afterimage-llm` still installs the `afterimage` import
+  package and the `afterimage` CLI command; nothing importing or invoking
+  this project needs to change.
 
 ### Fixed
+- `scripts/run_bounded_suite.py`'s `airllm` method hardcoded the display
+  title `"AirLLM 3.1.0"`, printed to the console and written into every
+  result JSON's `title` field regardless of which AirLLM was actually
+  installed; upgrading the package alone would have kept mislabeling every
+  future result. Now read from the installed package at run time.
 - The default `per_blob` storage-read path was synthesizing byte-proportional
   per-tensor read timing instead of measuring it for real, which would have
   silently corrupted any critical-path profile built from it.
@@ -53,6 +78,25 @@ No tagged releases yet. Everything below is `main`.
   regulated H9 run fails closed before loading anything.
 - Version was declared twice (`pyproject.toml` and `__init__.py`) and had
   drifted out of sync; now single-sourced via package metadata.
+- `experiments.PROFILES["ram-overlay-head-v1"]` -- what the web UI's live
+  Experiment Lab actually runs for H9, via `run_paired` -- did not set
+  `require_pinned_ram`, unlike `scripts/run_bounded_suite.py`'s
+  `METHODS["ram-overlay-head"]`, which is what produced the published
+  +41.4% result. A live H9 run through the UI could therefore silently
+  degrade to pageable RAM on a pin failure (a `RuntimeWarning`, not a
+  refusal) where the validated hardware run could not. Both registries now
+  agree.
+- `experiments.run_paired`'s point effect (a ratio of medians) and its
+  bootstrap confidence interval (a geometric mean of paired ratios) were two
+  different statistics; on skewed paired samples the reported point
+  estimate could fall outside its own interval. Both are now the median of
+  paired log-ratios, matching `protocols.assess_paired_effect`.
+- H1 and H4's entries in `experiments.HYPOTHESES` had drifted from the
+  numbers in the controlling `docs/ALL_HYPOTHESES_AND_BASELINES.md` table
+  (H1: 18.99 vs the doc's 17.084 s/token; H4: -35.7% vs the doc's current
+  -5.7%/-42.8% PI/MPC screen). Corrected, and
+  `tests/test_measured_outcomes_match_docs.py` now parses the controlling
+  table and fails if the registry drifts from it again.
 
 ### Removed
 - `configs/hardware.yaml` and `configs/models.yaml`, read by no code
