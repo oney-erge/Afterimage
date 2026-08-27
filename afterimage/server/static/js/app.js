@@ -1,7 +1,7 @@
 import { state } from "./state.js";
 import { $, $$, api } from "./shared.js";
 import { initHome, loadHome, refreshHomeModels } from "./home.js";
-import { initModels, loadLibrary, searchModels } from "./models.js";
+import { initModels, loadLibrary, refreshFitBadges, searchModels } from "./models.js";
 import { initChat, updateChatModels } from "./chat.js";
 import { initResearch, loadResearch, updateResearchModels } from "./research.js";
 
@@ -62,6 +62,7 @@ async function initialize() {
   checkRuntime();
   await Promise.allSettled([loadHome({ quiet: true }), loadLibrary({ quiet: true }), loadResearch({ quiet: true }), searchModels()]);
   libraryChanged();
+  refreshFitBadges();
   setInterval(() => {
     checkRuntime();
     if (state.jobs.some((job) => ["queued", "running", "pause_requested", "paused", "cancelling"].includes(job.status))) loadLibrary({ quiet: true });

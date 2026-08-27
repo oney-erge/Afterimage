@@ -8,6 +8,7 @@ model.
 from __future__ import annotations
 
 import json
+import time
 
 import pytest
 
@@ -159,6 +160,176 @@ def test_spec_fixed_loads_its_own_fresh_draft_model(monkeypatch):
     assert captured["draft_model"] == "FAKE_DRAFT_MODEL"
 
 
+@pytest.mark.parametrize("method_id", ["spec-k2", "spec-k4", "spec-fixed", "spec-k16"])
+def test_every_fixed_k_speculative_method_loads_a_draft_model_not_just_spec_fixed(
+        monkeypatch, method_id):
+    """Regression test for a real bug: the dispatch used to check
+    `method_id == "spec-fixed"` literally, so spec-k2/spec-k4/spec-k16
+    (added for the k-ablation series) would silently run with
+    draft_model=None despite declaring draft_mode="model" -- a config that
+    generate_adaptive only fails on once actually called, not loudly at
+    dispatch time. The check must be keyed on the method's own
+    draft_mode, not its literal id string."""
+    import afterimage.runtime.streaming_engine as streaming_engine
+
+    loaded = []
+    monkeypatch.setattr(streaming_engine, "load_draft_model",
+                        lambda model_id, device: loaded.append((model_id, device))
+                        or "FAKE_DRAFT_MODEL")
+    captured = {}
+
+    def fake_run_afterimage(method, rendered, n_tokens, deadline, draft_model,
+                            burn_in_rendered, burn_in_tokens, rows_checkpoint,
+                            repeats, repeat_offset):
+        captured["draft_model"] = draft_model
+        return [], {}
+
+    monkeypatch.setattr(worker, "run_afterimage", fake_run_afterimage)
+    result = worker.run_cell(_base_config(method_id=method_id,
+                                          draft_model="Qwen/Qwen3-0.6B"))
+    assert result["error"] is None
+    assert loaded == [("Qwen/Qwen3-0.6B", "cuda")]
+    assert captured["draft_model"] == "FAKE_DRAFT_MODEL"
+
+
+def test_spec_k0_the_no_speculation_control_does_not_load_a_draft_model(monkeypatch):
+    import afterimage.runtime.streaming_engine as streaming_engine
+
+    loaded = []
+    monkeypatch.setattr(streaming_engine, "load_draft_model",
+                        lambda model_id, device: loaded.append((model_id, device)))
+    captured = {}
+
+    def fake_run_afterimage(method, rendered, n_tokens, deadline, draft_model,
+                            burn_in_rendered, burn_in_tokens, rows_checkpoint,
+                            repeats, repeat_offset):
+        captured["draft_model"] = draft_model
+        return [], {}
+
+    monkeypatch.setattr(worker, "run_afterimage", fake_run_afterimage)
+    result = worker.run_cell(_base_config(method_id="spec-k0"))
+    assert result["error"] is None
+    assert loaded == []
+    assert captured["draft_model"] is None
+
+
+class TestMethodSpecPassedThroughConfig:
+    """When the orchestrator sends method_overrides/method_kind/etc.
+    directly (always, as of the cross-process fix), the worker must build
+    its Method from those fields instead of looking method_id up in its
+    own METHODS -- the whole point being that a method registered only at
+    runtime in the orchestrator's process (budget_method_variants()'s
+    exact-<N>gb/accelerate-<N>gb entries) does not exist in this fresh
+    subprocess's copy of METHODS at all.
+    """
+
+    def test_builds_a_method_for_an_id_absent_from_this_processs_methods(
+            self, monkeypatch):
+        assert "exact-2gb" not in METHODS  # the exact gap this closes
+        captured = {}
+
+        def fake_run_afterimage(method, rendered, n_tokens, deadline, draft_model,
+                                burn_in_rendered, burn_in_tokens, rows_checkpoint,
+                                repeats, repeat_offset):
+            captured["method"] = method
+            return [], {}
+
+        monkeypatch.setattr(worker, "run_afterimage", fake_run_afterimage)
+        result = worker.run_cell(_base_config(
+            method_id="exact-2gb", method_title="Afterimage exact streaming at 2 GB",
+            method_kind="afterimage", method_exactness="reference_execution_equivalent",
+            method_overrides={"vram_budget_gb": 2.0, "decode_slice_elems": 1 << 22}))
+        assert result["error"] is None
+        assert captured["method"].id == "exact-2gb"
+        assert captured["method"].overrides["vram_budget_gb"] == 2.0
+
+    def test_dfloat11_model_override_still_applies_via_the_config_path(self, monkeypatch):
+        captured = {}
+
+        def fake_run_dfloat11(method, rendered, n_tokens, deadline, checkpoint_cb,
+                              repeats, repeat_offset, warmup_tokens):
+            captured["model_id"] = method.overrides["model_id"]
+            return [], {}
+
+        monkeypatch.setattr(worker, "run_dfloat11", fake_run_dfloat11)
+        result = worker.run_cell(_base_config(
+            method_id="dfloat11", method_title="DFloat11", method_kind="dfloat11",
+            method_exactness="reference_greedy",
+            method_overrides={"model_id": "DFloat11/Qwen3-14B-DF11", "cpu_offload": True},
+            dfloat11_model="Some/Other-DF11-Repo"))
+        assert result["error"] is None
+        assert captured["model_id"] == "Some/Other-DF11-Repo"
+
+    def test_a_budget_variant_of_spec_fixed_still_loads_a_draft_model(self, monkeypatch):
+        """draft_mode routing (the spec-fixed / spec-k* fix) must also work
+        for a method built entirely from config, not just for statically
+        registered ones."""
+        import afterimage.runtime.streaming_engine as streaming_engine
+
+        loaded = []
+        monkeypatch.setattr(streaming_engine, "load_draft_model",
+                            lambda model_id, device: loaded.append((model_id, device))
+                            or "FAKE_DRAFT_MODEL")
+        captured = {}
+
+        def fake_run_afterimage(method, rendered, n_tokens, deadline, draft_model,
+                                burn_in_rendered, burn_in_tokens, rows_checkpoint,
+                                repeats, repeat_offset):
+            captured["draft_model"] = draft_model
+            return [], {}
+
+        monkeypatch.setattr(worker, "run_afterimage", fake_run_afterimage)
+        result = worker.run_cell(_base_config(
+            method_id="spec-k2-2gb", method_title="spec-k2 at 2 GB",
+            method_kind="afterimage", method_exactness="greedy_token_exact_at_temperature_zero",
+            method_overrides={"vram_budget_gb": 2.0, "draft_mode": "model", "spec_k": 2},
+            draft_model="Qwen/Qwen3-0.6B"))
+        assert result["error"] is None
+        assert loaded == [("Qwen/Qwen3-0.6B", "cuda")]
+        assert captured["draft_model"] == "FAKE_DRAFT_MODEL"
+
+
+def test_prompt_suite_selects_which_case_pool_case_ids_are_looked_up_in(monkeypatch):
+    """Regression test for a real bug: the worker used to hardcode
+    prompt_cases("evaluation") regardless of which suite the orchestrator
+    actually selected, so a paper_generation case_id (e.g.
+    "explain-bicycle-balance") would KeyError -- it does not exist in the
+    "evaluation" split at all. Asserts on the split argument the worker
+    actually requests, rather than depending on real prompt_suite.py
+    content, since the autouse fixture above already stubs prompt_cases
+    for every other test in this file."""
+    requested_splits = []
+
+    def fake_prompt_cases(split):
+        requested_splits.append(split)
+        return (_FakeCase("a"), _FakeCase("b"))
+
+    monkeypatch.setattr(worker, "prompt_cases", fake_prompt_cases)
+    monkeypatch.setattr(worker, "run_airllm", lambda *a, **k: ([], {}))
+    result = worker.run_cell(_base_config(
+        method_id="airllm", prompt_suite="paper_generation"))
+    assert result["error"] is None
+    assert requested_splits == ["paper_generation"]
+
+
+def test_missing_prompt_suite_key_defaults_to_evaluation(monkeypatch):
+    """Older cell configs (and this file's own _base_config()) have no
+    prompt_suite key at all; that must behave exactly as it always did,
+    not raise."""
+    captured = {}
+
+    def fake_run_airllm(method, rendered, *a, **k):
+        captured["case_ids"] = [item["case"].id for item in rendered]
+        return [], {}
+
+    monkeypatch.setattr(worker, "run_airllm", fake_run_airllm)
+    config = _base_config(method_id="airllm")
+    assert "prompt_suite" not in config
+    result = worker.run_cell(config)
+    assert result["error"] is None
+    assert captured["case_ids"]  # the default evaluation split, non-empty
+
+
 def test_case_ids_filters_to_the_requested_subset(monkeypatch):
     captured = {}
 
@@ -181,6 +352,87 @@ def test_an_exception_inside_the_method_call_is_captured_not_raised(monkeypatch)
     assert result["error"] == "RuntimeError('simulated CUDA OOM')"
     assert "simulated CUDA OOM" in result["traceback"]
     assert result["rows"] == []
+
+
+class TestThermalMonitorSummary:
+    def test_reports_min_clock_median_clock_and_max_temperature(self):
+        samples = [
+            {"sm_clock_mhz": "1890", "temperature_c": "60", "throttled": False},
+            {"sm_clock_mhz": "780", "temperature_c": "62", "throttled": True},
+            {"sm_clock_mhz": "1200", "temperature_c": "75", "throttled": False},
+        ]
+        summary = worker.thermal_monitor_summary(samples)
+        assert summary["samples_collected"] == 3
+        assert summary["sm_clock_mhz_min"] == 780.0
+        assert summary["sm_clock_mhz_median"] == 1200.0
+        assert summary["temperature_c_max"] == 75.0
+        assert summary["any_throttle_during_measurement"] is True
+
+    def test_a_throttle_that_clears_before_the_last_sample_is_still_caught(self):
+        """The exact gap continuous sampling exists to close: a single
+        end-of-cell snapshot would see only the clean final sample and
+        miss the throttle that happened in between."""
+        samples = [
+            {"sm_clock_mhz": "1890", "temperature_c": "58", "throttled": False},
+            {"sm_clock_mhz": "780", "temperature_c": "61", "throttled": True},
+            {"sm_clock_mhz": "1890", "temperature_c": "59", "throttled": False},
+        ]
+        summary = worker.thermal_monitor_summary(samples)
+        assert summary["any_throttle_during_measurement"] is True
+
+    def test_no_throttle_at_all_reports_false_not_none(self):
+        samples = [{"sm_clock_mhz": "1890", "temperature_c": "60", "throttled": False}]
+        summary = worker.thermal_monitor_summary(samples)
+        assert summary["any_throttle_during_measurement"] is False
+
+    def test_unknown_throttle_status_is_none_not_a_false_all_clear(self):
+        """No nvidia-smi / non-NVIDIA host: every sample's throttled field
+        is None. That must read as "unknown", never as a confident "no
+        throttle happened", matching is_throttled()'s own contract in
+        run_bounded_suite.py."""
+        samples = [{"sm_clock_mhz": None, "temperature_c": None, "throttled": None}]
+        summary = worker.thermal_monitor_summary(samples)
+        assert summary["any_throttle_during_measurement"] is None
+
+    def test_empty_sample_list_degrades_cleanly(self):
+        summary = worker.thermal_monitor_summary([])
+        assert summary == {
+            "samples_collected": 0, "sm_clock_mhz_min": None,
+            "sm_clock_mhz_median": None, "temperature_c_max": None,
+            "any_throttle_during_measurement": None,
+        }
+
+
+class TestThermalSampler:
+    def test_collects_multiple_samples_over_its_lifetime(self, monkeypatch):
+        calls = {"n": 0}
+
+        def fake_snapshot():
+            calls["n"] += 1
+            return {"sm_clock_mhz": "1890", "temperature_c": "60", "throttled": False}
+
+        monkeypatch.setattr(worker.bounded, "gpu_thermal_snapshot", fake_snapshot)
+        with worker.ThermalSampler(interval_s=0.01) as sampler:
+            time.sleep(0.1)
+        summary = sampler.summary()
+        assert summary["samples_collected"] >= 2
+
+    def test_a_snapshot_exception_does_not_kill_the_sampling_thread(self, monkeypatch):
+        """A monitoring thread failing must never take the timed cell down
+        with it."""
+        state = {"calls": 0}
+
+        def flaky_snapshot():
+            state["calls"] += 1
+            if state["calls"] == 1:
+                raise RuntimeError("nvidia-smi transient failure")
+            return {"sm_clock_mhz": "1890", "temperature_c": "60", "throttled": False}
+
+        monkeypatch.setattr(worker.bounded, "gpu_thermal_snapshot", flaky_snapshot)
+        with worker.ThermalSampler(interval_s=0.01) as sampler:
+            time.sleep(0.1)
+        summary = sampler.summary()
+        assert summary["samples_collected"] >= 1  # survived the first exception
 
 
 def test_peak_rss_bytes_is_an_int_or_none_never_raises():

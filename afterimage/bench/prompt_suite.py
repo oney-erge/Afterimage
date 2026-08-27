@@ -30,6 +30,70 @@ def _normalise(value: str) -> str:
 
 PROMPT_SUITE_VERSION = "bounded-chat-v2"
 
+# split="paper_generation" is what the paper plan calls "paper-generation-v1":
+# four realistic ~120-180-word-eliciting prompts (explanation, summarization,
+# code generation, analytical/structured response), used for the 100-128
+# token decode-TPS/speculation workload -- not the short factual-answer
+# "paper-short-v1" cases above (split="evaluation"), which are for the
+# TTFT/short-cold-start workload. Forcing the short factual prompts on to
+# 128 tokens produces a strange speculative-decoding workload: the model
+# gives its one-token answer almost immediately, then has nothing
+# substantive left to generate for the remaining ~120 tokens. These four
+# instead have a real ~120-180-word answer to give, so decode-length
+# measurements reflect steady-state generation, not padding after an
+# already-finished answer.
+#
+# expected_any is deliberately empty for every case in this split: there is
+# no single short string that correctly scores a free-form ~150-word
+# answer, and that is not what this suite is for -- it measures throughput
+# at a realistic generation length, not answer correctness. Read
+# expected_match/expected_match_rate as not applicable for this split, not
+# as "the model got it wrong".
+PAPER_GENERATION_CASES = (
+    PromptCase(
+        "explain-bicycle-balance", "explanation", "paper_generation",
+        "In about 150 words, explain how a moving bicycle stays upright "
+        "without a rider actively balancing it. Cover both the steering "
+        "geometry (trail) and gyroscopic effects, and note which one modern "
+        "research considers more important.",
+        (),
+    ),
+    PromptCase(
+        "summarize-coral-bleaching", "summarization", "paper_generation",
+        "Coral bleaching happens when unusually warm water causes corals to "
+        "expel the symbiotic algae, called zooxanthellae, living in their "
+        "tissues. These algae provide corals with most of their energy "
+        "through photosynthesis and give them their vivid color, so a coral "
+        "that loses them turns white and starves unless the algae return "
+        "within a few weeks. Mass bleaching events have become more frequent "
+        "as ocean temperatures have risen, with the Great Barrier Reef "
+        "experiencing severe bleaching in 2016, 2017, 2020, and 2022. "
+        "Bleached coral is not dead, but it is significantly more vulnerable "
+        "to disease and has reduced reproductive capacity, and repeated "
+        "bleaching events give reefs less time to recover between episodes. "
+        "In about 150 words, summarize what coral bleaching is, what causes "
+        "it, and why repeated events are especially damaging.",
+        (),
+    ),
+    PromptCase(
+        "code-binary-search", "code", "paper_generation",
+        "Write a complete Python function `binary_search(items, target)` "
+        "that performs binary search on a sorted list and returns the index "
+        "of `target`, or -1 if it is not present. Include a short docstring "
+        "and handle an empty list correctly.",
+        (),
+    ),
+    PromptCase(
+        "analyze-hashmap-vs-btree", "analytical", "paper_generation",
+        "In a short structured comparison, analyze the trade-offs between a "
+        "hash table and a balanced binary search tree as the backing "
+        "structure for an in-memory key-value store. Cover average-case "
+        "lookup time, memory overhead, and whether ordered iteration over "
+        "keys is supported.",
+        (),
+    ),
+)
+
 # Evaluation and calibration are deliberately disjoint.  The calibration
 # prompts are used only to build a critical-path profile and a frozen
 # rejection-hazard state; reporting uses the four evaluation cases.
@@ -111,10 +175,13 @@ PROMPT_CASES = (
 
 
 def prompt_cases(split: str = "evaluation") -> tuple[PromptCase, ...]:
-    if split not in {"evaluation", "calibration", "all"}:
-        raise ValueError("split must be evaluation, calibration, or all")
+    if split not in {"evaluation", "calibration", "all", "paper_generation"}:
+        raise ValueError(
+            "split must be evaluation, calibration, paper_generation, or all")
+    if split == "paper_generation":
+        return PAPER_GENERATION_CASES
     if split == "all":
-        return PROMPT_CASES
+        return PROMPT_CASES + PAPER_GENERATION_CASES
     return tuple(case for case in PROMPT_CASES if case.split == split)
 
 

@@ -31,6 +31,7 @@ export function renderJobs(container, jobs, { onChanged = () => {}, onRetry = nu
     if (["paused", "pause_requested"].includes(job.status)) controls.push(`<button class="button secondary" data-job-action="resume" data-job="${encoded}">Resume</button>`);
     if (isActiveJob(job)) controls.push(`<button class="button danger" data-job-action="cancel" data-job="${encoded}">Cancel</button>`);
     if (job.status === "interrupted" && job.kind === "acquire" && onRetry) controls.push(`<button class="button secondary" data-job-action="retry" data-model="${encodeURIComponent(job.model_id || "")}">Retry</button>`);
+    if (!isActiveJob(job)) controls.push(`<button class="text-button" data-job-action="delete" data-job="${encoded}">Delete</button>`);
     return `<article class="job-row">
       <div class="job-title"><strong>${esc(job.model_id || job.kind)}</strong><small>${esc(job.kind)}</small></div>
       <div class="job-progress"><div class="progress-copy"><span>${esc(progress.message)}</span><span>${esc(progress.amount)}</span></div><div class="progress-track"><span style="width:${Math.round(progress.value * 100)}%"></span></div>${job.error ? `<small class="progress-copy">${esc(job.error)}</small>` : ""}</div>
@@ -47,7 +48,9 @@ export function renderJobs(container, jobs, { onChanged = () => {}, onRetry = nu
       }
       button.disabled = true;
       try {
-        await api(`/api/jobs/${decodeURIComponent(button.dataset.job)}/${action}`, { method: "POST" });
+        const jobId = decodeURIComponent(button.dataset.job);
+        if (action === "delete") await api(`/api/jobs/${jobId}`, { method: "DELETE" });
+        else await api(`/api/jobs/${jobId}/${action}`, { method: "POST" });
         await onChanged();
       } catch (error) {
         toast(error.message, "error");

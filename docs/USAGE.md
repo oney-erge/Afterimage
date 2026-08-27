@@ -88,7 +88,7 @@ you have for your own disk.
 for you, printing what it chose and why. To pick explicitly:
 
 ```bash
-afterimage run Qwen/Qwen3-14B "..." --profile fast     # 3.15x, needs a draft model + ~4 GB VRAM
+afterimage run Qwen/Qwen3-14B "..." --profile fast     # 2.93x AirLLM 3.2.0, needs a draft model + ~4 GB VRAM
 afterimage run Qwen/Qwen3-14B "..." --profile balanced  # 1.66x, ~4 GB VRAM, no speculation
 afterimage run Qwen/Qwen3-14B "..." --profile min-memory  # lowest VRAM, slowest, fully exact
 ```

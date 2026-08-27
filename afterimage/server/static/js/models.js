@@ -1,6 +1,11 @@
 import { state, updateState } from "./state.js";
-import { $, $$, api, badge, compactNumber, esc, fmtBytes, hfUrl, statusLabel, toast, watchJob } from "./shared.js";
+import {
+  $, $$, afterimageFit, api, badge, compactNumber, confidenceBadge, esc, fitBadge,
+  fmtBytes, hfUrl, statusLabel, toast, watchJob,
+} from "./shared.js";
 import { isActiveJob, renderJobs } from "./jobs.js";
+
+function vramTotalGb() { return state.hardware?.vram_total_gb; }
 
 const watchedJobs = new Set();
 let libraryChanged = () => {};
@@ -34,8 +39,9 @@ function renderLibrary() {
     else if (!job) actions.push(`<button class="button primary" data-get-model="${encodedModel(model.model_id)}">${model.state === "downloaded" ? "Prepare" : "Continue"}</button>`);
     actions.push(`<button class="button secondary" data-model-detail="${encodedModel(model.model_id)}">Details</button>`);
     if (!job) actions.push(`<button class="text-button" data-remove-model="${encodedModel(model.model_id)}">Remove</button>`);
+    const fit = model.comp_gb ? fitBadge(afterimageFit(model.comp_gb, vramTotalGb())) : "";
     return `<article class="model-row compact-model-row">
-      <div class="model-primary"><strong class="model-name" title="${esc(model.model_id)}">${esc(model.model_id)}</strong><div class="badge-row">${badge(stateValue)}${compatibility.modality === "vision-text" ? badge("vision", "Vision") : ""}${compatibility.mixture_of_experts ? badge("moe", "MoE") : ""}</div></div>
+      <div class="model-primary"><strong class="model-name" title="${esc(model.model_id)}">${esc(model.model_id)}</strong><div class="badge-row">${badge(stateValue)}${fit}${compatibility.modality === "vision-text" ? badge("vision", "Vision") : ""}${compatibility.mixture_of_experts ? badge("moe", "MoE") : ""}</div></div>
       <div class="model-description">${esc(model.error || size)}</div><div class="row-actions">${actions.join("")}</div>
     </article>`;
   }).join("");
@@ -114,7 +120,15 @@ function renderCatalog() {
     if (local?.state === "ready") action = `<button class="button primary" data-chat-model="${encodedModel(model.model_id)}">Chat</button>`;
     else if (running) action = badge(running.status);
     const details = [model.params_b ? `${model.params_b}B parameters` : null, model.estimated_source_gb ? `about ${model.estimated_source_gb} GB source` : null, model.downloads != null ? `${compactNumber(model.downloads)} downloads` : null].filter(Boolean).join(" · ");
-    return `<article class="catalog-card"><div class="catalog-card-head"><a class="model-name" href="${hfUrl(model.model_id)}" target="_blank" rel="noreferrer">${esc(model.model_id)} ↗</a><div class="badge-row">${badge(model.execution)}${model.modality === "vision-text" ? badge("vision", "Vision") : badge("text", "Text")}${model.mixture_of_experts ? badge("moe", "MoE") : ""}</div></div><div class="catalog-card-body"><strong>${esc(details || "Metadata unavailable")}</strong><p>${esc(model.execution_reason || "Afterimage will inspect the local snapshot before preparing it.")}</p></div><div class="catalog-card-actions">${action}<button class="button secondary" data-catalog-detail="${encodedModel(model.model_id)}">Details</button></div></article>`;
+    // Fit (does this run well here) and support confidence (has this
+    // architecture been validated) are deliberately separate badges, not
+    // one merged status -- see shared.js's afterimageFit()/confidenceBadge()
+    // docstrings. A download-only architecture can't run at all regardless
+    // of memory fit, so it gets its own explicit label instead of a Fit
+    // badge that would otherwise imply it works.
+    const fit = model.execution === "download-only" ? "" : fitBadge(afterimageFit(model.estimated_store_gb, vramTotalGb()));
+    const support = confidenceBadge(model.execution) || (model.execution === "download-only" ? badge("unsupported", "Not runnable yet") : "");
+    return `<article class="catalog-card"><div class="catalog-card-head"><a class="model-name" href="${hfUrl(model.model_id)}" target="_blank" rel="noreferrer">${esc(model.model_id)} ↗</a><div class="badge-row">${fit}${support}${model.modality === "vision-text" ? badge("vision", "Vision") : badge("text", "Text")}${model.mixture_of_experts ? badge("moe", "MoE") : ""}</div></div><div class="catalog-card-body"><strong>${esc(details || "Metadata unavailable")}</strong><p>${esc(model.execution_reason || "Afterimage will inspect the local snapshot before preparing it.")}</p></div><div class="catalog-card-actions">${action}<button class="button secondary" data-catalog-detail="${encodedModel(model.model_id)}">Details</button></div></article>`;
   }).join("");
   node.querySelectorAll("[data-catalog-get]").forEach((button) => button.addEventListener("click", () => startGet(decodeURIComponent(button.dataset.catalogGet), button)));
   node.querySelectorAll("[data-chat-model]").forEach((button) => button.addEventListener("click", () => chatWith(decodeURIComponent(button.dataset.chatModel))));
@@ -201,6 +215,15 @@ export async function searchModels(page = 1, { focus = false } = {}) {
     $("catalog-error").textContent = error.message; $("catalog-error").hidden = false;
   }
 }
+
+// Afterimage Fit badges need state.hardware.vram_total_gb, which loads via
+// home.js's loadHome() -- run concurrently with (not before) this module's
+// own loadLibrary()/searchModels() during startup (see app.js's
+// initialize()), so the very first catalog/library render can happen
+// before hardware data exists. Re-rendering from already-fetched state
+// once every startup call has settled fixes that without an extra
+// network round trip.
+export function refreshFitBadges() { renderLibrary(); renderCatalog(); renderComputerResults(); }
 
 export function initModels({ onLibraryChanged = () => {} } = {}) {
   libraryChanged = onLibraryChanged;

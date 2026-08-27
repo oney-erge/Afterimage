@@ -143,6 +143,57 @@ def test_tied_model_still_works_with_row_gather_storage_present(tmp_path, monkey
     assert torch.equal(logits, ref_logits)
 
 
+def test_candidate_sweep_latency_reports_one_measurement_per_requested_count(
+        tmp_path, monkeypatch):
+    """H19 (Candidate-Amortization Hypothesis, afterimage/experiments.py):
+    measure_candidate_sweep_latency must actually stream real weights
+    through a real forward pass at each requested candidate count -- this
+    is a real engine primitive, not a synthetic timer, so bytes_read and
+    io_seconds/decode_seconds/compute_seconds should all be positive at
+    every count, and results must come back in request order."""
+    from afterimage.runtime.config import EngineConfig
+    from afterimage.runtime.streaming_engine import StreamingLosslessModel
+
+    cfg, ref_model = _build_tiny_model(tie=False, seed=3)
+    store_dir = _make_store(tmp_path, monkeypatch, ref_model, cfg,
+                            "fake/candidate-sweep-engine", "sweep")
+
+    torch.manual_seed(11)
+    ids = torch.randint(0, cfg.vocab_size, (1, 5), device="cuda")
+
+    sm = StreamingLosslessModel("fake/candidate-sweep-engine", store_dir,
+                                device="cuda", config=EngineConfig(io_prefetch_depth=1))
+    try:
+        counts = [1, 2, 4]
+        results = sm.measure_candidate_sweep_latency(ids, counts)
+        assert [row["candidate_positions"] for row in results] == counts
+        for row in results:
+            assert row["verification_sweep_seconds"] > 0
+            assert row["bytes_read"] > 0
+    finally:
+        sm.close()
+
+
+def test_candidate_sweep_latency_rejects_bad_counts(tmp_path, monkeypatch):
+    from afterimage.runtime.config import EngineConfig
+    from afterimage.runtime.streaming_engine import StreamingLosslessModel
+
+    cfg, ref_model = _build_tiny_model(tie=False, seed=4)
+    store_dir = _make_store(tmp_path, monkeypatch, ref_model, cfg,
+                            "fake/candidate-sweep-invalid", "sweep-invalid")
+    ids = torch.randint(0, cfg.vocab_size, (1, 5), device="cuda")
+
+    sm = StreamingLosslessModel("fake/candidate-sweep-invalid", store_dir,
+                                device="cuda", config=EngineConfig(io_prefetch_depth=1))
+    try:
+        with pytest.raises(ValueError, match="non-empty"):
+            sm.measure_candidate_sweep_latency(ids, [])
+        with pytest.raises(ValueError, match=">= 1"):
+            sm.measure_candidate_sweep_latency(ids, [4, 0, 8])
+    finally:
+        sm.close()
+
+
 def test_tied_embedding_streams_again_for_lm_head_at_low_vram(
         tmp_path, monkeypatch):
     """A disk-tier tied weight has two disjoint live ranges per forward."""

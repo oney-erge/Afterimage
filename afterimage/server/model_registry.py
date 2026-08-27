@@ -245,6 +245,18 @@ class ModelRegistry:
             ).fetchall()
         return [self._job_row(row) for row in rows]
 
+    def delete_job(self, job_id: str) -> bool:
+        """Remove one job row. Callers must have already confirmed the job
+        is not active (queued/running/paused/pause_requested/cancelling) --
+        this method itself does not check, matching delete_model's own
+        contract of "the caller handled the live state, this just clears
+        the durable record"."""
+        with contextlib.closing(self._connect()) as connection, connection:
+            cursor = connection.execute(
+                "DELETE FROM jobs WHERE id=?", (job_id,)
+            )
+        return cursor.rowcount > 0
+
     @staticmethod
     def _profile_row(row: sqlite3.Row) -> dict[str, Any]:
         value = dict(row)

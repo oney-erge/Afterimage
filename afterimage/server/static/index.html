@@ -19,7 +19,10 @@
         <button class="nav-item is-active" data-route="home"><span aria-hidden="true">⌂</span>Home</button>
         <button class="nav-item" data-route="models"><span aria-hidden="true">⬡</span>Models</button>
         <button class="nav-item" data-route="chat"><span aria-hidden="true">◌</span>Chat</button>
-        <button class="nav-item" data-route="research"><span aria-hidden="true">⌁</span>Research</button>
+      </nav>
+      <div class="nav-divider" role="separator"></div>
+      <nav class="nav-list nav-list-secondary">
+        <button class="nav-item nav-item-lab" data-route="research" title="Hypothesis testing and experimental execution strategies"><span aria-hidden="true">⌁</span>Lab</button>
       </nav>
       <div class="sidebar-foot">
         <div class="health-line"><i id="health-dot"></i><span id="health-label">Checking runtime</span></div>
@@ -34,32 +37,21 @@
 
     <main class="main-content">
       <section class="page is-active" data-page="home" aria-labelledby="home-title">
-        <div class="hero">
-          <div class="eyebrow"><span></span>Lossless BF16 inference</div>
-          <h1 id="home-title">Run models beyond your GPU memory.</h1>
-          <p>Afterimage streams exact model weights through the memory you have. Model size is not limited by VRAM alone, though larger models require more storage and generally run more slowly.</p>
-          <div class="hero-actions">
-            <button class="button primary" data-go="models">Browse models <span aria-hidden="true">→</span></button>
-            <button class="button secondary" data-go="chat">Open chat</button>
-          </div>
+        <h1 id="home-title" class="sr-only">Afterimage</h1>
+        <div class="machine-line" id="machine-line" aria-live="polite">
+          <span class="machine-status-dot" id="machine-status-dot"></span>
+          <span id="machine-line-body">Checking your machine…</span>
+          <button class="text-button machine-line-refresh" id="refresh-hardware" type="button">Refresh</button>
         </div>
 
-        <div class="section-heading"><div><span class="kicker">Your machine</span><h2>Available resources</h2></div><button class="text-button" id="refresh-hardware">Refresh</button></div>
-        <div class="hardware-grid" id="hardware-grid" aria-live="polite">
-          <article class="metric-card skeleton-card"></article><article class="metric-card skeleton-card"></article><article class="metric-card skeleton-card"></article><article class="metric-card skeleton-card"></article>
+        <div id="home-status" class="home-status" aria-live="polite">
+          <div class="home-hero-compact skeleton-card"></div>
         </div>
-        <p class="quiet-note" id="hardware-note"></p>
 
-        <div class="home-columns">
-          <section class="panel evidence-panel">
-            <div class="panel-head"><div><span class="kicker">Measured reference</span><h2>Evidence, not a ceiling</h2></div></div>
-            <div id="reference-card" class="reference-card loading-line"></div>
-          </section>
-          <section class="panel">
-            <div class="panel-head"><div><span class="kicker">Local library</span><h2>Ready to use</h2></div><button class="text-button" data-go="models">View all</button></div>
-            <div id="home-models" class="compact-list loading-line"></div>
-          </section>
-        </div>
+        <section class="panel evidence-panel" id="reference-panel">
+          <div class="panel-head"><div><span class="kicker">Measured reference</span><h2>Evidence, not a ceiling</h2></div></div>
+          <div id="reference-card" class="reference-card loading-line"></div>
+        </section>
       </section>
 
       <section class="page models-page" data-page="models" aria-labelledby="models-title">

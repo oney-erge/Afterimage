@@ -205,6 +205,34 @@ METHODS = {
         {"vram_budget_gb": 2.70, "decode_slice_elems": 1 << 22,
          "io_prefetch_depth": 2, "draft_mode": "model", "spec_k": 8,
          "spec_k_policy": "fixed"}, "greedy_token_exact_at_temperature_zero", 8.0),
+    # Fixed-k speculation ablation series, all at spec-fixed's own 2.70 GB
+    # budget so the *only* variable across this series is k (see engine.
+    # stats.spec_sweeps/spec_accepted_tokens, already recorded per row by
+    # run_afterimage, for accepted-tokens/sweep and sweeps/committed-token).
+    # spec-k0 (draft_mode="none") is the no-speculation control at that same
+    # budget -- exact-min/exact-resident are NOT that control, since they
+    # sit at different budgets (1.80/4.00 GB) and would confound the memory
+    # variable with the speculation variable.
+    "spec-k0": Method(
+        "spec-k0", "Afterimage no speculation (k-ablation control)", "afterimage",
+        {"vram_budget_gb": 2.70, "decode_slice_elems": 1 << 22,
+         "io_prefetch_depth": 2, "draft_mode": "none"},
+        "reference_execution_equivalent", 20.0),
+    "spec-k2": Method(
+        "spec-k2", "Afterimage fixed k=2 speculative decoding", "afterimage",
+        {"vram_budget_gb": 2.70, "decode_slice_elems": 1 << 22,
+         "io_prefetch_depth": 2, "draft_mode": "model", "spec_k": 2,
+         "spec_k_policy": "fixed"}, "greedy_token_exact_at_temperature_zero", 10.0),
+    "spec-k4": Method(
+        "spec-k4", "Afterimage fixed k=4 speculative decoding", "afterimage",
+        {"vram_budget_gb": 2.70, "decode_slice_elems": 1 << 22,
+         "io_prefetch_depth": 2, "draft_mode": "model", "spec_k": 4,
+         "spec_k_policy": "fixed"}, "greedy_token_exact_at_temperature_zero", 9.0),
+    "spec-k16": Method(
+        "spec-k16", "Afterimage fixed k=16 speculative decoding", "afterimage",
+        {"vram_budget_gb": 2.70, "decode_slice_elems": 1 << 22,
+         "io_prefetch_depth": 2, "draft_mode": "model", "spec_k": 16,
+         "spec_k_policy": "fixed"}, "greedy_token_exact_at_temperature_zero", 7.0),
     "spec-critical": Method(
         "spec-critical", "Afterimage critical-path residency + fixed speculation",
         "afterimage",
@@ -257,6 +285,30 @@ def drop_caches() -> tuple[bool, str | None]:
         return True, None
     except Exception as exc:  # benchmark must continue, but never hide this
         return False, repr(exc)
+
+
+def process_read_bytes() -> int:
+    """Cumulative bytes this process has asked the kernel to read, from
+    /proc/self/io's read_bytes counter (ported from scripts/
+    matched_vram_final.py, which established this measurement first).
+
+    This is process/storage read traffic as accounted by the kernel's own
+    block-layer I/O statistics for this process -- not confirmed physical
+    NVMe traffic. Under WSL2 in particular, /proc/self/io reflects the
+    virtualized 9p/vhdx storage stack the guest sees, which does not
+    necessarily correspond 1:1 with physical device reads on the Windows
+    host (page cache behavior, the vhdx's own caching, and virtio-9p
+    request coalescing can all sit between this number and an actual NVMe
+    read). Call it what it measures.
+    """
+    try:
+        with open("/proc/self/io") as f:
+            for line in f:
+                if line.startswith("read_bytes:"):
+                    return int(line.split()[1])
+    except OSError:
+        pass
+    return 0
 
 
 def reset_cuda_peak() -> None:
@@ -599,6 +651,7 @@ def run_airllm(method: Method, rendered: list[dict], n_tokens: int,
             cooldown = cool_down(COOLDOWN_SECONDS, COOLDOWN_MAX_TEMPERATURE_C)
             cache = drop_caches()
             reset_cuda_peak()
+            read0 = process_read_bytes()
             t0 = time.perf_counter()
             # An empty EOS list forces a fixed token count. Transformers 5.x
             # still needs a concrete pad ID when EOS is empty, otherwise it
@@ -616,6 +669,7 @@ def run_airllm(method: Method, rendered: list[dict], n_tokens: int,
                 do_sample=False, use_cache=True, return_dict_in_generate=True, **kwargs)
             torch.cuda.synchronize()
             wall = time.perf_counter() - t0
+            read_bytes = process_read_bytes() - read0
             sequence = output.sequences if hasattr(output, "sequences") else output
             generated = sequence[0, ids.shape[1]:].tolist()
             answer = model.tokenizer.decode(generated, skip_special_tokens=True)
@@ -623,7 +677,10 @@ def run_airllm(method: Method, rendered: list[dict], n_tokens: int,
                 item["case"], method, item["prompt"], item["input_tokens"],
                 generated, answer, wall, torch.cuda.max_memory_allocated() / 1e9,
                 cache, {"generation_mode": "greedy", "repeat": repeat_offset + repeat,
-                        "gpu_thermal": gpu_thermal_snapshot(), **cooldown}))
+                        "gpu_thermal": gpu_thermal_snapshot(),
+                        "process_read_bytes": read_bytes,
+                        "process_read_bytes_per_token": read_bytes / max(len(generated), 1),
+                        **cooldown}))
             if rows_checkpoint is not None:
                 rows_checkpoint(rows)
             log("  %-18s %.2f s/token  %r%s" %
@@ -662,7 +719,9 @@ def run_accelerate(method: Method, rendered: list[dict], n_tokens: int,
                 break
             cooldown = cool_down(COOLDOWN_SECONDS, COOLDOWN_MAX_TEMPERATURE_C)
             cache = drop_caches()
+            read0 = process_read_bytes()
             result = baseline.generate(item["prompt"], n_tokens)
+            read_bytes = process_read_bytes() - read0
             generated = result["output_token_ids"]
             rows.append(result_row(
                 item["case"], method, item["prompt"], item["input_tokens"],
@@ -673,7 +732,10 @@ def run_accelerate(method: Method, rendered: list[dict], n_tokens: int,
                  "offload_dir": baseline.offload_dir,
                  "gpu_memory_limit": method.overrides["gpu_memory"],
                  "cpu_memory_limit": method.overrides["cpu_memory"],
-                 "gpu_thermal": gpu_thermal_snapshot(), **cooldown}))
+                 "gpu_thermal": gpu_thermal_snapshot(),
+                 "process_read_bytes": read_bytes,
+                 "process_read_bytes_per_token": read_bytes / max(len(generated), 1),
+                 **cooldown}))
             if rows_checkpoint is not None:
                 rows_checkpoint(rows)
             log("  %-18s %.2f s/token  %r%s" %
@@ -751,6 +813,7 @@ def run_dfloat11(method: Method, rendered: list[dict], n_tokens: int,
             cooldown = cool_down(COOLDOWN_SECONDS, COOLDOWN_MAX_TEMPERATURE_C)
             cache = drop_caches()
             reset_cuda_peak()
+            read0 = process_read_bytes()
             t0 = time.perf_counter()
             with torch.no_grad():
                 output = model.generate(
@@ -759,6 +822,7 @@ def run_dfloat11(method: Method, rendered: list[dict], n_tokens: int,
                     return_dict_in_generate=True)
             torch.cuda.synchronize()
             wall = time.perf_counter() - t0
+            read_bytes = process_read_bytes() - read0
             sequence = output.sequences if hasattr(output, "sequences") else output
             generated = sequence[0, enc["input_ids"].shape[1]:].tolist()
             answer = tokenizer.decode(generated, skip_special_tokens=True)
@@ -768,7 +832,10 @@ def run_dfloat11(method: Method, rendered: list[dict], n_tokens: int,
                 cache, {"generation_mode": "greedy",
                         "repeat": repeat_offset + repeat,
                         "dfloat11_model": model_id, "cpu_offload": cpu_offload,
-                        "gpu_thermal": gpu_thermal_snapshot(), **cooldown}))
+                        "gpu_thermal": gpu_thermal_snapshot(),
+                        "process_read_bytes": read_bytes,
+                        "process_read_bytes_per_token": read_bytes / max(len(generated), 1),
+                        **cooldown}))
             if rows_checkpoint is not None:
                 rows_checkpoint(rows)
             log("  %-18s %.2f s/token  %r%s" %
@@ -871,6 +938,7 @@ def run_afterimage(method: Method, rendered: list[dict], n_tokens: int,
             cache = drop_caches()
             engine.stats.reset()
             reset_cuda_peak()
+            read0 = process_read_bytes()
             t0 = time.perf_counter()
             policy = None
             if cfg.draft_mode == "model":
@@ -882,6 +950,7 @@ def run_afterimage(method: Method, rendered: list[dict], n_tokens: int,
                 sequence = engine.generate_greedy(ids, max_new_tokens=n_tokens, use_cache=True)
             torch.cuda.synchronize()
             wall = time.perf_counter() - t0
+            read_bytes = process_read_bytes() - read0
             generated = sequence[0, ids.shape[1]:].tolist()
             answer = tokenizer.decode(generated, skip_special_tokens=True)
             stats = engine.stats
@@ -891,8 +960,16 @@ def run_afterimage(method: Method, rendered: list[dict], n_tokens: int,
                 "config": cfg.to_dict(),
                 "config_fingerprint": cfg.fingerprint(),
                 "exactness_contract": cfg.exactness_contract,
+                # bytes_read/gb_read_per_token: Afterimage's own logical
+                # count of compressed bytes it asked the storage layer for
+                # (engine.stats). process_read_bytes: the OS's own /proc/
+                # self/io count for the same cell -- comparable across
+                # every method, Afterimage included, unlike the logical
+                # count which only Afterimage's own engine can report.
                 "bytes_read": stats.bytes_read,
                 "gb_read_per_token": stats.bytes_read / 1e9 / max(len(generated), 1),
+                "process_read_bytes": read_bytes,
+                "process_read_bytes_per_token": read_bytes / max(len(generated), 1),
                 "io_seconds": stats.io_seconds,
                 "decode_seconds": stats.decode_seconds,
                 "compute_seconds": stats.compute_seconds,
@@ -1139,7 +1216,23 @@ def aggregate(rows: list[dict]) -> dict:
     }
     summary.update(_repeat_dispersion(rows))
     summary.update(_thermal_integrity(rows))
+    summary.update(_io_traffic(rows))
     return summary
+
+
+def _io_traffic(rows: list[dict]) -> dict:
+    """Median OS-level process/storage read traffic per token
+    (process_read_bytes_per_token, from /proc/self/io -- see
+    process_read_bytes()'s own docstring for why this is not the same
+    claim as confirmed physical NVMe bytes under WSL2). Legacy rows
+    written before this field existed simply have nothing to summarize,
+    which must read as "not measured", not as zero traffic.
+    """
+    values = [row["process_read_bytes_per_token"] for row in rows
+             if "process_read_bytes_per_token" in row]
+    if not values:
+        return {"process_read_bytes_per_token_median": None}
+    return {"process_read_bytes_per_token_median": statistics.median(values)}
 
 
 def _thermal_integrity(rows: list[dict]) -> dict:

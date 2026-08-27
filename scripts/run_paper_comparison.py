@@ -59,6 +59,7 @@ Or via the one-click wrapper: ./paper_benchmark.sh
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import math
 import pathlib
@@ -98,7 +99,69 @@ WORKER_SCRIPT = pathlib.Path(__file__).resolve().parent / "run_paper_comparison_
 # 14B model -- see the comment on METHODS["dfloat11"] in run_bounded_suite.py.
 DEFAULT_METHODS = ("airllm", "accelerate", "dfloat11", "exact-min",
                    "exact-resident", "spec-fixed")
-DEFAULT_TOKEN_LENGTHS = (4, 32, 128)
+# 1 is a genuine TTFT probe (see workload_for()); 128 is long enough to
+# exercise a full k=8 fixed-speculation chain repeatedly, which 4 never
+# could (speculative_decoding's own k_request is capped at
+# max_new_tokens - n_generated -- see streaming_engine.py). Do not report
+# the 4-token pass as TTFT: it measures short cold-start latency, a
+# different and still-useful thing, but not literal time-to-first-token.
+DEFAULT_TOKEN_LENGTHS = (1, 4, 32, 128)
+
+
+def workload_for(n_tokens: int) -> str:
+    """Labels which of the paper's three distinct workloads a token length
+    belongs to, so a result file is never ambiguous about what it measured
+    -- in particular so a 4-token cold-start pass is never mistaken for (or
+    mislabeled as) a literal TTFT measurement, which only n_tokens=1 is.
+    """
+    if n_tokens == 1:
+        return "ttft"
+    if n_tokens >= 100:
+        return "decode"
+    return "short_cold_start"
+
+
+def budget_label(budget_gb: float) -> str:
+    return ("%.2f" % budget_gb).rstrip("0").rstrip(".")
+
+
+def budget_method_variants(budget_gb: float) -> dict[str, object]:
+    """Synthesizes method variants pinned to exactly ``budget_gb`` of VRAM,
+    for every system in METHODS that exposes a single, direct memory-
+    budget config knob -- Afterimage's own vram_budget_gb, and
+    Accelerate's gpu_memory string.
+
+    This is "the config at that budget", not a search over every other
+    free parameter (decode_slice_elems, io_prefetch_depth, ...) at that
+    budget: Afterimage and Accelerate each already expose their budget as
+    one direct dial with no other tunable knob in METHODS' current
+    overrides, so "the fastest valid configuration at this budget" and
+    "the configuration at this budget" coincide today. A real per-budget
+    hyperparameter search over the other knobs is real future work, noted
+    here rather than silently assumed equivalent.
+
+    AirLLM and DFloat11 are not included: neither exposes a comparable
+    direct VRAM-budget dial in this project's integration (see run_airllm/
+    run_dfloat11 in run_bounded_suite.py) -- they contribute whatever
+    peak_vram_gb they naturally land on, exactly as the plan's own "AirLLM
+    and DFloat11 can contribute their naturally achieved memory points"
+    describes.
+    """
+    label = budget_label(budget_gb)
+    variants = {}
+    exact = METHODS["exact-min"]
+    exact_id = "exact-%sgb" % label
+    variants[exact_id] = dataclasses.replace(
+        exact, id=exact_id, title="Afterimage exact streaming at %s GB" % label,
+        overrides={**exact.overrides, "vram_budget_gb": budget_gb})
+    accelerate = METHODS["accelerate"]
+    accelerate_id = "accelerate-%sgb" % label
+    variants[accelerate_id] = dataclasses.replace(
+        accelerate, id=accelerate_id,
+        title="Hugging Face Accelerate at %s GB" % label,
+        overrides={**accelerate.overrides,
+                  "gpu_memory": "%dMB" % round(budget_gb * 1024)})
+    return variants
 
 # The Afterimage method every other method is compared against. exact-min
 # is the "reference_execution_equivalent" control -- greedy-exact, no
@@ -167,6 +230,54 @@ def pareto_frontier(points: list[dict]) -> list[dict]:
     return sorted(frontier, key=lambda p: p["peak_vram_gb"])
 
 
+def derive_ttft_decode_metrics(ttft_result: dict, decode_result: dict) -> dict:
+    """Derives a decode-only tokens/sec estimate per method from a paired
+    (1-token, N-token) measurement at the same (block, case), rather than
+    instrumenting per-token callbacks inside four different libraries that
+    do not share one streaming API (AirLLM/Accelerate/DFloat11 vs.
+    Afterimage's own generate_adaptive(on_token=...)): measure T(1) and
+    T(N) as two separate campaigns (workload_for() labels them "ttft" and
+    "decode") and derive the marginal decode rate as
+    (N - 1) / (wall_N - wall_1). This is the standard TTFT/TPOT
+    decomposition used across current inference-serving literature,
+    applied here as two matched full runs instead of one instrumented one.
+
+    ``ttft_result``/``decode_result`` are the loaded JSON result dicts
+    written by run_one_token_length() for max_new_tokens=1 and
+    max_new_tokens>=100 respectively.
+    """
+    n_decode = decode_result.get("max_new_tokens")
+    if not n_decode or n_decode <= 1:
+        return {"error": "decode_result's max_new_tokens must be > 1"}
+
+    def rows_by_key(result):
+        return {entry["method_id"]: {(row["repeat"], row["case_id"]): row["wall_seconds"]
+                                     for row in entry["rows"]}
+               for entry in result.get("methods", [])}
+
+    ttft_by_method = rows_by_key(ttft_result)
+    decode_by_method = rows_by_key(decode_result)
+    out = {}
+    for method_id, decode_by_key_map in decode_by_method.items():
+        ttft_by_key_map = ttft_by_method.get(method_id, {})
+        shared = sorted(set(decode_by_key_map) & set(ttft_by_key_map))
+        if not shared:
+            out[method_id] = {"paired_observations": 0, "ttft_seconds_median": None,
+                              "decode_tokens_per_second_median": None}
+            continue
+        ttft_values = [ttft_by_key_map[key] for key in shared]
+        decode_tps_values = [
+            (n_decode - 1) / (decode_by_key_map[key] - ttft_by_key_map[key])
+            for key in shared if decode_by_key_map[key] > ttft_by_key_map[key]]
+        out[method_id] = {
+            "paired_observations": len(shared),
+            "ttft_seconds_median": statistics.median(ttft_values),
+            "decode_tokens_per_second_median": (
+                statistics.median(decode_tps_values) if decode_tps_values else None),
+        }
+    return out
+
+
 def paired_block_log_ratios(rows_by_method: dict[str, list[dict]],
                             control_id: str, candidate_id: str) -> dict:
     """The block-level paired statistic this project's own methodology
@@ -219,6 +330,57 @@ def paired_block_log_ratios(rows_by_method: dict[str, list[dict]],
     return result
 
 
+def token_exactness(rows_by_method: dict[str, list[dict]],
+                    control_id: str, candidate_id: str) -> dict:
+    """Whether the candidate's generated token IDs exactly match the
+    control's, case by case, at every shared (block, case_id).
+
+    A raw match-count alone hides whether two runs diverged at token 1
+    (a real correctness bug) or token 100 (plausibly late sampling/kernel
+    nondeterminism); first_mismatch reports the earliest differing
+    position across every mismatching pair found, which is what actually
+    matters for debugging a regression.
+
+    Only Afterimage's own alternate methods (exact-resident, spec-fixed)
+    carry a hard exactness *contract* against exact-min -- see each
+    Method's declared ``exactness`` in run_bounded_suite.py, which is the
+    thing to check before treating a mismatch here as a bug rather than a
+    diagnostic curiosity. AirLLM/Accelerate/DFloat11 are independent
+    engines; bf16 arithmetic is not strictly associative, so even "greedy"
+    decoding across genuinely different kernels/libraries can legitimately
+    diverge over a long enough generation without either implementation
+    being wrong.
+    """
+    control_by_key = {(row["repeat"], row["case_id"]): row
+                      for row in rows_by_method.get(control_id, [])}
+    compared = 0
+    matches = 0
+    first_mismatch = None
+    for row in rows_by_method.get(candidate_id, []):
+        key = (row["repeat"], row["case_id"])
+        control_row = control_by_key.get(key)
+        if control_row is None:
+            continue
+        compared += 1
+        control_ids = control_row["output_token_ids"]
+        candidate_ids = row["output_token_ids"]
+        if control_ids == candidate_ids:
+            matches += 1
+        elif first_mismatch is None:
+            position = next(
+                (i for i, (a, b) in enumerate(zip(control_ids, candidate_ids)) if a != b),
+                min(len(control_ids), len(candidate_ids)))
+            first_mismatch = {"block": key[0], "case_id": key[1], "position": position,
+                              "control_length": len(control_ids),
+                              "candidate_length": len(candidate_ids)}
+    return {
+        "compared_sequences": compared,
+        "matching_sequences": matches,
+        "all_tokens_identical": compared > 0 and matches == compared,
+        "first_mismatch": first_mismatch,
+    }
+
+
 def _run_cell_in_subprocess(config: dict, work_dir: pathlib.Path,
                             timeout_s: float) -> dict:
     """Runs exactly one (block, method) cell in a fresh subprocess. See
@@ -257,63 +419,134 @@ def _run_cell_in_subprocess(config: dict, work_dir: pathlib.Path,
                "traceback": traceback.format_exc()}
 
 
+def completed_cells(result: dict) -> set[tuple[int, str]]:
+    """(block, method_id) pairs that already have a successful (error-free)
+    cell recorded -- what --resume treats as done and skips."""
+    return {(cell["block"], cell["method"]) for cell in result.get("cells", [])
+           if cell.get("error") is None}
+
+
+def paper_eligibility(result: dict, blocks: int, selected: list[str]) -> tuple[bool, str]:
+    """Whether every requested (block, method) cell for this token length
+    actually produced rows -- a paper claim built on a matrix with silent
+    gaps (a method that failed every block, a block cut short by the time
+    budget) is not a claim about what the flags requested, it is a claim
+    about whatever happened to finish. required is exactly range(blocks) x
+    selected, not "whatever showed up in method_order_per_block", so a
+    block that never started at all (time budget exhausted before it
+    began) is caught too, not just cells that started and then failed.
+    """
+    required = {(block, method_id) for block in range(blocks) for method_id in selected}
+    have = completed_cells(result)
+    missing = sorted(required - have)
+    if not missing:
+        return True, "complete: every requested (block, method) cell succeeded"
+    preview = ", ".join("block %d/%s" % pair for pair in missing[:5])
+    more = " (+%d more)" % (len(missing) - 5) if len(missing) > 5 else ""
+    return False, "missing %d of %d required cells: %s%s" % (
+        len(missing), len(required), preview, more)
+
+
 def run_one_token_length(args, tokenizer, rendered: list[dict],
                          selected: list[str], out_path: pathlib.Path,
                          repo_root: pathlib.Path, n_tokens: int,
                          dirty: str | None, work_dir: pathlib.Path) -> dict:
     partial = out_path.with_suffix(out_path.suffix + ".partial")
     if out_path.exists():
+        if args.resume:
+            log("\n%s already complete, skipping" % out_path)
+            return json.loads(out_path.read_text(encoding="utf-8"))
         raise FileExistsError("refusing to overwrite immutable result: %s" % out_path)
-    if partial.exists():
-        raise FileExistsError("partial result already exists: %s" % partial)
 
-    result = {
-        "schema_version": 2,
-        "kind": "paper_comparison_randomized_block",
-        "status": "running",
-        "exploratory": args.blocks < 8,
-        "evidence_level": "L1_mechanism_screen" if args.blocks < 2 else "L2_regulated_exploratory",
-        "prompt_suite_version": PROMPT_SUITE_VERSION,
-        "evaluation_case_ids": [item["case"].id for item in rendered],
-        "max_new_tokens": n_tokens,
-        "blocks_requested": args.blocks,
-        "warmup_tokens": args.warmup_tokens,
-        "cooldown_seconds": args.cooldown_seconds,
-        "cooldown_max_temp_c": args.cooldown_max_temp_c,
-        "control_method": CONTROL_METHOD,
-        "cache_regime": "cold page cache before every timed cell",
-        "cell_isolation": "one fresh subprocess per (block, method) cell",
-        "model": args.model,
-        "dfloat11_model": args.dfloat11_model,
-        "draft_model": args.draft_model,
-        "store": args.store,
-        "selected_methods": selected,
-        "seed": args.seed,
-        "environment": environment_manifest(repo_root, tokenizer,
-                                            store=pathlib.Path(args.store)),
-        "reproducible_from_commit": not bool(dirty),
-        "method_order_per_block": [],
-        "rows_by_method": {method_id: [] for method_id in selected},
-        "peak_host_rss_bytes_by_cell": [],
-        "failures": [],
-    }
+    resuming = False
+    if partial.exists():
+        if not args.resume:
+            raise FileExistsError(
+                "partial result already exists: %s (pass --resume to continue it, "
+                "or remove it to start over)" % partial)
+        result = json.loads(partial.read_text(encoding="utf-8"))
+        mismatched = [
+            (name, result.get(name), value) for name, value in
+            (("max_new_tokens", n_tokens), ("blocks_requested", args.blocks),
+             ("seed", args.seed), ("selected_methods", selected))
+            if result.get(name) != value]
+        # prompt_suite predates this field in older .partial files; a
+        # missing key means "evaluation" (the only split that existed
+        # then), not "leave unspecified and refuse to resume".
+        if result.get("prompt_suite", "evaluation") != args.prompt_suite:
+            mismatched.append(
+                ("prompt_suite", result.get("prompt_suite", "evaluation"),
+                 args.prompt_suite))
+        if mismatched:
+            raise ValueError(
+                "cannot resume %s: it was started with different settings than this "
+                "invocation: %s" % (partial, mismatched))
+        result.setdefault("cells", [])
+        result.setdefault("rows_by_method", {method_id: [] for method_id in selected})
+        for method_id in selected:
+            result["rows_by_method"].setdefault(method_id, [])
+        resuming = True
+        already_done = len(completed_cells(result))
+        log("\nRESUMING %s: %d cell(s) already complete" % (partial, already_done))
+    else:
+        result = {
+            "schema_version": 3,
+            "kind": "paper_comparison_randomized_block",
+            "status": "running",
+            "exploratory": args.blocks < 8,
+            "evidence_level": "L1_mechanism_screen" if args.blocks < 2 else "L2_regulated_exploratory",
+            "prompt_suite_version": PROMPT_SUITE_VERSION,
+            "prompt_suite": args.prompt_suite,
+            "evaluation_case_ids": [item["case"].id for item in rendered],
+            "max_new_tokens": n_tokens,
+            "workload": workload_for(n_tokens),
+            "blocks_requested": args.blocks,
+            "warmup_tokens": args.warmup_tokens,
+            "cooldown_seconds": args.cooldown_seconds,
+            "cooldown_max_temp_c": args.cooldown_max_temp_c,
+            "control_method": CONTROL_METHOD,
+            "cache_regime": "cold page cache before every timed cell",
+            "cell_isolation": "one fresh subprocess per (block, method) cell",
+            "model": args.model,
+            "dfloat11_model": args.dfloat11_model,
+            "draft_model": args.draft_model,
+            "store": args.store,
+            "selected_methods": selected,
+            "seed": args.seed,
+            "environment": environment_manifest(repo_root, tokenizer,
+                                                store=pathlib.Path(args.store)),
+            "reproducible_from_commit": not bool(dirty),
+            "method_order_per_block": [],
+            "rows_by_method": {method_id: [] for method_id in selected},
+            "cells": [],
+            "failures": [],
+        }
     checkpoint(partial, result)
 
     started = time.perf_counter()
     deadline = started + args.time_budget_minutes_per_length * 60
     rng = random.Random(args.seed)
     case_ids = [item["case"].id for item in rendered]
+    already_done = completed_cells(result)
 
     for block in range(args.blocks):
         if time.perf_counter() >= deadline:
             result["failures"].append(
                 {"block": block, "error": "not started: time budget exhausted"})
             continue
+        # Re-derive the order for every block even when resuming, so the
+        # shared rng advances exactly as it did the first time and later
+        # blocks' orders stay identical to what a completed run already
+        # recorded -- only whether a cell is *dispatched* changes.
         order = _shuffled_order(selected, rng)
-        result["method_order_per_block"].append(order)
+        if not resuming or block >= len(result["method_order_per_block"]):
+            result["method_order_per_block"].append(order)
         log("\nBLOCK %d/%d  order: %s" % (block + 1, args.blocks, ", ".join(order)))
         for method_id in order:
             method = METHODS[method_id]
+            if (block, method_id) in already_done:
+                log("  SKIP (resumed): %s" % method.title)
+                continue
             remaining = deadline - time.perf_counter()
             if remaining <= 0:
                 result["failures"].append({
@@ -337,7 +570,18 @@ def run_one_token_length(args, tokenizer, rendered: list[dict],
                 "cooldown_seconds": args.cooldown_seconds,
                 "cooldown_max_temp_c": args.cooldown_max_temp_c,
                 "seconds_remaining": deadline - time.perf_counter(),
-                "case_ids": case_ids,
+                "case_ids": case_ids, "prompt_suite": args.prompt_suite,
+                # The worker runs in a fresh subprocess and does not inherit
+                # this process's METHODS dict -- a method registered here
+                # only at runtime (budget_method_variants()'s exact-<N>gb/
+                # accelerate-<N>gb entries) would not exist in the worker's
+                # own copy at all. Sending the resolved spec directly, for
+                # every method (not only dynamic ones), means the worker
+                # never has to assume its own METHODS matches this
+                # process's -- see run_cell()'s handling of these fields.
+                "method_title": method.title, "method_kind": method.kind,
+                "method_overrides": method.overrides,
+                "method_exactness": method.exactness,
             }
             # +180s slack beyond the nominal remaining budget: the worker's
             # own deadline check is what actually truncates a cell's case
@@ -347,15 +591,20 @@ def run_one_token_length(args, tokenizer, rendered: list[dict],
             cell_result = _run_cell_in_subprocess(
                 cell_config, work_dir, timeout_s=remaining + 180.0)
             result["rows_by_method"][method_id].extend(cell_result.get("rows") or [])
-            result["peak_host_rss_bytes_by_cell"].append({
+            result["cells"].append({
                 "block": block, "method": method_id,
-                "peak_host_rss_bytes": cell_result.get("peak_host_rss_bytes")})
+                "metadata": cell_result.get("metadata") or {},
+                "peak_host_rss_bytes": cell_result.get("peak_host_rss_bytes"),
+                "thermal_monitoring": cell_result.get("thermal_monitoring"),
+                "error": cell_result.get("error")})
             if cell_result.get("error"):
                 result["failures"].append({
                     "block": block, "method": method_id,
                     "error": cell_result["error"],
                     "traceback": cell_result.get("traceback")})
                 log("  FAILED: %s" % cell_result["error"])
+            else:
+                already_done.add((block, method_id))
             result["elapsed_seconds"] = time.perf_counter() - started
             checkpoint(partial, result)
 
@@ -364,15 +613,40 @@ def run_one_token_length(args, tokenizer, rendered: list[dict],
     for method_id in selected:
         rows = result["rows_by_method"][method_id]
         summary = aggregate(rows) if rows else {}
-        peak_rss_values = [
-            cell["peak_host_rss_bytes"] for cell in result["peak_host_rss_bytes_by_cell"]
-            if cell["method"] == method_id and cell["peak_host_rss_bytes"] is not None]
-        entry = {"method_id": method_id, "title": METHODS[method_id].title,
-                 "declared_exactness": METHODS[method_id].exactness,
-                 "rows": rows, "summary": summary,
-                 "peak_host_rss_bytes": max(peak_rss_values) if peak_rss_values else None}
+        method_cells = [cell for cell in result["cells"] if cell["method"] == method_id]
+        peak_rss_values = [cell["peak_host_rss_bytes"] for cell in method_cells
+                           if cell["peak_host_rss_bytes"] is not None]
+        init_seconds_values = [
+            cell["metadata"]["initialization_seconds"] for cell in method_cells
+            if isinstance(cell.get("metadata"), dict)
+            and cell["metadata"].get("initialization_seconds") is not None]
+        thermal_summaries = [cell["thermal_monitoring"] for cell in method_cells
+                             if cell.get("thermal_monitoring")]
+        sm_clock_mins = [t["sm_clock_mhz_min"] for t in thermal_summaries
+                         if t.get("sm_clock_mhz_min") is not None]
+        temp_maxes = [t["temperature_c_max"] for t in thermal_summaries
+                     if t.get("temperature_c_max") is not None]
+        throttle_flags = [t["any_throttle_during_measurement"] for t in thermal_summaries
+                          if t.get("any_throttle_during_measurement") is not None]
+        entry = {
+            "method_id": method_id, "title": METHODS[method_id].title,
+            "declared_exactness": METHODS[method_id].exactness,
+            "rows": rows, "summary": summary,
+            "cells": method_cells,
+            "peak_host_rss_bytes": max(peak_rss_values) if peak_rss_values else None,
+            "initialization_seconds_median": (
+                statistics.median(init_seconds_values) if init_seconds_values else None),
+            "thermal_across_all_cells": {
+                "sm_clock_mhz_min": min(sm_clock_mins) if sm_clock_mins else None,
+                "temperature_c_max": max(temp_maxes) if temp_maxes else None,
+                "any_throttle_during_measurement": (
+                    any(throttle_flags) if throttle_flags else None),
+            },
+        }
         if method_id != CONTROL_METHOD:
             entry["paired_vs_control"] = paired_block_log_ratios(
+                result["rows_by_method"], CONTROL_METHOD, method_id)
+            entry["token_exactness_vs_control"] = token_exactness(
                 result["rows_by_method"], CONTROL_METHOD, method_id)
         if summary.get("peak_vram_gb") is not None and summary.get("seconds_per_token") is not None:
             entry["vram_regime"] = vram_regime(summary["peak_vram_gb"])
@@ -385,13 +659,22 @@ def run_one_token_length(args, tokenizer, rendered: list[dict],
     result["pareto_frontier"] = pareto_frontier(pareto_points)
     del result["rows_by_method"]
 
+    eligible, eligibility_reason = paper_eligibility(result, args.blocks, selected)
+    result["paper_eligible"] = eligible
+    result["paper_eligibility_reason"] = eligibility_reason
     result["elapsed_seconds"] = time.perf_counter() - started
     result["status"] = ("time_capped" if result["elapsed_seconds"] >=
                         args.time_budget_minutes_per_length * 60 else "complete")
     result["completed_at_unix"] = time.time()
     checkpoint(partial, result)
+    if args.require_complete and not eligible:
+        log("\nNOT writing immutable result: --require-complete and paper_eligible is "
+            "False (%s). Partial state is saved at %s -- rerun with --resume once the "
+            "missing cells can complete." % (eligibility_reason, partial))
+        result["status"] = "incomplete_kept_as_partial"
+        return result
     partial.replace(out_path)
-    log("\nwrote immutable result %s" % out_path)
+    log("\nwrote immutable result %s (paper_eligible=%s)" % (out_path, eligible))
     return result
 
 
@@ -405,6 +688,29 @@ def main() -> int:
     parser.add_argument("--methods", default=",".join(DEFAULT_METHODS),
                         help="comma-separated method IDs; choices: %s" %
                              ",".join(sorted(METHODS)))
+    parser.add_argument(
+        "--vram-budgets", default=None,
+        help="comma-separated GB values (e.g. '2,3,4'); for each one, adds an "
+             "exact-<N>gb and accelerate-<N>gb method pinned to exactly that "
+             "VRAM budget, on top of --methods, so the headline comparison is "
+             "never one table mixing configs at different memory budgets as "
+             "though memory were held equal. Combine with vram_regime/"
+             "pareto_frontier in the result JSON for the (VRAM, seconds/token) "
+             "plot this is for. AirLLM and DFloat11 contribute whatever "
+             "peak_vram_gb they naturally land on instead -- see "
+             "budget_method_variants()'s docstring for why only Afterimage and "
+             "Accelerate can be pinned this way today.")
+    parser.add_argument(
+        "--prompt-suite", default="evaluation",
+        choices=["evaluation", "paper_generation"],
+        help="'evaluation' is paper-short-v1 (the four short factual cases) -- "
+             "use it for the ttft/short_cold_start workloads. 'paper_generation' "
+             "is paper-generation-v1 (explanation/summarization/code/analytical, "
+             "each eliciting a real ~120-180-word answer) -- use it for the "
+             "100-128-token decode workload, since forcing the short factual "
+             "cases to keep generating past their one-token answer produces a "
+             "strange speculative-decoding workload. Run the script twice, once "
+             "per suite, rather than mixing both into one --token-lengths sweep.")
     parser.add_argument("--token-lengths", default=",".join(map(str, DEFAULT_TOKEN_LENGTHS)),
                         help="comma-separated --max-new-tokens values run back to "
                              "back, one immutable result file each. Short lengths "
@@ -442,6 +748,25 @@ def main() -> int:
         "--allow-dirty-tree", action="store_true",
         help="proceed even with uncommitted changes; the result is recorded but "
              "not reproducible from its git_commit alone")
+    parser.add_argument(
+        "--resume", action="store_true",
+        help="continue an existing .partial file instead of refusing to run "
+             "because one is already there. A cell only counts as already done "
+             "if it completed without error; a length whose immutable .json "
+             "output already exists is skipped entirely. Must be run with the "
+             "same --model/--methods/--blocks/--seed as the run being resumed, "
+             "or it refuses (those determine the exact cell matrix and the "
+             "randomized block orders, and a --resume under different settings "
+             "would silently merge two different experiments into one file).")
+    parser.add_argument(
+        "--require-complete", action="store_true",
+        help="do not finalize a token length's immutable result unless every "
+             "requested (block, method) cell actually succeeded (paper_eligible "
+             "is True). An incomplete run's state is still saved to the .partial "
+             "file so --resume can pick it up later; only the final rename to "
+             "the immutable .json is withheld. Without this flag, a run that "
+             "hits its time budget partway through still finalizes normally, "
+             "with paper_eligible recorded honestly as False.")
     args = parser.parse_args()
 
     selected = [part.strip() for part in args.methods.split(",") if part.strip()]
@@ -450,6 +775,22 @@ def main() -> int:
         parser.error("unknown methods: %s" % ", ".join(unknown))
     if CONTROL_METHOD not in selected:
         parser.error("--methods must include %r (the comparison control)" % CONTROL_METHOD)
+    if args.vram_budgets:
+        try:
+            budgets = [float(part.strip()) for part in args.vram_budgets.split(",")
+                      if part.strip()]
+        except ValueError:
+            parser.error("--vram-budgets must be a comma-separated list of numbers")
+        if any(budget <= 0 for budget in budgets):
+            parser.error("--vram-budgets values must be positive")
+        for budget in budgets:
+            variants = budget_method_variants(budget)
+            METHODS.update(variants)
+            for method_id in variants:
+                if method_id not in selected:
+                    selected.append(method_id)
+                if method_id.startswith("accelerate-"):
+                    DEPENDENCY_PACKAGE[method_id] = "accelerate"
     try:
         token_lengths = [int(part.strip()) for part in args.token_lengths.split(",")
                          if part.strip()]
@@ -492,7 +833,7 @@ def main() -> int:
             "`pip install -e .[bench]`." % ", ".join(missing))
 
     tokenizer = load_tokenizer(args.model)
-    evaluation_cases = prompt_cases("evaluation")
+    evaluation_cases = prompt_cases(args.prompt_suite)
     if args.case_ids:
         requested = [part.strip() for part in args.case_ids.split(",") if part.strip()]
         by_id = {case.id: case for case in evaluation_cases}
@@ -510,19 +851,46 @@ def main() -> int:
         args.model.split("/")[-1].lower() + "-" + time.strftime("%Y-%m-%d"))
 
     written = []
+    incomplete = []
+    out_path_by_length: dict[int, pathlib.Path] = {}
     with tempfile.TemporaryDirectory(prefix="afterimage-paper-cell-") as work_dir_name:
         work_dir = pathlib.Path(work_dir_name)
         for n_tokens in token_lengths:
             out_path = out_dir / ("%s-%dtok.json" % (label, n_tokens))
-            log("\n%s\nTOKEN LENGTH %d (%s)\n%s" % ("=" * 60, n_tokens, out_path, "=" * 60))
+            log("\n%s\nTOKEN LENGTH %d (%s) [%s]\n%s" %
+                ("=" * 60, n_tokens, out_path, workload_for(n_tokens), "=" * 60))
             run_one_token_length(args, tokenizer, rendered, selected, out_path,
                                  repo_root, n_tokens, dirty, work_dir)
-            written.append(str(out_path))
+            if out_path.exists():
+                written.append(str(out_path))
+                out_path_by_length[n_tokens] = out_path
+            else:
+                incomplete.append(str(out_path))
 
-    log("\nAll token lengths complete. Wrote: %s" % ", ".join(written))
+    if written:
+        log("\nWrote: %s" % ", ".join(written))
+    if incomplete:
+        log("Withheld (incomplete, --require-complete set): %s -- rerun with "
+            "--resume once the missing cells can complete." % ", ".join(incomplete))
+
+    if 1 in out_path_by_length:
+        decode_length = max((n for n in out_path_by_length if n >= 100), default=None)
+        if decode_length is not None:
+            ttft_result = json.loads(out_path_by_length[1].read_text(encoding="utf-8"))
+            decode_result = json.loads(
+                out_path_by_length[decode_length].read_text(encoding="utf-8"))
+            derived = derive_ttft_decode_metrics(ttft_result, decode_result)
+            derived_path = out_dir / ("%s-ttft-decode-derived.json" % label)
+            derived_path.write_text(json.dumps({
+                "kind": "ttft_decode_derived", "ttft_source": str(out_path_by_length[1]),
+                "decode_source": str(out_path_by_length[decode_length]),
+                "decode_max_new_tokens": decode_length, "methods": derived,
+            }, indent=2, sort_keys=True), encoding="utf-8")
+            log("Wrote derived TTFT/decode-TPS metrics: %s" % derived_path)
+
     log("Rebuild the results index with: python scripts/build_results_index.py "
         "> results/INDEX.md")
-    return 0
+    return 1 if incomplete else 0
 
 
 if __name__ == "__main__":

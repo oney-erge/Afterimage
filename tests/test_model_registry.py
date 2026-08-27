@@ -88,6 +88,23 @@ def test_delete_model_closes_its_connection(counted_registry):
     assert counter["closed"] == counter["opened"]
 
 
+def test_delete_job_removes_the_row_and_closes_its_connection(counted_registry):
+    registry, counter = counted_registry
+    registry.create_job("job-1", kind="acquire", lane="model-lifecycle",
+                        model_id="org/model")
+    before_delete = counter["opened"]
+    removed = registry.delete_job("job-1")
+    assert removed is True
+    assert registry.get_job("job-1") is None
+    assert counter["opened"] > before_delete
+    assert counter["closed"] == counter["opened"]
+
+
+def test_delete_job_on_an_unknown_id_returns_false(counted_registry):
+    registry, _counter = counted_registry
+    assert registry.delete_job("no-such-job") is False
+
+
 def test_a_realistic_download_style_call_volume_leaks_nothing(counted_registry):
     """Mirrors afterimage/server/acquisition.py's download_snapshot(), which
     calls upsert_model once per file in a model with potentially hundreds of

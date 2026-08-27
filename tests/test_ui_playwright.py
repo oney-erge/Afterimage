@@ -133,9 +133,16 @@ def test_desktop_and_mobile_product_flow(live_server):
 
         page.route("**/*", mock_api)
         page.goto(live_server, wait_until="networkidle")
-        page.locator("#hardware-grid .metric-card").first.wait_for()
-        assert "32.0 GB" in page.locator("#hardware-grid").inner_text()
-        assert "?" not in page.locator("#hardware-grid").inner_text()
+        page.locator("#machine-line-body strong").first.wait_for()
+        assert "32.0 GB" in page.locator("#machine-line-body").inner_text()
+        assert "8.0 GB" in page.locator("#machine-line-body").inner_text()
+        assert "?" not in page.locator("#machine-line-body").inner_text()
+        # The mocked /api/models above returns exactly one ready model, so
+        # Home should be in its "one model ready" state: the model itself,
+        # an Afterimage Fit badge, and a direct path into Chat.
+        assert "Qwen/Qwen3-VL-8B-Instruct" in page.locator("#home-status").inner_text()
+        assert page.locator("#home-status .badge.fit-afterimage-ready").count() == 1
+        page.locator("[data-home-chat]").wait_for()
 
         page.locator('[data-route="models"]').click()
         page.locator("#catalog-query").fill("Qwen")

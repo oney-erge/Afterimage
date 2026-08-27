@@ -141,6 +141,55 @@ def test_aggregate_treats_legacy_rows_without_a_repeat_field_as_one_repeat():
     assert summary["seconds_per_token"] == pytest.approx(10.0)
 
 
+def test_process_read_bytes_returns_zero_when_proc_self_io_is_unavailable(monkeypatch):
+    """Non-Linux hosts (this dev machine is one) have no /proc/self/io at
+    all; the function must degrade to 0, not raise."""
+    from scripts.run_bounded_suite import process_read_bytes
+
+    assert isinstance(process_read_bytes(), int)
+    assert process_read_bytes() >= 0
+
+
+def test_process_read_bytes_parses_the_real_proc_self_io_format(tmp_path, monkeypatch):
+    from scripts import run_bounded_suite as bounded
+
+    fake_io = tmp_path / "io"
+    fake_io.write_text(
+        "rchar: 123456\n"
+        "wchar: 7890\n"
+        "syscr: 42\n"
+        "syscw: 10\n"
+        "read_bytes: 987654321\n"
+        "write_bytes: 0\n"
+        "cancelled_write_bytes: 0\n",
+        encoding="utf-8")
+
+    real_open = open
+
+    def fake_open(path, *args, **kwargs):
+        if path == "/proc/self/io":
+            return real_open(fake_io, *args, **kwargs)
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.open", fake_open)
+    assert bounded.process_read_bytes() == 987654321
+
+
+def test_aggregate_reports_median_process_read_bytes_per_token():
+    rows = [_row("a", 10.0, process_read_bytes_per_token=1000),
+            _row("b", 10.0, process_read_bytes_per_token=3000),
+            _row("c", 10.0, process_read_bytes_per_token=2000)]
+    summary = aggregate(rows)
+    assert summary["process_read_bytes_per_token_median"] == 2000
+
+
+def test_aggregate_io_traffic_is_none_for_legacy_rows_without_the_field():
+    """Rows written before process_read_bytes_per_token existed must read
+    as "not measured", not silently as zero traffic."""
+    summary = aggregate([_row("a", 10.0)])
+    assert summary["process_read_bytes_per_token_median"] is None
+
+
 def test_throttle_decoding_matches_nvml_reason_bits():
     """The raw reason field is hex; nobody scanning a result file decodes it
     by eye, so the boolean is what actually surfaces the confound."""

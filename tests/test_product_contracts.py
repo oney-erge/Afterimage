@@ -27,7 +27,12 @@ from afterimage.server.model_registry import ModelRegistry
 def test_product_shell_is_modular_and_removes_artificial_ceiling_copy():
     client = TestClient(app)
     page = client.get("/").text
-    assert "Run models beyond your GPU memory" in page
+    # The server-rendered shell carries no marketing headline of its own
+    # any more -- Home is state-aware (see afterimage/server/static/js/
+    # home.js) and its actual copy depends on client-side data the server
+    # response cannot see, so the one accurate product description left in
+    # the raw HTML is the page's own <meta name="description">.
+    assert "Afterimage runs lossless BF16 language models beyond GPU memory" in page
     assert "/static/css/app.css" in page
     assert "/static/js/app.js" in page
     assert "Compare configurations" not in page

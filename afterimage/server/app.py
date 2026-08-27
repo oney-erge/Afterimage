@@ -16,6 +16,7 @@ import dataclasses
 import io
 import json
 import logging
+import os
 import pathlib
 import shutil
 import statistics
@@ -145,25 +146,68 @@ def capability() -> dict:
     }
 
 
+def _extra_store_roots() -> list[pathlib.Path]:
+    """Additional directories to scan for prepared stores, one level deep,
+    same as DEFAULT_STORE_ROOT.
+
+    DEFAULT_STORE_ROOT (~/.afterimage/stores by default) is only where a
+    store lands when it was prepared *through this server's own* acquire/
+    compress flow. A store built ad hoc -- e.g. this project's own GPU
+    benchmark tooling (scripts/run_bounded_suite.py, benchmark.sh), which
+    hard-codes a WSL2 path like /root/afterimage/store_14b, entirely
+    outside DEFAULT_STORE_ROOT and never calling model_registry.upsert_model
+    -- was real, on disk, with a valid manifest.json, and completely
+    invisible to /api/models: nothing scanned it. AFTERIMAGE_EXTRA_STORE_ROOTS
+    (os.pathsep-separated, e.g. ":" on Linux/WSL2 or ";" on Windows) lets a
+    deployment point at those paths without moving already-compressed data.
+    Missing or inaccessible entries are skipped, not an error -- a stale
+    path in the env var must not take the whole model list down.
+    """
+    configured = os.environ.get("AFTERIMAGE_EXTRA_STORE_ROOTS", "")
+    roots = []
+    for part in configured.split(os.pathsep):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            path = pathlib.Path(part).expanduser()
+        except (OSError, ValueError):
+            continue
+        if path not in roots:
+            roots.append(path)
+    return roots
+
+
+def _scan_store_root(root: pathlib.Path, by_id: dict) -> None:
+    if not root.exists():
+        return
+    for p in sorted(root.iterdir()):
+        man_path = p / "manifest.json"
+        if not man_path.exists():
+            continue
+        try:
+            man = json.loads(man_path.read_text())
+        except (json.JSONDecodeError, OSError):
+            continue
+        model_id = man.get("model_id", p.name)
+        metadata = dict(by_id.get(model_id, {}).get("metadata", {}))
+        metadata["manifest"] = {
+            "total_orig_bytes": man["total_orig_bytes"],
+            "total_comp_bytes": man["total_comp_bytes"],
+            "ratio": man["ratio"],
+        }
+        by_id[model_id] = model_registry.upsert_model(
+            model_id, revision=man.get("revision"), state="ready", stage="ready",
+            store_path=str(p), metadata=metadata,
+        )
+
+
 @app.get("/api/models")
 def list_models() -> dict:
     by_id = {model["model_id"]: model for model in model_registry.list_models()}
-    if DEFAULT_STORE_ROOT.exists():
-        for p in sorted(DEFAULT_STORE_ROOT.iterdir()):
-            man_path = p / "manifest.json"
-            if man_path.exists():
-                man = json.loads(man_path.read_text())
-                model_id = man.get("model_id", p.name)
-                metadata = dict(by_id.get(model_id, {}).get("metadata", {}))
-                metadata["manifest"] = {
-                    "total_orig_bytes": man["total_orig_bytes"],
-                    "total_comp_bytes": man["total_comp_bytes"],
-                    "ratio": man["ratio"],
-                }
-                by_id[model_id] = model_registry.upsert_model(
-                    model_id, revision=man.get("revision"), state="ready", stage="ready",
-                    store_path=str(p), metadata=metadata,
-                )
+    _scan_store_root(DEFAULT_STORE_ROOT, by_id)
+    for root in _extra_store_roots():
+        _scan_store_root(root, by_id)
     out = []
     for model in by_id.values():
         manifest = model.get("metadata", {}).get("manifest", {})
@@ -576,6 +620,20 @@ def job_cancel(job_id: str) -> dict:
             job.model_id, state="interrupted", stage="interrupted", error=None,
         )
     return {"status": job.status}
+
+
+@app.delete("/api/jobs/{job_id}")
+def job_delete(job_id: str) -> dict:
+    """Clears a finished/interrupted/cancelled job from the Activity feed.
+    Refuses on an active job (409) -- cancel it first, mirroring
+    remove_model's own refusal while a job for that model is active."""
+    job = registry.get(job_id)
+    if job is None:
+        raise HTTPException(404, "no such job: %r" % job_id)
+    if job.status in {"queued", "running", "pause_requested", "paused", "cancelling"}:
+        raise HTTPException(409, "cancel the job before deleting it")
+    removed = registry.delete(job_id)
+    return {"deleted": bool(removed), "id": job_id}
 
 
 @app.websocket("/ws/jobs/{job_id}")

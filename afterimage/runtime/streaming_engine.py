@@ -1964,6 +1964,62 @@ class StreamingLosslessModel:
         return seq
 
     @torch.no_grad()
+    @torch.no_grad()
+    def measure_candidate_sweep_latency(
+            self, input_ids: torch.Tensor, candidate_counts: list[int]) -> list[dict]:
+        """H19 (Candidate-Amortization Hypothesis, see afterimage/experiments.py):
+        how does one target verification sweep's wall-clock cost scale with
+        the number of already-known candidate positions it verifies?
+
+        Deliberately does NOT generate real speculative trees or run a
+        draft model. The synthetic candidate tokens' VALUES are irrelevant
+        here, only their COUNT is: forward_logits' cost for this engine is
+        dominated by streaming and decompressing the target's own weights
+        (io_seconds/decode_seconds within that same call), not by the
+        marginal compute of a few more sequence positions -- so this reuses
+        the real forward_logits() verification path (the same one
+        generate_speculative's own target sweep calls) rather than a
+        separate synthetic microbenchmark, and the candidate positions are
+        just the prompt's own last token repeated, a valid in-vocabulary
+        sequence with nothing case-specific about its content.
+
+        The prompt (input_ids) is held fixed across every candidate count
+        in one call, so the reported latency is not comparable in absolute
+        terms across different prompts -- only the SHAPE of latency as a
+        function of candidate_counts is the measurement this hypothesis
+        cares about: the point past which it stops growing roughly flat,
+        this project's own methodology review calls the candidate
+        parallelism knee (N_free / spec_parallel_knee), which should set
+        every tree-based speculation strategy's node budget from real
+        measurement instead of copying a paper's number tuned for
+        different hardware.
+        """
+        if not candidate_counts:
+            raise ValueError("candidate_counts must be non-empty")
+        for n in candidate_counts:
+            if n < 1:
+                raise ValueError("candidate_counts values must be >= 1, got %d" % n)
+        results = []
+        pad_token = input_ids[:, -1:]
+        for n in candidate_counts:
+            candidates = pad_token.expand(-1, n)
+            probe_input = torch.cat([input_ids, candidates], dim=1)
+            self.stats.reset()
+            self._synchronize_device()
+            t0 = time.perf_counter()
+            self.forward_logits(probe_input, use_cache=False)
+            self._synchronize_device()
+            wall = time.perf_counter() - t0
+            results.append({
+                "candidate_positions": n,
+                "verification_sweep_seconds": wall,
+                "io_seconds": self.stats.io_seconds,
+                "decode_seconds": self.stats.decode_seconds,
+                "compute_seconds": self.stats.compute_seconds,
+                "bytes_read": self.stats.bytes_read,
+            })
+        return results
+
     def generate_speculative(self, input_ids: torch.Tensor, max_new_tokens: int,
                              draft_model, k: int = 8, temperature: float = 1.0,
                              generator: torch.Generator | None = None) -> torch.Tensor:

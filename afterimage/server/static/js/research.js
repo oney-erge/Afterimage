@@ -53,8 +53,22 @@ function selectedExperiment() {
   return state.experiments.find((item) => item.id === $("research-experiment").value) || null;
 }
 
+function hypothesisIndexLabel(id) {
+  // Hypothesis ids are already "h6-representations" etc.; the leading
+  // number is the thing people actually say out loud ("H6") when
+  // discussing results, but the dropdown previously showed only the
+  // spelled-out title, so there was no way to find "H6" in the UI without
+  // already knowing its title.
+  const match = /^h(\d+)/i.exec(id || "");
+  return match ? `H${match[1]}` : "";
+}
+
 function optionMarkup(rows) {
-  return rows.map((item) => `<option value="${esc(item.id)}">${esc(item.title)}</option>`).join("");
+  return rows.map((item) => {
+    const index = hypothesisIndexLabel(item.id);
+    const label = index ? `${index}: ${item.title}` : item.title;
+    return `<option value="${esc(item.id)}">${esc(label)}</option>`;
+  }).join("");
 }
 
 function renderExperimentOptions() {
@@ -82,7 +96,9 @@ function renderSelectedExperiment() {
   if (!experiment) { $("research-explanation").innerHTML = ""; $("research-inputs").innerHTML = ""; return; }
   const requirements = experiment.required_inputs || [];
   const mode = experiment.runner === "generation" ? "Runs the model" : "Analyzes supplied measurements";
-  $("research-explanation").innerHTML = `<div><span class="strategy-state ${requirements.length ? "setup" : "ready"}">${requirements.length ? "Setup required" : "Ready to run"}</span><strong>${esc(GOALS[experiment.id] || experiment.statement)}</strong><p>${esc(mode)}. The candidate setting is compared with the registered control under the same run settings.</p></div><dl><div><dt>Standard</dt><dd>${esc(statusLabel(experiment.control_profile))}</dd></div><div><dt>Candidate</dt><dd>${esc(statusLabel(experiment.candidate_profile))}</dd></div></dl>`;
+  const index = hypothesisIndexLabel(experiment.id);
+  const goal = GOALS[experiment.id] || experiment.statement;
+  $("research-explanation").innerHTML = `<div><span class="strategy-state ${requirements.length ? "setup" : "ready"}">${requirements.length ? "Setup required" : "Ready to run"}</span><strong>${esc(index ? `${index}: ${goal}` : goal)}</strong><p>${esc(mode)}. The candidate setting is compared with the registered control under the same run settings.</p></div><dl><div><dt>Standard</dt><dd>${esc(statusLabel(experiment.control_profile))}</dd></div><div><dt>Candidate</dt><dd>${esc(statusLabel(experiment.candidate_profile))}</dd></div></dl>`;
   $("research-tokens").value = String(Math.max(8, Number(experiment.minimum_new_tokens || 16)));
   $("research-repeats").value = String(Math.max(1, Number(experiment.minimum_repeats || 3)));
   const fields = [];
@@ -195,7 +211,9 @@ function reportMarkup(run, { expanded = false } = {}) {
   const candidate = profileConfig(run, "candidate");
   const control = profileConfig(run, "control");
   const time = run.completed_at ? new Date(run.completed_at * 1000).toLocaleString() : "Completed locally";
-  return `<article class="report-card${expanded ? " featured" : ""}" data-report="${esc(run.id)}"><div class="report-card-head"><div><span class="kicker">${esc(time)}</span><h2>${esc(experiment?.title || "Research report")}</h2><p>${esc(modelId || "Dataset analysis")}</p></div>${badge(run.verdict || run.status)}</div>${summaryRows(run.summary)}<div class="report-actions">${candidate && modelId ? `<button class="button primary" data-use-report="candidate">Use candidate in Chat</button>` : ""}${control && modelId ? `<button class="button secondary" data-use-report="control">Use standard in Chat</button>` : ""}<button class="button secondary" data-copy-endpoint>Copy API example</button></div><details class="report-details" ${expanded ? "open" : ""}><summary>Configuration and endpoint</summary><div class="endpoint-card"><code>POST http://127.0.0.1:8420/v1/chat/completions</code><p>Model: ${esc(modelId || "Not applicable")}</p></div><pre>${esc(JSON.stringify({ summary: run.summary, candidate_config: candidate, control_config: control }, null, 2))}</pre></details></article>`;
+  const index = hypothesisIndexLabel(run.hypothesis_id);
+  const title = experiment?.title || "Research report";
+  return `<article class="report-card${expanded ? " featured" : ""}" data-report="${esc(run.id)}"><div class="report-card-head"><div><span class="kicker">${esc(time)}</span><h2>${esc(index ? `${index}: ${title}` : title)}</h2><p>${esc(modelId || "Dataset analysis")}</p></div>${badge(run.verdict || run.status)}</div>${summaryRows(run.summary)}<div class="report-actions">${candidate && modelId ? `<button class="button primary" data-use-report="candidate">Use candidate in Chat</button>` : ""}${control && modelId ? `<button class="button secondary" data-use-report="control">Use standard in Chat</button>` : ""}<button class="button secondary" data-copy-endpoint>Copy API example</button></div><details class="report-details" ${expanded ? "open" : ""}><summary>Configuration and endpoint</summary><div class="endpoint-card"><code>POST http://127.0.0.1:8420/v1/chat/completions</code><p>Model: ${esc(modelId || "Not applicable")}</p></div><pre>${esc(JSON.stringify({ summary: run.summary, candidate_config: candidate, control_config: control }, null, 2))}</pre></details></article>`;
 }
 
 function endpointExample(modelId, profileId = null) {

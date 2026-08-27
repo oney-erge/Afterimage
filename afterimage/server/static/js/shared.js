@@ -54,6 +54,54 @@ export function badge(value, label = null) {
   return `<span class="badge ${safeValue}">${esc(label || statusLabel(value))}</span>`;
 }
 
+// The Afterimage Fit vocabulary: not fitting in VRAM is the entire reason
+// Afterimage exists, so "does this run" needs its own words instead of
+// borrowing generic compatibility language. Thresholds are relative to
+// this machine's own GPU memory, computed from the same
+// estimated_store_gb the catalog and local library already return -- no
+// separate backend call, this is real data, just not yet phrased for a
+// beginner. A dedicated /api/recommendations (a real per-machine
+// suggestion engine, not just this per-model classification) is future
+// work, not something this function pretends to be.
+export const FIT_LABELS = {
+  native: "Native",
+  "afterimage-ready": "Afterimage Ready",
+  "storage-bound": "Storage Bound",
+  extreme: "Extreme",
+};
+
+export function afterimageFit(storeGb, vramTotalGb) {
+  const store = Number(storeGb);
+  const vram = Number(vramTotalGb);
+  if (!Number.isFinite(store) || !Number.isFinite(vram) || vram <= 0 || store <= 0) return null;
+  const ratio = store / vram;
+  if (ratio <= 0.9) return "native";
+  if (ratio <= 3) return "afterimage-ready";
+  if (ratio <= 8) return "storage-bound";
+  return "extreme";
+}
+
+export function fitBadge(fitClass) {
+  if (!fitClass) return "";
+  return `<span class="badge fit-${esc(fitClass)}">${esc(FIT_LABELS[fitClass] || statusLabel(fitClass))}</span>`;
+}
+
+// Support confidence is a separate axis from Fit: "will this run well on
+// your machine" (Fit) is not the same claim as "has this architecture
+// been validated at all" (confidence, from classify_config's own
+// execution field -- see afterimage/runtime/adapters.py). Mixing them
+// into one badge would blur "this will be slow" with "this hasn't been
+// checked", which are different things a user needs to weigh differently.
+const CONFIDENCE_LABELS = {
+  verified: "✓ Verified", expected: "◐ Expected", experimental: "⚠ Experimental",
+};
+
+export function confidenceBadge(execution) {
+  const label = CONFIDENCE_LABELS[execution];
+  if (!label) return "";
+  return `<span class="badge ${esc(execution)}">${esc(label)}</span>`;
+}
+
 export function hfUrl(modelId) {
   return `https://huggingface.co/${String(modelId).split("/").map(encodeURIComponent).join("/")}`;
 }

@@ -82,4 +82,4 @@ No. Without `--draft-model`, Afterimage runs exact streaming at the
 measured 17.360 s/token (with a VRAM budget) or 32.514 s/token (minimum
 memory). A draft model (`--draft-model`, e.g. `Qwen/Qwen3-0.6B`) enables
 speculative decoding, the largest lossless speedup measured (9.150 s/token,
-3.15x AirLLM) -- worth adding if you have the extra ~1.3 GB of VRAM for it.
+2.93x AirLLM 3.2.0) -- worth adding if you have the extra ~1.3 GB of VRAM for it.

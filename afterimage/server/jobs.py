@@ -193,5 +193,26 @@ class JobRegistry:
         model_registry.update_job(job.id, status=job.status, progress=job.progress)
         return job
 
+    def delete(self, job_id: str) -> bool:
+        """Remove a finished/dead job's durable record so it stops
+        cluttering the Activity feed. Refuses to delete a job that is
+        still active (queued/running/paused/pause_requested/cancelling) --
+        cancel it first, same as removing a model refuses while a job for
+        it is active.
+
+        Uses self.get() rather than only the in-memory dict, so a job whose
+        background thread no longer exists (e.g. a "running" row left
+        behind by a server restart) still gets its persisted status
+        checked -- a bare in-memory lookup would silently skip the active
+        check entirely for any job not currently held in memory.
+        """
+        job = self.get(job_id)
+        if job is not None and job.status in {
+                "queued", "running", "pause_requested", "paused", "cancelling"}:
+            return False
+        with self._lock:
+            self._jobs.pop(job_id, None)
+        return model_registry.delete_job(job_id)
+
 
 registry = JobRegistry()

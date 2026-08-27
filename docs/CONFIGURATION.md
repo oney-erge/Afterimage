@@ -13,7 +13,7 @@ CLI-to-API mapping.
 |---|---|---|---|---|
 | VRAM budget | `--vram-budget-gb` | `vram_budget_gb` | none (minimum-memory) | Spends spare VRAM on residency. Refused up front if infeasible, never silently approximated. Measured: 1.66x at 4 GB on a 14B model with an 8 GB card. |
 | RAM budget | `--ram-budget-gb` | `ram_budget_gb` | none | A second, pinned-host-RAM tier below VRAM and above disk. Needs a VRAM budget set first (the planner fills VRAM before RAM). |
-| Draft model | `--draft-model` | `draft_model` | none (no speculation) | A small resident model (e.g. `Qwen/Qwen3-0.6B`) that enables speculative decoding, the largest lossless speedup measured (3.15x). Must share the target's tokenizer and vocabulary. |
+| Draft model | `--draft-model` | `draft_model` | none (no speculation) | A small resident model (e.g. `Qwen/Qwen3-0.6B`) that enables speculative decoding, the largest lossless speedup measured (2.93x AirLLM 3.2.0). Must share the target's tokenizer and vocabulary. |
 | Draft chain length | `--spec-k` | `spec_k` | 8 | How many tokens the draft model proposes per sweep, when a draft model is set. |
 | Chunked output head | `--lm-head-slice-rows` | `lm_head_slice_rows` | 0 (whole head, exact) | Above 0, computes logits in row blocks instead of materializing the whole 1.5+ GB output head. Lowers the VRAM floor by about 43%, but is **not bit-exact** (see [HOW_IT_WORKS.md's Method 3](HOW_IT_WORKS.md#method-3--chunked-output-head-approximate)). |
 | Quantization | `--quantize` (compress only) | n/a | none (lossless) | `q8` trades bit-exactness for a smaller store. Set at compression time, not per-run. |
@@ -27,7 +27,7 @@ benchmark rows directly:
 |---|---|---|---|
 | `min-memory` | none | none | exact, lowest VRAM, slowest (0.89x AirLLM on the reference hardware) |
 | `balanced` | 4.0 | none | exact, 1.66x |
-| `fast` | 4.0 | `Qwen/Qwen3-0.6B` | exact at T=0, 3.15x, the largest lossless win |
+| `fast` | 4.0 | `Qwen/Qwen3-0.6B` | exact at T=0, 2.93x AirLLM 3.2.0, the largest lossless win |
 
 An explicit flag always overrides the profile's value for that field.
 `--auto` picks a profile from detected VRAM instead of asking you to choose,
