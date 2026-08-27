@@ -14,6 +14,8 @@ import time
 
 import torch
 
+from afterimage.bench.memory import MemoryProbe
+
 
 @dataclasses.dataclass
 class HFDiskOffloadBaseline:
@@ -34,8 +36,6 @@ class HFDiskOffloadBaseline:
                 else "cpu")
         inputs = {key: value.to(input_device) for key, value in inputs.items()}
         torch.cuda.empty_cache()
-        torch.cuda.reset_peak_memory_stats()
-        started = time.perf_counter()
         pad_token_id = self.tokenizer.pad_token_id
         if pad_token_id is None:
             pad_token_id = self.tokenizer.eos_token_id
@@ -43,12 +43,25 @@ class HFDiskOffloadBaseline:
             pad_token_id = pad_token_id[0] if pad_token_id else None
         if pad_token_id is None:
             pad_token_id = 0
-        with torch.no_grad():
-            output = self.model.generate(
-                **inputs, max_new_tokens=max_new_tokens, do_sample=False,
-                use_cache=True, eos_token_id=[], pad_token_id=int(pad_token_id))
-        torch.cuda.synchronize()
-        wall = time.perf_counter() - started
+        # torch.cuda.max_memory_allocated() alone reports exactly 0.0 for
+        # this baseline: Accelerate's device_map="auto" dispatch places
+        # tensors through paths that bypass torch's own caching allocator
+        # tracking entirely, so the allocator has nothing in its own
+        # ledger to report even though the device genuinely holds several
+        # GB. MemoryProbe's background nvidia-smi sampling sees the real
+        # device usage regardless of which allocator path put it there --
+        # see afterimage.bench.memory's module docstring and run_bounded_
+        # suite.canonical_peak_vram, which is what actually decides the
+        # figure a caller sees.
+        with MemoryProbe() as probe:
+            started = time.perf_counter()
+            with torch.no_grad():
+                output = self.model.generate(
+                    **inputs, max_new_tokens=max_new_tokens, do_sample=False,
+                    use_cache=True, eos_token_id=[], pad_token_id=int(pad_token_id))
+            torch.cuda.synchronize()
+            wall = time.perf_counter() - started
+        mem_report = probe.report()
         generated = output[0, inputs["input_ids"].shape[1]:].detach().cpu()
         return {
             "tokens_generated": int(generated.numel()),
@@ -56,7 +69,7 @@ class HFDiskOffloadBaseline:
             "text": self.tokenizer.decode(generated, skip_special_tokens=True),
             "wall_seconds": wall,
             "seconds_per_token": wall / max(int(generated.numel()), 1),
-            "peak_vram_gb": torch.cuda.max_memory_allocated() / 1e9,
+            "memory_report": mem_report,
         }
 
 

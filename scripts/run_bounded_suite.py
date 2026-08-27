@@ -29,6 +29,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 import torch
 
+from afterimage.bench.memory import MemoryProbe
 from afterimage.bench.prompt_suite import (
     PROMPT_SUITE_VERSION,
     PromptCase,
@@ -317,6 +318,45 @@ def reset_cuda_peak() -> None:
     torch.cuda.reset_peak_memory_stats()
 
 
+def canonical_peak_vram(report) -> tuple[float | None, str | None]:
+    """The one peak-VRAM number aggregate()/pareto_frontier() should trust,
+    plus which measurement it came from.
+
+    torch.cuda.max_memory_allocated() alone is not just incomplete, it is
+    actively wrong for some methods: HF Accelerate's device_map="auto"
+    dispatch reports exactly 0.0 to it -- not "unavailable", a real float
+    that then won a Pareto-frontier comparison outright, because 0 GB
+    looked like the best memory result in the campaign. Prefer the
+    nvidia-smi delta (afterimage.bench.memory.MemoryProbe), which observes
+    actual device usage regardless of which allocator path put it there,
+    and fall back to the torch figure only if nvidia-smi itself was
+    unavailable. Never fabricate a 0.0 -- an unmeasurable cell must report
+    None so aggregate() and pareto_frontier() can exclude it, not rank it
+    as the cheapest.
+    """
+    smi_delta = report.smi_delta_gb
+    if smi_delta is not None:
+        return smi_delta, "nvidia_smi_delta"
+    torch_peak = report.torch_peak_vram_gb
+    if torch_peak is not None:
+        return torch_peak, "torch_allocator"
+    return None, None
+
+
+def memory_probe_extra_fields(report) -> dict:
+    """Auxiliary memory readings alongside the canonical peak_vram_gb, so a
+    reader can see torch/nvidia-smi agree or disagree rather than trusting
+    one silently-chosen number."""
+    return {
+        "torch_peak_vram_gb": report.torch_peak_vram_gb,
+        "smi_peak_vram_gb": (report.smi_peak_used_mb / 1000.0
+                             if report.smi_peak_used_mb is not None else None),
+        "smi_baseline_vram_gb": (report.smi_baseline_used_mb / 1000.0
+                                 if report.smi_baseline_used_mb is not None else None),
+        "host_rss_peak_gb": report.host_rss_peak_gb,
+    }
+
+
 def release_cuda(*objects) -> None:
     for obj in objects:
         with contextlib.suppress(Exception):
@@ -415,6 +455,8 @@ def gpu_thermal_snapshot() -> dict:
             "power_limit_w", "throttle_reasons_active")
     snapshot = dict(zip(keys, parts, strict=True))
     snapshot["throttled"] = is_throttled(snapshot)
+    snapshot["thermal_throttled"] = thermal_throttled(snapshot)
+    snapshot["power_limited"] = power_limited(snapshot)
     return snapshot
 
 
@@ -422,30 +464,56 @@ def gpu_thermal_snapshot() -> dict:
 # requested clocks *while doing work*. GpuIdle (0x1) and the applications /
 # display clock settings are deliberately excluded: they are not a
 # performance confound, they are normal states.
-_THROTTLE_MASK = (
-    0x0000000000000004  # SwPowerCap
-    | 0x0000000000000008  # HwSlowdown
-    | 0x0000000000000020  # SwThermalSlowdown
+#
+# Split into thermal vs. power on purpose (not left as one merged
+# "throttled" bit): a laptop's power limiter capping sustained draw is an
+# ordinary, expected steady-state condition on this project's reference
+# hardware, not a thermal fault -- conflating the two means a run that was
+# simply power-capped the whole time (normal) looks identical to one that
+# was genuinely overheating (a real confound worth flagging separately).
+_THERMAL_MASK = (
+    0x0000000000000020  # SwThermalSlowdown
     | 0x0000000000000040  # HwThermalSlowdown
+)
+_POWER_MASK = (
+    0x0000000000000004  # SwPowerCap
     | 0x0000000000000080  # HwPowerBrakeSlowdown
 )
+# HwSlowdown (0x8) is a real hardware slowdown signal without NVML telling
+# us *why* (thermal, power, or something else) -- kept in the combined
+# mask for backward-compatible is_throttled(), but not attributed to
+# either specific category since that would be a guess.
+_THROTTLE_MASK = _THERMAL_MASK | _POWER_MASK | 0x0000000000000008
 
 
-def is_throttled(snapshot: dict) -> bool | None:
-    """Whether a thermal/power throttle was active in this snapshot.
-
-    A sustained campaign on a laptop GPU will throttle, and a throttled cell
-    is not comparable to an unthrottled one. Recording the raw reason bits
-    is not enough on its own: nobody reads hex when scanning a result file,
-    so the decoded boolean is what makes the confound visible.
-    """
+def _throttle_bits(snapshot: dict) -> int | None:
     raw = snapshot.get("throttle_reasons_active")
     if raw in (None, "", "[N/A]", "N/A"):
         return None
     try:
-        return bool(int(str(raw), 16) & _THROTTLE_MASK)
+        return int(str(raw), 16)
     except ValueError:
         return None
+
+
+def is_throttled(snapshot: dict) -> bool | None:
+    """Whether ANY throttle reason (thermal, power, or unattributed
+    hardware slowdown) was active in this snapshot -- kept for existing
+    callers; thermal_throttled/power_limited (also set on the snapshot by
+    gpu_thermal_snapshot) are the reclassified fields a comparison should
+    actually condition on."""
+    bits = _throttle_bits(snapshot)
+    return None if bits is None else bool(bits & _THROTTLE_MASK)
+
+
+def thermal_throttled(snapshot: dict) -> bool | None:
+    bits = _throttle_bits(snapshot)
+    return None if bits is None else bool(bits & _THERMAL_MASK)
+
+
+def power_limited(snapshot: dict) -> bool | None:
+    bits = _throttle_bits(snapshot)
+    return None if bits is None else bool(bits & _POWER_MASK)
 
 
 def cool_down(seconds: float, max_temperature_c: float | None) -> dict:
@@ -575,7 +643,7 @@ def load_tokenizer(model_id: str):
 
 def result_row(case: PromptCase, method: Method, prompt: str, input_tokens: int,
                generated_ids: list[int], answer: str, wall_s: float,
-               peak_vram_gb: float, cache_drop: tuple[bool, str | None],
+               peak_vram_gb: float | None, cache_drop: tuple[bool, str | None],
                extra: dict | None = None) -> dict:
     row = {
         "case_id": case.id,
@@ -652,31 +720,37 @@ def run_airllm(method: Method, rendered: list[dict], n_tokens: int,
             cache = drop_caches()
             reset_cuda_peak()
             read0 = process_read_bytes()
-            t0 = time.perf_counter()
-            # An empty EOS list forces a fixed token count. Transformers 5.x
-            # still needs a concrete pad ID when EOS is empty, otherwise it
-            # indexes eos_token_tensor[0] while preparing special tokens.
-            pad_token_id = model.tokenizer.pad_token_id
-            if pad_token_id is None:
-                pad_token_id = model.tokenizer.eos_token_id
-            if isinstance(pad_token_id, (list, tuple)):
-                pad_token_id = pad_token_id[0] if pad_token_id else None
-            if pad_token_id is None:
-                pad_token_id = 0
-            output = model.generate(
-                ids, max_new_tokens=n_tokens, eos_token_id=[],
-                pad_token_id=int(pad_token_id),
-                do_sample=False, use_cache=True, return_dict_in_generate=True, **kwargs)
-            torch.cuda.synchronize()
-            wall = time.perf_counter() - t0
+            with MemoryProbe() as probe:
+                t0 = time.perf_counter()
+                # An empty EOS list forces a fixed token count. Transformers
+                # 5.x still needs a concrete pad ID when EOS is empty,
+                # otherwise it indexes eos_token_tensor[0] while preparing
+                # special tokens.
+                pad_token_id = model.tokenizer.pad_token_id
+                if pad_token_id is None:
+                    pad_token_id = model.tokenizer.eos_token_id
+                if isinstance(pad_token_id, (list, tuple)):
+                    pad_token_id = pad_token_id[0] if pad_token_id else None
+                if pad_token_id is None:
+                    pad_token_id = 0
+                output = model.generate(
+                    ids, max_new_tokens=n_tokens, eos_token_id=[],
+                    pad_token_id=int(pad_token_id),
+                    do_sample=False, use_cache=True, return_dict_in_generate=True, **kwargs)
+                torch.cuda.synchronize()
+                wall = time.perf_counter() - t0
+            mem_report = probe.report()
+            peak_vram_gb, peak_vram_source = canonical_peak_vram(mem_report)
             read_bytes = process_read_bytes() - read0
             sequence = output.sequences if hasattr(output, "sequences") else output
             generated = sequence[0, ids.shape[1]:].tolist()
             answer = model.tokenizer.decode(generated, skip_special_tokens=True)
             rows.append(result_row(
                 item["case"], method, item["prompt"], item["input_tokens"],
-                generated, answer, wall, torch.cuda.max_memory_allocated() / 1e9,
+                generated, answer, wall, peak_vram_gb,
                 cache, {"generation_mode": "greedy", "repeat": repeat_offset + repeat,
+                        "peak_vram_source": peak_vram_source,
+                        **memory_probe_extra_fields(mem_report),
                         "gpu_thermal": gpu_thermal_snapshot(),
                         "process_read_bytes": read_bytes,
                         "process_read_bytes_per_token": read_bytes / max(len(generated), 1),
@@ -723,15 +797,19 @@ def run_accelerate(method: Method, rendered: list[dict], n_tokens: int,
             result = baseline.generate(item["prompt"], n_tokens)
             read_bytes = process_read_bytes() - read0
             generated = result["output_token_ids"]
+            mem_report = result["memory_report"]
+            peak_vram_gb, peak_vram_source = canonical_peak_vram(mem_report)
             rows.append(result_row(
                 item["case"], method, item["prompt"], item["input_tokens"],
                 generated, result["text"], result["wall_seconds"],
-                result["peak_vram_gb"], cache,
+                peak_vram_gb, cache,
                 {"generation_mode": "greedy", "repeat": repeat_offset + repeat,
                  "device_map": baseline.device_map,
                  "offload_dir": baseline.offload_dir,
                  "gpu_memory_limit": method.overrides["gpu_memory"],
                  "cpu_memory_limit": method.overrides["cpu_memory"],
+                 "peak_vram_source": peak_vram_source,
+                 **memory_probe_extra_fields(mem_report),
                  "gpu_thermal": gpu_thermal_snapshot(),
                  "process_read_bytes": read_bytes,
                  "process_read_bytes_per_token": read_bytes / max(len(generated), 1),
@@ -830,24 +908,29 @@ def run_dfloat11(method: Method, rendered: list[dict], n_tokens: int,
             cache = drop_caches()
             reset_cuda_peak()
             read0 = process_read_bytes()
-            t0 = time.perf_counter()
-            with torch.no_grad():
-                output = model.generate(
-                    **enc, max_new_tokens=n_tokens, eos_token_id=[],
-                    pad_token_id=_pad_token_id(), do_sample=False, use_cache=True,
-                    return_dict_in_generate=True)
-            torch.cuda.synchronize()
-            wall = time.perf_counter() - t0
+            with MemoryProbe() as probe:
+                t0 = time.perf_counter()
+                with torch.no_grad():
+                    output = model.generate(
+                        **enc, max_new_tokens=n_tokens, eos_token_id=[],
+                        pad_token_id=_pad_token_id(), do_sample=False, use_cache=True,
+                        return_dict_in_generate=True)
+                torch.cuda.synchronize()
+                wall = time.perf_counter() - t0
+            mem_report = probe.report()
+            peak_vram_gb, peak_vram_source = canonical_peak_vram(mem_report)
             read_bytes = process_read_bytes() - read0
             sequence = output.sequences if hasattr(output, "sequences") else output
             generated = sequence[0, enc["input_ids"].shape[1]:].tolist()
             answer = tokenizer.decode(generated, skip_special_tokens=True)
             rows.append(result_row(
                 item["case"], method, item["prompt"], item["input_tokens"],
-                generated, answer, wall, torch.cuda.max_memory_allocated() / 1e9,
+                generated, answer, wall, peak_vram_gb,
                 cache, {"generation_mode": "greedy",
                         "repeat": repeat_offset + repeat,
                         "dfloat11_model": model_id, "cpu_offload": cpu_offload,
+                        "peak_vram_source": peak_vram_source,
+                        **memory_probe_extra_fields(mem_report),
                         "gpu_thermal": gpu_thermal_snapshot(),
                         "process_read_bytes": read_bytes,
                         "process_read_bytes_per_token": read_bytes / max(len(generated), 1),
@@ -955,17 +1038,20 @@ def run_afterimage(method: Method, rendered: list[dict], n_tokens: int,
             engine.stats.reset()
             reset_cuda_peak()
             read0 = process_read_bytes()
-            t0 = time.perf_counter()
-            policy = None
-            if cfg.draft_mode == "model":
-                generator = torch.Generator(device="cuda").manual_seed(1000 + case_index)
-                sequence, policy = engine.generate_adaptive(
-                    ids, max_new_tokens=n_tokens, draft_model=draft_model,
-                    temperature=0.0, generator=generator)
-            else:
-                sequence = engine.generate_greedy(ids, max_new_tokens=n_tokens, use_cache=True)
-            torch.cuda.synchronize()
-            wall = time.perf_counter() - t0
+            with MemoryProbe() as probe:
+                t0 = time.perf_counter()
+                policy = None
+                if cfg.draft_mode == "model":
+                    generator = torch.Generator(device="cuda").manual_seed(1000 + case_index)
+                    sequence, policy = engine.generate_adaptive(
+                        ids, max_new_tokens=n_tokens, draft_model=draft_model,
+                        temperature=0.0, generator=generator)
+                else:
+                    sequence = engine.generate_greedy(ids, max_new_tokens=n_tokens, use_cache=True)
+                torch.cuda.synchronize()
+                wall = time.perf_counter() - t0
+            mem_report = probe.report()
+            peak_vram_gb, peak_vram_source = canonical_peak_vram(mem_report)
             read_bytes = process_read_bytes() - read0
             generated = sequence[0, ids.shape[1]:].tolist()
             answer = tokenizer.decode(generated, skip_special_tokens=True)
@@ -1018,10 +1104,12 @@ def run_afterimage(method: Method, rendered: list[dict], n_tokens: int,
                 "mips_fallbacks": stats.mips_fallbacks,
                 "mips_rows_evaluated": stats.mips_rows_evaluated,
                 "mips_rows_pruned": stats.mips_rows_pruned,
+                "peak_vram_source": peak_vram_source,
+                **memory_probe_extra_fields(mem_report),
             }
             rows.append(result_row(
                 item["case"], method, item["prompt"], item["input_tokens"],
-                generated, answer, wall, torch.cuda.max_memory_allocated() / 1e9,
+                generated, answer, wall, peak_vram_gb,
                 cache, extra))
             if rows_checkpoint is not None:
                 rows_checkpoint(rows)
@@ -1217,6 +1305,23 @@ def aggregate(rows: list[dict]) -> dict:
         return {"completed_cases": 0}
     total_wall = sum(row["wall_seconds"] for row in rows)
     total_tokens = sum(row["output_tokens"] for row in rows)
+    # A row's peak_vram_gb is None when neither nvidia-smi nor the torch
+    # allocator produced a usable reading for that cell (see
+    # canonical_peak_vram) -- max() over a mix of None and float raises,
+    # and silently coercing to 0.0 is exactly the bug this replaces (a
+    # failed reading is not "used no memory", it is "unmeasured"). If
+    # every row in this method's cells is unmeasured, the summary's own
+    # peak_vram_gb is honestly None too, not a fabricated number.
+    valid_vram = [row["peak_vram_gb"] for row in rows if row["peak_vram_gb"] is not None]
+    # expected_match_rate is only meaningful for cases that declare a real
+    # expected_any -- most of this project's prompts (paper_generation
+    # split, deliberately) declare none, since there is no single correct
+    # continuation for an open-ended generation prompt. case.matches()
+    # returns False when expected_any is empty (any() of nothing), which
+    # is the right value for the per-row expected_match field, but
+    # averaging that across a whole method silently reports "0% correct"
+    # for a metric that was never applicable in the first place.
+    applicable_rows = [row for row in rows if row.get("expected_any")]
     summary = {
         "completed_cases": len(rows),
         "total_output_tokens": total_tokens,
@@ -1224,10 +1329,15 @@ def aggregate(rows: list[dict]) -> dict:
         "seconds_per_token": total_wall / max(total_tokens, 1),
         "median_cell_seconds_per_token": statistics.median(
             row["seconds_per_token"] for row in rows),
-        "peak_vram_gb": max(row["peak_vram_gb"] for row in rows),
-        "expected_matches": sum(bool(row["expected_match"]) for row in rows),
-        "expected_match_rate": statistics.mean(
-            bool(row["expected_match"]) for row in rows),
+        "peak_vram_gb": max(valid_vram) if valid_vram else None,
+        "peak_vram_measured_cells": len(valid_vram),
+        "peak_vram_unmeasured_cells": len(rows) - len(valid_vram),
+        "expected_matches": (
+            sum(bool(row["expected_match"]) for row in applicable_rows)
+            if applicable_rows else None),
+        "expected_match_rate": (
+            statistics.mean(bool(row["expected_match"]) for row in applicable_rows)
+            if applicable_rows else None),
         "all_cache_drops_succeeded": all(row["cache_drop_succeeded"] for row in rows),
     }
     summary.update(_repeat_dispersion(rows))
@@ -1267,6 +1377,15 @@ def _thermal_integrity(rows: list[dict]) -> dict:
     if not known:
         return {"thermally_throttled_cells": None}
     throttled = sum(bool(value) for value in known)
+    # Thermal and power are reported separately (see thermal_throttled/
+    # power_limited in gpu_thermal_snapshot): a laptop hitting its steady-
+    # state power cap during every cell is normal and not comparable to
+    # genuine thermal throttling, and "thermally_clean" below should not
+    # be tripped by ordinary power limiting.
+    thermal_seen = [row.get("gpu_thermal", {}).get("thermal_throttled") for row in rows]
+    thermal_known = [value for value in thermal_seen if value is not None]
+    power_seen = [row.get("gpu_thermal", {}).get("power_limited") for row in rows]
+    power_known = [value for value in power_seen if value is not None]
     temperatures = []
     for row in rows:
         try:
@@ -1277,6 +1396,10 @@ def _thermal_integrity(rows: list[dict]) -> dict:
         "thermally_throttled_cells": throttled,
         "thermally_observed_cells": len(known),
         "thermally_clean": throttled == 0,
+        "thermal_throttled_cells": (
+            sum(bool(value) for value in thermal_known) if thermal_known else None),
+        "power_limited_cells": (
+            sum(bool(value) for value in power_known) if power_known else None),
     }
     if temperatures:
         integrity["gpu_temperature_c_min"] = min(temperatures)

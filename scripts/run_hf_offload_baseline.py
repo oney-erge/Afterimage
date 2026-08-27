@@ -15,6 +15,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 from afterimage.baselines.b0_hf_offload import load_hf_offload_baseline
 from afterimage.bench.cachectl import drop_caches
 from afterimage.bench.prompt_suite import prompt_cases, render_chat_prompt
+from scripts.run_bounded_suite import canonical_peak_vram, memory_probe_extra_fields
 
 
 def main() -> int:
@@ -71,11 +72,15 @@ def main() -> int:
         prompt = render_chat_prompt(baseline.tokenizer, case)
         cache_succeeded = drop_caches()
         row = baseline.generate(prompt, args.max_new_tokens)
+        mem_report = row.pop("memory_report")
+        peak_vram_gb, peak_vram_source = canonical_peak_vram(mem_report)
         row.update(case_id=case.id, semantic_bucket=case.semantic_bucket,
                    expected_match=case.matches(row["text"]),
                    cache_drop_succeeded=cache_succeeded,
                    cache_drop_error=(None if cache_succeeded else
-                                     "Linux page-cache drop failed"))
+                                     "Linux page-cache drop failed"),
+                   peak_vram_gb=peak_vram_gb, peak_vram_source=peak_vram_source,
+                   **memory_probe_extra_fields(mem_report))
         rows.append(row)
         payload["rows"] = rows
         tmp.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
@@ -88,7 +93,9 @@ def main() -> int:
                                  max(sum(row["tokens_generated"] for row in rows), 1),
             "median_cell_seconds_per_token": statistics.median(
                 row["seconds_per_token"] for row in rows),
-            "peak_vram_gb": max(row["peak_vram_gb"] for row in rows),
+            "peak_vram_gb": (
+                max(vram for row in rows if (vram := row["peak_vram_gb"]) is not None)
+                if any(row["peak_vram_gb"] is not None for row in rows) else None),
             "expected_match_rate": statistics.mean(
                 row["expected_match"] for row in rows),
             "all_cache_drops_succeeded": all(

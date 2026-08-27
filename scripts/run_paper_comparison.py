@@ -426,21 +426,39 @@ def completed_cells(result: dict) -> set[tuple[int, str]]:
            if cell.get("error") is None}
 
 
+def capacity_failed_cells(result: dict) -> set[tuple[int, str]]:
+    """(block, method_id) pairs where the method predictably could not
+    initialize within the available hardware (see run_paper_comparison_
+    worker.is_capacity_failure) -- a real, reportable OUTCOME, not missing
+    data. A method that deterministically cannot fit a VRAM budget will
+    fail every block the same way; treating that as "still needed" would
+    make --resume retry a doomed OOM forever and would make
+    paper_eligible=False forever too, for a result the campaign was never
+    going to be able to complete regardless of how many times it reran.
+    """
+    return {(cell["block"], cell["method"]) for cell in result.get("cells", [])
+           if cell.get("error") is not None
+           and isinstance(cell.get("metadata"), dict)
+           and cell["metadata"].get("capacity_failure")}
+
+
 def paper_eligibility(result: dict, blocks: int, selected: list[str]) -> tuple[bool, str]:
     """Whether every requested (block, method) cell for this token length
-    actually produced rows -- a paper claim built on a matrix with silent
-    gaps (a method that failed every block, a block cut short by the time
-    budget) is not a claim about what the flags requested, it is a claim
-    about whatever happened to finish. required is exactly range(blocks) x
-    selected, not "whatever showed up in method_order_per_block", so a
-    block that never started at all (time budget exhausted before it
-    began) is caught too, not just cells that started and then failed.
+    either produced rows or was accounted for by a predeclared capacity
+    failure -- a paper claim built on a matrix with silent gaps (a method
+    that failed every block for an unexplained reason, a block cut short
+    by the time budget) is not a claim about what the flags requested, it
+    is a claim about whatever happened to finish. required is exactly
+    range(blocks) x selected, not "whatever showed up in
+    method_order_per_block", so a block that never started at all (time
+    budget exhausted before it began) is caught too, not just cells that
+    started and then failed.
     """
     required = {(block, method_id) for block in range(blocks) for method_id in selected}
-    have = completed_cells(result)
+    have = completed_cells(result) | capacity_failed_cells(result)
     missing = sorted(required - have)
     if not missing:
-        return True, "complete: every requested (block, method) cell succeeded"
+        return True, "complete: every requested (block, method) cell succeeded or hit a predeclared capacity failure"
     preview = ", ".join("block %d/%s" % pair for pair in missing[:5])
     more = " (+%d more)" % (len(missing) - 5) if len(missing) > 5 else ""
     return False, "missing %d of %d required cells: %s%s" % (
@@ -486,8 +504,11 @@ def run_one_token_length(args, tokenizer, rendered: list[dict],
         for method_id in selected:
             result["rows_by_method"].setdefault(method_id, [])
         resuming = True
-        already_done = len(completed_cells(result))
-        log("\nRESUMING %s: %d cell(s) already complete" % (partial, already_done))
+        already_done_count = len(completed_cells(result))
+        already_capacity_failed_count = len(capacity_failed_cells(result))
+        log("\nRESUMING %s: %d cell(s) already complete, %d predeclared capacity "
+           "failure(s) (not retried)" % (partial, already_done_count,
+                                         already_capacity_failed_count))
     else:
         result = {
             "schema_version": 3,
@@ -527,7 +548,12 @@ def run_one_token_length(args, tokenizer, rendered: list[dict],
     deadline = started + args.time_budget_minutes_per_length * 60
     rng = random.Random(args.seed)
     case_ids = [item["case"].id for item in rendered]
-    already_done = completed_cells(result)
+    # A predeclared capacity failure (see capacity_failed_cells) is skipped
+    # on resume the same as a real success -- it deterministically fails
+    # the same way every time (the hardware still does not have enough
+    # VRAM), so retrying it only burns time without producing new
+    # information.
+    already_done = completed_cells(result) | capacity_failed_cells(result)
 
     for block in range(args.blocks):
         if time.perf_counter() >= deadline:
@@ -613,6 +639,14 @@ def run_one_token_length(args, tokenizer, rendered: list[dict],
     for method_id in selected:
         rows = result["rows_by_method"][method_id]
         summary = aggregate(rows) if rows else {}
+        # At max_new_tokens=1, seconds_per_token and wall-clock time to the
+        # first token are the same number by construction (wall_seconds /
+        # 1). Presenting that as "N s/token" invites treating a one-token
+        # measurement as a steady-state decode rate, which it is not --
+        # ttft_seconds is the same value under the name a reader should
+        # actually use for it. See run_paper_comparison.py's workload_for.
+        if result.get("workload") == "ttft" and summary.get("seconds_per_token") is not None:
+            summary["ttft_seconds"] = summary["seconds_per_token"]
         method_cells = [cell for cell in result["cells"] if cell["method"] == method_id]
         peak_rss_values = [cell["peak_host_rss_bytes"] for cell in method_cells
                            if cell["peak_host_rss_bytes"] is not None]
@@ -628,11 +662,31 @@ def run_one_token_length(args, tokenizer, rendered: list[dict],
                      if t.get("temperature_c_max") is not None]
         throttle_flags = [t["any_throttle_during_measurement"] for t in thermal_summaries
                           if t.get("any_throttle_during_measurement") is not None]
+        capacity_failure_cells = [
+            cell for cell in method_cells if cell.get("error") is not None
+            and isinstance(cell.get("metadata"), dict)
+            and cell["metadata"].get("capacity_failure")]
+        # A capacity failure is a finding ("this method cannot fit the
+        # available VRAM"), never a table row that just says "failed" --
+        # this is the field a paper's methods table should key its
+        # capacity-failure vs. measured-result rows on, instead of
+        # inferring it from an empty rows list, which also covers "not
+        # attempted yet" and "failed for an unrelated bug" identically.
+        if rows:
+            outcome = "measured"
+        elif method_cells and len(capacity_failure_cells) == len(method_cells):
+            outcome = "capacity_failure"
+        elif method_cells:
+            outcome = "error"
+        else:
+            outcome = "not_attempted"
         entry = {
             "method_id": method_id, "title": METHODS[method_id].title,
             "declared_exactness": METHODS[method_id].exactness,
             "rows": rows, "summary": summary,
             "cells": method_cells,
+            "outcome": outcome,
+            "capacity_failure_blocks": len(capacity_failure_cells),
             "peak_host_rss_bytes": max(peak_rss_values) if peak_rss_values else None,
             "initialization_seconds_median": (
                 statistics.median(init_seconds_values) if init_seconds_values else None),

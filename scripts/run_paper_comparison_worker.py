@@ -101,6 +101,27 @@ def _peak_rss_bytes() -> int | None:
     return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024
 
 
+def is_capacity_failure(exc: BaseException) -> bool:
+    """Whether this exception is a predeclared VRAM/host-memory capacity
+    failure -- the method could not fit in the available hardware, which
+    is a real, reportable OUTCOME (see run_paper_comparison.py's
+    capacity_failed_cells / paper_eligibility), not a bug or a missing
+    measurement that --resume should keep retrying forever.
+
+    Checks the message text, not only the exception type: the type most
+    callers would expect here, torch.cuda.OutOfMemoryError, is raised by
+    torch's OWN caching allocator when it cannot satisfy a request --  but
+    a real OOM this project has actually hit (DFloat11Model.from_pretrained
+    calling tensor.pin_memory() during CUDA-side loading) surfaced as a
+    plain RuntimeError with "CUDA error: out of memory" in its text
+    instead, from a CUDA allocation that bypassed torch's allocator
+    entirely. Matching on type alone would silently miss that real case.
+    """
+    if isinstance(exc, torch.cuda.OutOfMemoryError):
+        return True
+    return "out of memory" in str(exc).lower()
+
+
 def thermal_monitor_summary(samples: list[dict]) -> dict:
     """Aggregates ~1 Hz gpu_thermal_snapshot() samples taken across a
     cell's entire timed portion, not just at cell start/end -- this
@@ -275,7 +296,8 @@ def run_cell(config: dict) -> dict:
                    "thermal_monitoring": sampler.summary(), "error": None,
                    "traceback": None}
         except Exception as exc:
-            return {"rows": [], "metadata": {}, "peak_host_rss_bytes": _peak_rss_bytes(),
+            metadata = {"capacity_failure": True} if is_capacity_failure(exc) else {}
+            return {"rows": [], "metadata": metadata, "peak_host_rss_bytes": _peak_rss_bytes(),
                    "thermal_monitoring": sampler.summary(), "error": repr(exc),
                    "traceback": traceback.format_exc()}
         finally:
