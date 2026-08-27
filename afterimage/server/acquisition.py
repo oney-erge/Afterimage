@@ -1,6 +1,7 @@
 """Idempotent model acquisition and preparation pipeline."""
 from __future__ import annotations
 
+import os
 import pathlib
 import shutil
 import time
@@ -9,6 +10,11 @@ from typing import Any
 from afterimage.cli import DEFAULT_STORE_ROOT, _store_dir_for
 from afterimage.runtime.adapters import classify_config, resolve_model_adapter
 from afterimage.server.model_registry import ModelRegistry, model_registry
+
+# hf-xet performs large transfers in native code and does not expose the
+# cooperative progress checkpoints used by JobControl. Direct Hub HTTP is
+# resumable and reports through tqdm, which makes Pause and Cancel reliable.
+os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 
 
 def _selected_files(info: Any) -> list[Any]:

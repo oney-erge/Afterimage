@@ -25,6 +25,13 @@ No tagged releases yet. Everything below is `main`.
   reference evidence on Home.
 - Added focused model-state, catalog, adapter, MoE exactness, API-shell, and
   optional Playwright desktop/mobile acceptance tests.
+- Redesigned Models around an above-the-fold search, compact local inventory,
+  numbered Hub pages, and read-only discovery of Hugging Face and Ollama models.
+- Redesigned Research as a guided model, strategy, and settings flow with real
+  local reports, explicit file requirements, reusable Chat profiles, and visible
+  OpenAI-compatible endpoint examples.
+- Made cancellation terminal immediately, preserved resumable partial files,
+  and prevented a stalled third-party download from blocking a later model job.
 
 ### Added
 - `afterimage quickstart`: compress + run a small model end to end (~2 GB,

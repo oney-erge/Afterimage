@@ -27,7 +27,8 @@ def test_experiment_registry_and_ui_are_exposed():
     assert 'id="chat-model"' in page
     assert 'id="chat-stop"' in page
     assert 'src="/static/js/app.js"' in page
-    assert "Compare execution profiles" in page
+    assert "Compare memory profiles" in page
+    assert "Reports from this computer" in page
     assert "Research Lab" not in page
     definition = client.get("/api/experiments/h12-bayesian-prefetch").json()
     assert definition["protocol"]["id"] == "adaptive-prefetch"

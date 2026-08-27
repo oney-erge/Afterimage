@@ -292,10 +292,13 @@ pip install -e ".[server]"
 afterimage serve --host 127.0.0.1 --port 8420
 ```
 
-The server exposes `/v1/chat/completions`, a persistent model library,
-cursor-paginated Hub discovery, a unified Get pipeline, download and
-preparation job controls, cancellable local chat, runtime statistics, and the
-H0-H18 Research workspace. The bundled responsive UI is organized into Home,
+The server exposes `/v1/chat/completions`, a persistent model library, numbered
+Hub discovery, read-only discovery of compatible Hugging Face cache entries and
+Ollama models, a unified Get pipeline, download and preparation job controls,
+cancellable local chat, runtime statistics, and the H0-H18 Research workspace.
+Research reports can save measured candidate or control settings as runtime
+profiles, which then appear in Chat and work through `runtime_profile_id` on the
+OpenAI-compatible endpoint. The bundled responsive UI is organized into Home,
 Models, Chat, and Research rather than exposing compression internals as
 separate user workflows.
 

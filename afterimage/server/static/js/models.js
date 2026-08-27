@@ -1,16 +1,19 @@
 import { state, updateState } from "./state.js";
-import { $, $$, api, badge, compactNumber, esc, hfUrl, statusLabel, toast, watchJob } from "./shared.js";
+import { $, $$, api, badge, compactNumber, esc, fmtBytes, hfUrl, statusLabel, toast, watchJob } from "./shared.js";
 import { isActiveJob, renderJobs } from "./jobs.js";
 
 const watchedJobs = new Set();
 let libraryChanged = () => {};
+let showAllComputerResults = false;
 
-function modelCompatibility(model) {
-  return model.metadata?.compatibility || {};
-}
+function modelCompatibility(model) { return model.metadata?.compatibility || {}; }
+function activeFor(modelId) { return state.jobs.find((job) => job.model_id === modelId && isActiveJob(job)); }
+function encodedModel(modelId) { return encodeURIComponent(modelId); }
+function compactViewport() { return window.matchMedia("(max-width: 760px)").matches; }
 
-function activeFor(modelId) {
-  return state.jobs.find((job) => job.model_id === modelId && isActiveJob(job));
+function chatWith(modelId) {
+  sessionStorage.setItem("afterimage.chatModel", modelId);
+  location.hash = "chat";
 }
 
 function renderLibrary() {
@@ -18,34 +21,29 @@ function renderLibrary() {
   node.classList.remove("loading-line");
   $("model-count").textContent = `${state.models.length} ${state.models.length === 1 ? "model" : "models"}`;
   if (!state.models.length) {
-    node.innerHTML = '<div class="empty-inline">No local models yet. Search the catalog and choose Get.</div>';
+    node.innerHTML = '<div class="empty-inline">Nothing has been added to Afterimage yet.</div>';
     return;
   }
   node.innerHTML = state.models.map((model) => {
     const compatibility = modelCompatibility(model);
     const job = activeFor(model.model_id);
     const stateValue = job?.status || model.state;
-    const source = model.metadata?.source_bytes ? `${(model.metadata.source_bytes / 1e9).toFixed(1)} GB source` : null;
-    const prepared = model.comp_gb ? `${model.comp_gb.toFixed(1)} GB prepared` : null;
+    const size = model.comp_gb ? `${model.comp_gb.toFixed(1)} GB prepared` : model.metadata?.source_bytes ? `${fmtBytes(model.metadata.source_bytes)} source` : statusLabel(model.stage || model.state);
     const actions = [];
-    if (model.state === "ready") actions.push(`<button class="button primary" data-chat-model="${encodeURIComponent(model.model_id)}">Chat</button>`);
-    else if (!job) actions.push(`<button class="button primary" data-get-model="${encodeURIComponent(model.model_id)}">${model.state === "downloaded" ? "Prepare" : "Continue"}</button>`);
-    actions.push(`<button class="button secondary" data-model-detail="${encodeURIComponent(model.model_id)}">Details</button>`);
-    if (!job) actions.push(`<button class="text-button" data-remove-model="${encodeURIComponent(model.model_id)}">Remove</button>`);
-    return `<article class="model-row">
-      <div class="model-primary"><strong class="model-name" title="${esc(model.model_id)}">${esc(model.model_id)}</strong><div class="badge-row">${badge(stateValue)}${compatibility.execution ? badge(compatibility.execution) : ""}${compatibility.modality === "vision-text" ? badge("vision", "Vision") : ""}${compatibility.mixture_of_experts ? badge("moe", "MoE") : ""}</div></div>
-      <div class="model-description">${esc([source, prepared].filter(Boolean).join(" · ") || model.error || statusLabel(model.stage || model.state))}</div>
-      <div class="row-actions">${actions.join("")}</div>
+    if (model.state === "ready") actions.push(`<button class="button primary" data-chat-model="${encodedModel(model.model_id)}">Chat</button>`);
+    else if (!job) actions.push(`<button class="button primary" data-get-model="${encodedModel(model.model_id)}">${model.state === "downloaded" ? "Prepare" : "Continue"}</button>`);
+    actions.push(`<button class="button secondary" data-model-detail="${encodedModel(model.model_id)}">Details</button>`);
+    if (!job) actions.push(`<button class="text-button" data-remove-model="${encodedModel(model.model_id)}">Remove</button>`);
+    return `<article class="model-row compact-model-row">
+      <div class="model-primary"><strong class="model-name" title="${esc(model.model_id)}">${esc(model.model_id)}</strong><div class="badge-row">${badge(stateValue)}${compatibility.modality === "vision-text" ? badge("vision", "Vision") : ""}${compatibility.mixture_of_experts ? badge("moe", "MoE") : ""}</div></div>
+      <div class="model-description">${esc(model.error || size)}</div><div class="row-actions">${actions.join("")}</div>
     </article>`;
   }).join("");
-  bindLibraryActions(node);
+  bindModelActions(node);
 }
 
-function bindLibraryActions(node) {
-  node.querySelectorAll("[data-chat-model]").forEach((button) => button.addEventListener("click", () => {
-    sessionStorage.setItem("afterimage.chatModel", decodeURIComponent(button.dataset.chatModel));
-    location.hash = "chat";
-  }));
+function bindModelActions(node) {
+  node.querySelectorAll("[data-chat-model]").forEach((button) => button.addEventListener("click", () => chatWith(decodeURIComponent(button.dataset.chatModel))));
   node.querySelectorAll("[data-get-model]").forEach((button) => button.addEventListener("click", () => startGet(decodeURIComponent(button.dataset.getModel), button)));
   node.querySelectorAll("[data-model-detail]").forEach((button) => button.addEventListener("click", () => openModelDialog(decodeURIComponent(button.dataset.modelDetail))));
   node.querySelectorAll("[data-remove-model]").forEach((button) => button.addEventListener("click", () => removeModel(decodeURIComponent(button.dataset.removeModel), button)));
@@ -59,40 +57,67 @@ function filteredCatalog() {
   return rows;
 }
 
+function computerAction(model) {
+  const local = state.models.find((row) => row.model_id === model.model_id);
+  const job = activeFor(model.model_id);
+  if (local?.state === "ready") return `<button class="button primary" data-chat-model="${encodedModel(model.model_id)}">Chat</button>`;
+  if (job) return badge(job.status);
+  if (model.source === "huggingface-cache" && model.can_prepare) return `<button class="button primary" data-import-cache="${encodedModel(model.model_id)}">Prepare</button>`;
+  if (model.source === "ollama") return `<a class="button secondary" href="${esc(model.external_url)}" target="_blank" rel="noreferrer">Open LocalDeploy</a>`;
+  return "";
+}
+
+function renderComputerResults() {
+  const node = $("computer-results");
+  node.classList.remove("loading-line");
+  const rows = state.localDiscovery.models || [];
+  if (!rows.length) { node.innerHTML = ""; return; }
+  const previewLimit = compactViewport() ? 2 : 4;
+  const visible = showAllComputerResults ? rows : rows.slice(0, previewLimit);
+  const disclosure = rows.length > previewLimit
+    ? `<button type="button" class="text-button computer-disclosure" id="computer-disclosure">${showAllComputerResults ? "Show fewer" : `Show all ${rows.length}`}</button>`
+    : "";
+  node.innerHTML = `<div class="computer-result-head"><div><strong>Already on this computer</strong><span>Found in the Hugging Face cache or a running Ollama installation.</span></div><div class="computer-result-actions"><span>${rows.length}</span>${disclosure}</div></div><div class="computer-grid">${visible.map((model) => `<article class="computer-card"><div><strong title="${esc(model.model_id)}">${esc(model.model_id)}</strong><div class="badge-row">${badge(model.source, model.source_label)}${badge(model.format)}</div></div><p>${esc(model.message)}</p><div class="computer-card-foot"><span>${model.size_bytes ? fmtBytes(model.size_bytes) : "Size unavailable"}</span>${computerAction(model)}</div></article>`).join("")}</div>`;
+  bindModelActions(node);
+  node.querySelectorAll("[data-import-cache]").forEach((button) => button.addEventListener("click", () => importCached(decodeURIComponent(button.dataset.importCache), button)));
+  $("computer-disclosure")?.addEventListener("click", () => { showAllComputerResults = !showAllComputerResults; renderComputerResults(); });
+}
+
+function renderPagination() {
+  const current = Number(state.catalog.page || 1);
+  $("catalog-page").textContent = `Page ${current}`;
+  $("catalog-prev").disabled = current <= 1;
+  $("catalog-next").disabled = !state.catalog.next_cursor && state.catalog.exhausted !== false;
+  const windowPages = state.catalog.page_window?.length ? state.catalog.page_window : [current, ...(state.catalog.next_cursor ? [current + 1] : [])];
+  const pieces = [];
+  if (windowPages[0] > 1) pieces.push('<button type="button" data-catalog-page="1">1</button><span>…</span>');
+  for (const page of windowPages) pieces.push(`<button type="button" data-catalog-page="${page}" class="${page === current ? "is-current" : ""}" ${page === current ? 'aria-current="page"' : ""}>${page}</button>`);
+  $("catalog-pages").innerHTML = pieces.join("");
+  $("catalog-pages").querySelectorAll("[data-catalog-page]").forEach((button) => button.addEventListener("click", () => searchModels(Number(button.dataset.catalogPage), { focus: true })));
+}
+
 function renderCatalog() {
   const node = $("catalog-results");
   node.classList.remove("loading-line");
   const rows = filteredCatalog();
-  $("catalog-page").textContent = `Page ${state.catalog.page || 1}`;
-  $("catalog-prev").disabled = !state.catalog.previous_cursor;
-  $("catalog-next").disabled = !state.catalog.next_cursor;
-  const query = $("catalog-query").value.trim();
-  $("catalog-heading").textContent = query ? `Results for “${query}”` : "Popular models";
+  const query = state.catalogQuery || "";
+  $("catalog-heading").textContent = query ? `Models matching “${query}”` : "Popular models";
+  renderPagination();
   if (!rows.length) {
-    node.innerHTML = `<div class="empty-inline">${state.catalogFilter === "all" ? "No models found." : "No models of this type are on the current page. Try the next page or All."}</div>`;
+    node.innerHTML = `<div class="empty-inline">${state.catalogFilter === "all" ? "No online models matched this search." : "No models of this type are on this page."}</div>`;
     return;
   }
   node.innerHTML = rows.map((model) => {
     const local = model.local;
     const running = activeFor(model.model_id);
-    let action = `<button class="button primary" data-catalog-get="${encodeURIComponent(model.model_id)}">Get</button>`;
-    if (local?.state === "ready") action = `<button class="button secondary" data-chat-model="${encodeURIComponent(model.model_id)}">Chat</button>`;
+    let action = `<button class="button primary" data-catalog-get="${encodedModel(model.model_id)}">Get</button>`;
+    if (local?.state === "ready") action = `<button class="button primary" data-chat-model="${encodedModel(model.model_id)}">Chat</button>`;
     else if (running) action = badge(running.status);
-    const details = [
-      model.params_b ? `${model.params_b}B parameters` : null,
-      model.estimated_source_gb ? `about ${model.estimated_source_gb} GB source` : null,
-      model.downloads != null ? `${compactNumber(model.downloads)} downloads` : null,
-    ].filter(Boolean).join(" · ");
-    return `<article class="catalog-row">
-      <div class="model-primary"><a class="model-name" href="${hfUrl(model.model_id)}" target="_blank" rel="noreferrer">${esc(model.model_id)} ↗</a><div class="badge-row">${badge(model.execution)}${model.modality === "vision-text" ? badge("vision", "Vision") : badge("text", "Text")}${model.mixture_of_experts ? badge("moe", "MoE") : badge("dense", "Dense")}${model.gated ? badge("gated") : ""}</div></div>
-      <div class="model-description">${esc(details || "Catalog metadata unavailable")}<br>${esc(model.execution_reason || "Compatibility has not been inspected locally.")}</div>
-      <div class="row-actions">${action}<button class="button secondary" data-catalog-detail="${encodeURIComponent(model.model_id)}">Details</button></div>
-    </article>`;
+    const details = [model.params_b ? `${model.params_b}B parameters` : null, model.estimated_source_gb ? `about ${model.estimated_source_gb} GB source` : null, model.downloads != null ? `${compactNumber(model.downloads)} downloads` : null].filter(Boolean).join(" · ");
+    return `<article class="catalog-card"><div class="catalog-card-head"><a class="model-name" href="${hfUrl(model.model_id)}" target="_blank" rel="noreferrer">${esc(model.model_id)} ↗</a><div class="badge-row">${badge(model.execution)}${model.modality === "vision-text" ? badge("vision", "Vision") : badge("text", "Text")}${model.mixture_of_experts ? badge("moe", "MoE") : ""}</div></div><div class="catalog-card-body"><strong>${esc(details || "Metadata unavailable")}</strong><p>${esc(model.execution_reason || "Afterimage will inspect the local snapshot before preparing it.")}</p></div><div class="catalog-card-actions">${action}<button class="button secondary" data-catalog-detail="${encodedModel(model.model_id)}">Details</button></div></article>`;
   }).join("");
   node.querySelectorAll("[data-catalog-get]").forEach((button) => button.addEventListener("click", () => startGet(decodeURIComponent(button.dataset.catalogGet), button)));
-  node.querySelectorAll("[data-chat-model]").forEach((button) => button.addEventListener("click", () => {
-    sessionStorage.setItem("afterimage.chatModel", decodeURIComponent(button.dataset.chatModel)); location.hash = "chat";
-  }));
+  node.querySelectorAll("[data-chat-model]").forEach((button) => button.addEventListener("click", () => chatWith(decodeURIComponent(button.dataset.chatModel))));
   node.querySelectorAll("[data-catalog-detail]").forEach((button) => button.addEventListener("click", () => openModelDialog(decodeURIComponent(button.dataset.catalogDetail))));
 }
 
@@ -109,8 +134,7 @@ async function removeModel(modelId, button) {
   button.disabled = true;
   try {
     await api(`/api/models/${modelId.split("/").map(encodeURIComponent).join("/")}?confirm_model_id=${encodeURIComponent(modelId)}`, { method: "DELETE" });
-    toast(`${modelId} removed from the local library.`);
-    await loadLibrary();
+    toast(`${modelId} removed from Afterimage.`); await loadLibrary();
   } catch (error) { toast(error.message, "error"); button.disabled = false; }
 }
 
@@ -118,91 +142,75 @@ function watchAcquisition(jobId, modelId) {
   if (watchedJobs.has(jobId)) return;
   watchedJobs.add(jobId);
   watchJob(jobId, {
-    onUpdate: async (job) => {
+    onUpdate: (job) => {
       const index = state.jobs.findIndex((value) => value.id === jobId);
-      if (index >= 0) state.jobs[index] = { ...state.jobs[index], ...job };
-      else state.jobs.unshift(job);
-      renderActivity();
+      if (index >= 0) state.jobs[index] = { ...state.jobs[index], ...job }; else state.jobs.unshift(job);
+      renderActivity(); renderCatalog(); renderComputerResults();
     },
     onDone: async (job) => {
-      watchedJobs.delete(jobId);
-      await loadLibrary();
+      watchedJobs.delete(jobId); await loadLibrary();
       if (job.status === "done") toast(`${modelId} is ${job.result?.state || "ready"}.`);
+      else if (job.status === "cancelled") toast(`${modelId} stopped. Its partial download can be resumed later.`);
       else toast(job.error || `${modelId} ${job.status}.`, "error");
     },
   });
 }
 
-export async function startGet(modelId, button = null) {
+async function queueModel(path, body, modelId, button) {
   if (button) button.disabled = true;
   try {
-    const result = await api("/api/models/acquire", { method: "POST", body: { model_id: modelId, prepare: true } });
+    const result = await api(path, { method: "POST", body });
     toast(result.existing ? `${modelId} is already in progress.` : `Getting ${modelId}.`);
-    await loadLibrary();
-    watchAcquisition(result.job_id, modelId);
-  } catch (error) {
-    toast(error.message, "error");
-    if (button) button.disabled = false;
-  }
+    await loadLibrary(); watchAcquisition(result.job_id, modelId);
+  } catch (error) { toast(error.message, "error"); if (button) button.disabled = false; }
 }
+
+export function startGet(modelId, button = null) { return queueModel("/api/models/acquire", { model_id: modelId, prepare: true }, modelId, button); }
+function importCached(modelId, button) { return queueModel("/api/models/import-cache", { model_id: modelId }, modelId, button); }
 
 function renderActivity() {
-  renderJobs($("jobs-list"), state.jobs.filter((job) => job.kind !== "chat"), {
-    onChanged: loadLibrary,
-    onRetry: (modelId) => startGet(modelId),
-  });
-}
-
-async function refreshModelsOnly() {
-  const payload = await api("/api/models");
-  state.models = payload.models || [];
-  renderLibrary(); renderCatalog(); libraryChanged(state.models);
+  renderJobs($("jobs-list"), state.jobs.filter((job) => job.kind !== "chat"), { onChanged: loadLibrary, onRetry: (modelId) => startGet(modelId), limit: 5 });
 }
 
 export async function loadLibrary({ quiet = false } = {}) {
   try {
     const [models, jobs] = await Promise.all([api("/api/models"), api("/api/jobs")]);
     updateState({ models: models.models || [], jobs: jobs.jobs || [] });
-    renderLibrary(); renderActivity(); renderCatalog(); libraryChanged(state.models);
-    for (const job of state.jobs.filter(isActiveJob)) {
-      if (job.kind === "acquire") watchAcquisition(job.id, job.model_id);
-    }
-  } catch (error) {
-    if (!quiet) toast(`Could not load the model library: ${error.message}`, "error");
-  }
+    renderLibrary(); renderActivity(); renderCatalog(); renderComputerResults(); libraryChanged(state.models);
+    for (const job of state.jobs.filter(isActiveJob)) if (job.kind === "acquire") watchAcquisition(job.id, job.model_id);
+  } catch (error) { if (!quiet) toast(`Could not load the model library: ${error.message}`, "error"); }
 }
 
-export async function searchModels(cursor = null) {
+export async function searchModels(page = 1, { focus = false } = {}) {
   const node = $("catalog-results");
-  node.classList.add("loading-line"); node.innerHTML = "";
-  $("catalog-error").hidden = true;
-  const parameters = new URLSearchParams({
-    q: $("catalog-query").value.trim(), page_size: "24", sort: $("catalog-sort").value,
-  });
-  if (cursor) parameters.set("cursor", cursor);
+  const computer = $("computer-results");
+  node.classList.add("loading-line"); computer.classList.add("loading-line");
+  node.innerHTML = ""; computer.innerHTML = ""; $("catalog-error").hidden = true;
+  const query = $("catalog-query").value.trim();
+  state.catalogQuery = query;
+  showAllComputerResults = false;
+  const parameters = new URLSearchParams({ q: query, page_size: compactViewport() ? "6" : "12", sort: $("catalog-sort").value, page: String(page) });
   try {
-    const payload = await api(`/api/catalog/models?${parameters}`);
-    state.catalog = payload;
-    if (payload.error) {
-      $("catalog-error").textContent = payload.error; $("catalog-error").hidden = false;
-    }
-    renderCatalog();
+    const [payload, local] = await Promise.all([api(`/api/catalog/models?${parameters}`), api(`/api/models/discover?q=${encodeURIComponent(query)}`)]);
+    state.catalog = payload; state.localDiscovery = local;
+    if (payload.error) { $("catalog-error").textContent = payload.error; $("catalog-error").hidden = false; }
+    renderComputerResults(); renderCatalog();
+    if (focus) document.querySelector(".search-results").scrollIntoView({ block: "start", behavior: "smooth" });
   } catch (error) {
-    node.classList.remove("loading-line"); node.innerHTML = '<div class="empty-inline">Catalog unavailable.</div>';
+    node.classList.remove("loading-line"); computer.classList.remove("loading-line"); node.innerHTML = '<div class="empty-inline">Online catalog unavailable.</div>';
     $("catalog-error").textContent = error.message; $("catalog-error").hidden = false;
   }
 }
 
 export function initModels({ onLibraryChanged = () => {} } = {}) {
   libraryChanged = onLibraryChanged;
-  $("catalog-search").addEventListener("submit", (event) => { event.preventDefault(); searchModels(); });
-  $("catalog-sort").addEventListener("change", () => searchModels());
-  $("catalog-prev").addEventListener("click", () => searchModels(state.catalog.previous_cursor));
-  $("catalog-next").addEventListener("click", () => searchModels(state.catalog.next_cursor));
+  $("catalog-search").addEventListener("submit", (event) => { event.preventDefault(); searchModels(1, { focus: true }); });
+  $("catalog-sort").addEventListener("change", () => searchModels(1));
+  $("catalog-prev").addEventListener("click", () => searchModels(Math.max(1, Number(state.catalog.page || 1) - 1), { focus: true }));
+  $("catalog-next").addEventListener("click", () => searchModels(Number(state.catalog.page || 1) + 1, { focus: true }));
   $$("#catalog-filters button").forEach((button) => button.addEventListener("click", () => {
     state.catalogFilter = button.dataset.filter;
-    $$("#catalog-filters button").forEach((value) => value.classList.toggle("is-active", value === button));
-    renderCatalog();
+    $$("#catalog-filters button").forEach((value) => value.classList.toggle("is-active", value === button)); renderCatalog();
   }));
   $("model-dialog").querySelector(".dialog-close").addEventListener("click", () => $("model-dialog").close());
 }

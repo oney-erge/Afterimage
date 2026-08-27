@@ -76,11 +76,13 @@ def search_catalog(
     sort: str,
     task: str | None,
     parameter_range: str | None,
+    page: int | None = None,
 ) -> dict[str, Any]:
     from huggingface_hub import HfApi
 
-    offset = _offset(cursor)
     size = max(1, min(page_size, 50))
+    requested_page = max(1, min(int(page or 1), 100))
+    offset = _offset(cursor) if cursor else (requested_page - 1) * size
     api = HfApi()
     iterator = api.list_models(
         search=query or None,
@@ -101,6 +103,10 @@ def search_catalog(
         "next_cursor": _cursor(offset + size) if has_more else None,
         "previous_cursor": _cursor(max(0, offset - size)) if offset else None,
         "page": offset // size + 1,
+        "page_window": list(range(
+            max(1, offset // size - 1),
+            offset // size + (3 if has_more else 2),
+        )),
         "page_size": size,
         "sort": sort if sort in _SORTS else "downloads",
         "exhausted": not has_more,

@@ -58,6 +58,16 @@ export function hfUrl(modelId) {
   return `https://huggingface.co/${String(modelId).split("/").map(encodeURIComponent).join("/")}`;
 }
 
+export async function copyText(value) {
+  if (navigator.clipboard?.writeText) {
+    try { await navigator.clipboard.writeText(value); return; } catch (_) { /* fallback */ }
+  }
+  const area = document.createElement("textarea");
+  area.value = value; area.setAttribute("readonly", "");
+  area.style.position = "fixed"; area.style.opacity = "0";
+  document.body.appendChild(area); area.select(); document.execCommand("copy"); area.remove();
+}
+
 let toastTimer;
 export function toast(message, kind = "info") {
   const node = $("toast");

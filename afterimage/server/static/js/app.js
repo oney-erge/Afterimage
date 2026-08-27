@@ -41,9 +41,10 @@ function libraryChanged() {
 }
 
 function bindNavigation() {
-  $$("[data-route]").forEach((button) => button.addEventListener("click", () => { location.hash = button.dataset.route; }));
-  $$("[data-route-link]").forEach((link) => link.addEventListener("click", (event) => { event.preventDefault(); location.hash = link.dataset.routeLink; }));
-  $$("[data-go]").forEach((button) => button.addEventListener("click", () => { location.hash = button.dataset.go; }));
+  const navigate = (route) => { location.hash = route; showRoute(route); };
+  $$("[data-route]").forEach((button) => button.addEventListener("click", () => navigate(button.dataset.route)));
+  $$("[data-route-link]").forEach((link) => link.addEventListener("click", (event) => { event.preventDefault(); navigate(link.dataset.routeLink); }));
+  $$("[data-go]").forEach((button) => button.addEventListener("click", () => navigate(button.dataset.go)));
   $("mobile-menu").addEventListener("click", () => {
     const open = document.body.classList.toggle("menu-open");
     $("mobile-menu").setAttribute("aria-expanded", String(open));

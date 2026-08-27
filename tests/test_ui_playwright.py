@@ -91,9 +91,21 @@ def test_desktop_and_mobile_product_flow(live_server):
                         "execution": "experimental", "modality": "vision-text",
                         "mixture_of_experts": False,
                     }},
-                }]})
+                    }]})
+            if path.endswith("/api/models/discover"):
+                return _json(route, {"models": [{
+                    "model_id": "qwen3:8b", "source": "ollama",
+                    "source_label": "Ollama", "format": "Q4_K_M",
+                    "size_bytes": 5_200_000_000, "can_prepare": False,
+                    "message": "This Ollama model is already on disk.",
+                    "external_url": "http://127.0.0.1:8000/ui",
+                }], "sources": {"huggingface_cache": 0, "ollama": 1}})
             if path.endswith("/api/jobs"):
                 return _json(route, {"jobs": []})
+            if path.endswith("/api/experiment-runs"):
+                return _json(route, {"runs": []})
+            if path.endswith("/api/runtime-profiles"):
+                return _json(route, {"profiles": []})
             if path.endswith("/api/experiments"):
                 return _json(route, {"hypotheses": [{
                     "id": "h1-test", "title": "Residency optimization",
@@ -114,7 +126,8 @@ def test_desktop_and_mobile_product_flow(live_server):
                     "execution_reason": "The checkpoint can still be downloaded.",
                     "modality": "text", "mixture_of_experts": False,
                     "availability": "remote", "action": "get", "gated": False,
-                }], "page": 1, "next_cursor": "next", "previous_cursor": None})
+                }], "page": 1, "page_window": [1, 2], "next_cursor": "next",
+                    "previous_cursor": None, "exhausted": False})
             route.continue_()
 
         page.route("**/*", mock_api)
@@ -123,18 +136,33 @@ def test_desktop_and_mobile_product_flow(live_server):
         assert "?" not in page.locator("#hardware-grid").inner_text()
 
         page.locator('[data-route="models"]').click()
+        page.locator("#catalog-query").fill("Qwen")
+        page.locator("#catalog-search").evaluate("form => form.requestSubmit()")
+        page.wait_for_timeout(100)
         get_button = page.locator("[data-catalog-get]")
         assert get_button.is_enabled()
         assert "70B parameters" in page.locator("#catalog-results").inner_text()
+        assert "qwen3:8b" in page.locator("#computer-results").inner_text()
+        assert page.locator("#catalog-pages button").all_inner_texts() == ["1", "2"]
+        assert page.locator("#catalog-results").bounding_box()["y"] < page.locator("#local-models").bounding_box()["y"]
 
         page.locator('[data-route="chat"]').click()
         assert page.locator("#chat-model").input_value() == "Qwen/Qwen3-VL-8B-Instruct"
         assert page.locator("#attach-button").is_enabled()
+        assert page.locator("#chat-stop").is_hidden()
+        assert "v1/chat/completions" in page.locator("#chat-endpoint").inner_text()
+
+        page.locator('[data-route="research"]').click()
+        assert page.locator("#research-form").is_visible()
+        assert page.locator(".research-builder").count() == 1
+        assert "A positive mechanism screen" not in page.locator("[data-page=research]").inner_text()
+        assert page.locator("#research-repeats").input_value() == "3"
+        assert page.locator("#report-count").inner_text() == "0"
 
         page.set_viewport_size({"width": 390, "height": 844})
         page.locator("#mobile-menu").click()
-        page.locator('[data-route="research"]').click()
-        assert page.locator(".experiment-row").count() == 1
-        assert page.locator(".experiment-summary").bounding_box()["height"] < 130
+        page.locator('[data-route="models"]').click()
+        assert page.locator("#catalog-results").bounding_box()["width"] < 390
+        assert page.locator(".catalog-card").count() == 1
         assert page_errors == []
         browser.close()

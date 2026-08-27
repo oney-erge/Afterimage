@@ -88,11 +88,23 @@ class ModelRegistry:
                     );
                     CREATE INDEX IF NOT EXISTS jobs_model_id ON jobs(model_id);
                     CREATE INDEX IF NOT EXISTS jobs_updated_at ON jobs(updated_at DESC);
+                    CREATE TABLE IF NOT EXISTS runtime_profiles (
+                      id TEXT PRIMARY KEY,
+                      name TEXT NOT NULL,
+                      model_id TEXT NOT NULL,
+                      config_json TEXT NOT NULL,
+                      source_run_id TEXT,
+                      created_at REAL NOT NULL,
+                      updated_at REAL NOT NULL
+                    );
+                    CREATE INDEX IF NOT EXISTS runtime_profiles_model_id
+                      ON runtime_profiles(model_id);
                     """
                 )
                 connection.execute(
                     "UPDATE jobs SET status='interrupted', updated_at=? "
-                    "WHERE status IN ('queued','running','pause_requested','pausing')",
+                    "WHERE status IN ('queued','running','pause_requested','pausing',"
+                    "'cancelling')",
                     (time.time(),),
                 )
                 connection.execute(
@@ -232,6 +244,60 @@ class ModelRegistry:
                 "SELECT * FROM jobs ORDER BY updated_at DESC LIMIT ?", (limit,)
             ).fetchall()
         return [self._job_row(row) for row in rows]
+
+    @staticmethod
+    def _profile_row(row: sqlite3.Row) -> dict[str, Any]:
+        value = dict(row)
+        value["config"] = json.loads(value.pop("config_json") or "{}")
+        return value
+
+    def save_runtime_profile(
+        self,
+        profile_id: str,
+        *,
+        name: str,
+        model_id: str,
+        config: dict[str, Any],
+        source_run_id: str | None = None,
+    ) -> dict[str, Any]:
+        now = time.time()
+        with contextlib.closing(self._connect()) as connection, connection:
+            connection.execute(
+                "INSERT INTO runtime_profiles "
+                "(id,name,model_id,config_json,source_run_id,created_at,updated_at) "
+                "VALUES (?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET "
+                "name=excluded.name,model_id=excluded.model_id,"
+                "config_json=excluded.config_json,source_run_id=excluded.source_run_id,"
+                "updated_at=excluded.updated_at",
+                (profile_id, name, model_id, json.dumps(config, ensure_ascii=False),
+                 source_run_id, now, now),
+            )
+        return self.get_runtime_profile(profile_id) or {}
+
+    def get_runtime_profile(self, profile_id: str) -> dict[str, Any] | None:
+        with contextlib.closing(self._connect()) as connection, connection:
+            row = connection.execute(
+                "SELECT * FROM runtime_profiles WHERE id=?", (profile_id,)
+            ).fetchone()
+        return self._profile_row(row) if row else None
+
+    def list_runtime_profiles(self, model_id: str | None = None) -> list[dict[str, Any]]:
+        query = "SELECT * FROM runtime_profiles"
+        parameters: tuple[Any, ...] = ()
+        if model_id:
+            query += " WHERE model_id=?"
+            parameters = (model_id,)
+        query += " ORDER BY updated_at DESC"
+        with contextlib.closing(self._connect()) as connection, connection:
+            rows = connection.execute(query, parameters).fetchall()
+        return [self._profile_row(row) for row in rows]
+
+    def delete_runtime_profile(self, profile_id: str) -> bool:
+        with contextlib.closing(self._connect()) as connection, connection:
+            cursor = connection.execute(
+                "DELETE FROM runtime_profiles WHERE id=?", (profile_id,)
+            )
+        return cursor.rowcount > 0
 
 
 model_registry = ModelRegistry()

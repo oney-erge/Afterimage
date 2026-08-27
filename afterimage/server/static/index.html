@@ -62,13 +62,13 @@
         </div>
       </section>
 
-      <section class="page" data-page="models" aria-labelledby="models-title">
-        <div class="page-heading">
-          <div><span class="kicker">Model library</span><h1 id="models-title">Find, prepare, and run models.</h1><p>One action handles download, inspection, lossless preparation, and verification.</p></div>
+      <section class="page models-page" data-page="models" aria-labelledby="models-title">
+        <div class="page-heading compact-heading">
+          <div><span class="kicker">Models</span><h1 id="models-title">Find a model and make it runnable.</h1><p>Search online and the model files already on this computer from one place.</p></div>
         </div>
 
-        <form class="search-panel" id="catalog-search">
-          <label class="search-box"><span aria-hidden="true">⌕</span><input id="catalog-query" type="search" placeholder="Search Hugging Face, for example Qwen" autocomplete="off"><button class="button primary" type="submit">Search</button></label>
+        <form class="search-panel model-search-panel" id="catalog-search">
+          <label class="search-box model-search-box"><span aria-hidden="true">⌕</span><input id="catalog-query" type="search" placeholder="Search by model or organization, for example Qwen" autocomplete="off"><button class="button primary" type="submit">Search</button></label>
           <div class="catalog-controls">
             <div class="segmented" id="catalog-filters" aria-label="Model type">
               <button type="button" class="is-active" data-filter="all">All</button><button type="button" data-filter="text">Text</button><button type="button" data-filter="vision">Vision</button><button type="button" data-filter="moe">MoE</button>
@@ -77,22 +77,24 @@
           </div>
         </form>
 
-        <section class="content-section">
-          <div class="section-heading"><div><span class="kicker">On this computer</span><h2>Your models</h2></div><span class="section-count" id="model-count"></span></div>
-          <div id="local-models" class="model-list loading-line"></div>
-        </section>
-
-        <section class="content-section" id="activity-section">
-          <div class="section-heading"><div><span class="kicker">Transfers and runs</span><h2>Activity</h2></div></div>
-          <div id="jobs-list" class="job-list loading-line"></div>
-        </section>
-
-        <section class="content-section">
-          <div class="section-heading"><div><span class="kicker">Hugging Face catalog</span><h2 id="catalog-heading">Popular models</h2></div><span class="section-count" id="catalog-page"></span></div>
+        <section class="search-results" aria-live="polite">
+          <div class="section-heading results-heading"><div><span class="kicker">Search results</span><h2 id="catalog-heading">Popular models</h2></div><span class="section-count" id="catalog-page"></span></div>
           <div id="catalog-error" class="notice error" hidden></div>
-          <div id="catalog-results" class="catalog-list loading-line"></div>
-          <div class="pagination"><button class="button secondary" id="catalog-prev" disabled>← Previous</button><button class="button secondary" id="catalog-next" disabled>Next →</button></div>
+          <div id="computer-results" class="computer-results loading-line"></div>
+          <div id="catalog-results" class="catalog-grid loading-line"></div>
+          <nav class="pagination numbered-pagination" aria-label="Model catalog pages"><button class="button secondary" id="catalog-prev" disabled>Previous</button><div id="catalog-pages" class="page-numbers"></div><button class="button secondary" id="catalog-next" disabled>Next</button></nav>
         </section>
+
+        <div class="model-operations">
+          <section class="panel content-section">
+            <div class="section-heading"><div><span class="kicker">Afterimage library</span><h2>Prepared and pending</h2></div><span class="section-count" id="model-count"></span></div>
+            <div id="local-models" class="model-list loading-line"></div>
+          </section>
+          <section class="panel content-section" id="activity-section">
+            <div class="section-heading"><div><span class="kicker">Current work</span><h2>Activity</h2></div></div>
+            <div id="jobs-list" class="job-list loading-line"></div>
+          </section>
+        </div>
       </section>
 
       <section class="page chat-page" data-page="chat" aria-labelledby="chat-title">
@@ -104,6 +106,7 @@
           </div>
         </div>
         <div class="model-context" id="chat-model-context"></div>
+        <div class="endpoint-strip" id="chat-endpoint" hidden></div>
         <div class="conversation" id="conversation" aria-live="polite">
           <div class="empty-state" id="chat-empty"><div class="empty-orb"><span></span></div><h2>Start a local conversation</h2><p>Select a ready model, then ask a question. Generation and cancellation run through the same model job system.</p><button class="button secondary" data-go="models">Find a model</button></div>
         </div>
@@ -120,18 +123,52 @@
         </div>
       </section>
 
-      <section class="page" data-page="research" aria-labelledby="research-title">
-        <div class="page-heading research-heading">
-          <div><span class="kicker">Advanced workspace</span><h1 id="research-title">Research</h1><p>Run one controlled experiment at a time and keep historical evidence separate from new local results.</p></div>
+      <section class="page research-page" data-page="research" aria-labelledby="research-title">
+        <div class="page-heading research-heading compact-heading">
+          <div><span class="kicker">Research workspace</span><h1 id="research-title">Test an execution strategy.</h1><p>Choose a prepared model, change one strategy, and get a local report you can reuse in Chat.</p></div>
+        </div>
+
+        <div class="research-tabs" role="tablist" aria-label="Research workspace">
+          <button class="is-active" type="button" data-research-tab="run">Run a test</button>
+          <button type="button" data-research-tab="reports">Reports <span id="report-count">0</span></button>
         </div>
         <div id="active-research" class="active-research" hidden></div>
-        <details class="benchmark-panel panel">
-          <summary><span><strong>Compare execution profiles</strong><small>Benchmark the same prompt with minimum-memory, balanced, and faster plans.</small></span><span>Open</span></summary>
-          <form id="compare-form" class="inline-form"><label>Ready model<select id="compare-model"></select></label><label>Prompt<input id="compare-prompt" value="The capital of France is"></label><button class="button primary" type="submit">Run comparison</button></form>
-          <div id="compare-result"></div>
-        </details>
-        <div class="research-tools"><label class="search-box research-search"><span>⌕</span><input id="research-query" type="search" placeholder="Search experiments"></label><label class="select-label">Ready model<select id="research-model"></select></label></div>
-        <div id="experiment-list" class="experiment-list loading-line"></div>
+
+        <section id="research-run-view" class="research-view">
+          <div class="research-layout">
+            <form id="research-form" class="research-builder panel">
+              <div class="builder-step"><span>1</span><div><strong>Choose the model</strong><small>Only models prepared by Afterimage can be tested.</small></div></div>
+              <label class="field-label">Prepared model<select id="research-model"></select></label>
+              <div id="research-model-help" class="inline-guidance" hidden></div>
+
+              <div class="builder-step"><span>2</span><div><strong>Choose what to test</strong><small>Ready tests run now. Advanced tests explain any files they need.</small></div></div>
+              <label class="field-label">Test<select id="research-experiment"></select></label>
+              <div id="research-explanation" class="research-explanation"></div>
+
+              <div class="builder-step"><span>3</span><div><strong>Set the run</strong><small>Defaults are a short local screen, not a published benchmark.</small></div></div>
+              <div class="builder-grid">
+                <label class="field-label wide">Prompt<input id="research-prompt" value="Explain why the sky appears blue in two sentences."></label>
+                <label class="field-label">Output tokens<input id="research-tokens" type="number" min="1" max="512" value="16"></label>
+                <label class="field-label">Paired runs<input id="research-repeats" type="number" min="1" max="20" value="3"></label>
+                <label class="field-label">VRAM budget, GB<input id="research-vram" type="number" min="0.5" step="0.5" value="6"></label>
+                <label class="field-label">RAM budget, GB<input id="research-ram" type="number" min="1" step="1" value="8"></label>
+              </div>
+              <div id="research-inputs" class="research-inputs"></div>
+              <div class="builder-actions"><button class="button primary" id="research-run" type="submit">Run test</button><span id="research-readiness">Choose a ready model.</span></div>
+            </form>
+
+            <aside class="research-guide">
+              <section class="panel"><span class="kicker">What happens</span><ol><li>The standard and candidate settings run on the same prompt.</li><li>Afterimage checks output and resource measurements.</li><li>A report keeps the settings and results separate from project history.</li></ol></section>
+              <section class="panel quick-compare"><span class="kicker">Quick comparison</span><h2>Compare memory profiles</h2><p>Run minimum-memory, balanced, and faster settings without selecting a research strategy.</p><button class="button secondary" id="quick-compare" type="button">Run quick comparison</button></section>
+            </aside>
+          </div>
+          <div id="research-result" class="research-result" hidden></div>
+        </section>
+
+        <section id="research-reports-view" class="research-view" hidden>
+          <div class="reports-heading"><div><span class="kicker">Local evidence</span><h2>Reports from this computer</h2></div><button class="text-button" id="refresh-reports">Refresh</button></div>
+          <div id="research-reports" class="report-list loading-line"></div>
+        </section>
       </section>
     </main>
   </div>

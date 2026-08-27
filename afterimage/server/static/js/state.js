@@ -5,9 +5,13 @@ export const state = {
   models: [],
   jobs: [],
   catalog: { models: [], page: 1, cursor: null, next_cursor: null, previous_cursor: null },
+  catalogQuery: "",
   catalogFilter: "all",
+  localDiscovery: { models: [], sources: {} },
   chat: { messages: [], attachments: [], activeJob: null },
   experiments: [],
+  researchRuns: [],
+  runtimeProfiles: [],
 };
 
 const listeners = new Set();

@@ -20,6 +20,7 @@ from afterimage.server.app import app
 from afterimage.server.acquisition import acquire_model
 from afterimage.server.catalog import search_catalog
 from afterimage.server.hardware import memory_info
+from afterimage.server.jobs import JobRegistry
 from afterimage.server.model_registry import ModelRegistry
 
 
@@ -64,6 +65,52 @@ def test_registry_persists_models_and_recovers_interrupted_jobs(tmp_path):
     assert job["progress"] == {"bytes_done": 42}
 
 
+def test_registry_persists_reusable_runtime_profiles(tmp_path):
+    path = tmp_path / "state.sqlite3"
+    first = ModelRegistry(path)
+    first.save_runtime_profile(
+        "profile1", name="Critical path candidate", model_id="Qwen/test",
+        config={"vram_budget_gb": 6.0, "placement_policy": "traffic_density"},
+        source_run_id="run1",
+    )
+    saved = ModelRegistry(path).get_runtime_profile("profile1")
+    assert saved["model_id"] == "Qwen/test"
+    assert saved["config"]["vram_budget_gb"] == 6.0
+    assert saved["source_run_id"] == "run1"
+
+
+def test_cancel_is_terminal_and_releases_a_stalled_download_lane(tmp_path, monkeypatch):
+    import afterimage.server.jobs as jobs_module
+
+    persistence = ModelRegistry(tmp_path / "jobs.sqlite3")
+    monkeypatch.setattr(jobs_module, "model_registry", persistence)
+    jobs = JobRegistry()
+    first_started = threading.Event()
+    release_first = threading.Event()
+    second_started = threading.Event()
+
+    def blocked(_control):
+        first_started.set()
+        release_first.wait(timeout=2)
+        return {"late": True}
+
+    first = jobs.create("acquire", blocked, model_id="one", lane="model-lifecycle")
+    assert first_started.wait(timeout=1)
+    assert jobs.cancel(first.id).status == "cancelled"
+    second = jobs.create(
+        "acquire", lambda _control: second_started.set() or {"ready": True},
+        model_id="two", lane="model-lifecycle",
+    )
+    assert second_started.wait(timeout=1)
+    release_first.set()
+    for _ in range(100):
+        if jobs.get(second.id).status == "done":
+            break
+        time.sleep(0.005)
+    assert jobs.get(first.id).status == "cancelled"
+    assert jobs.get(second.id).status == "done"
+
+
 def test_job_control_reports_when_pause_reaches_a_real_checkpoint():
     states = []
     control = JobControl(state_callback=states.append)
@@ -103,11 +150,48 @@ def test_catalog_cursor_returns_distinct_pages_and_never_blocks_get(monkeypatch)
         query="Qwen", cursor=first["next_cursor"], page_size=2,
         sort="downloads", task=None, parameter_range=None,
     )
+    third = search_catalog(
+        query="Qwen", cursor=None, page=3, page_size=2,
+        sort="downloads", task=None, parameter_range=None,
+    )
     assert [row["model_id"] for row in first["models"]] == ["Qwen/model-0", "Qwen/model-1"]
     assert [row["model_id"] for row in second["models"]] == ["Qwen/model-2", "Qwen/model-3"]
+    assert [row["model_id"] for row in third["models"]] == ["Qwen/model-4"]
+    assert third["page"] == 3
     assert all(row["action"] == "get" for row in first["models"])
     assert all(row["params_b"] >= 70 for row in first["models"])
     assert all(row["execution"] == "download-only" for row in first["models"])
+
+
+def test_local_discovery_separates_cached_safetensors_from_ollama(tmp_path, monkeypatch):
+    import afterimage.server.discovery as discovery
+
+    files = [
+        types.SimpleNamespace(file_name="config.json"),
+        types.SimpleNamespace(file_name="model.safetensors"),
+    ]
+    revision = types.SimpleNamespace(
+        commit_hash="abc", snapshot_path=tmp_path, size_on_disk=12,
+        files=files, last_modified=2,
+    )
+    repo = types.SimpleNamespace(
+        repo_id="Qwen/cached", repo_type="model", size_on_disk=12,
+        revisions=[revision],
+    )
+    monkeypatch.setattr(
+        "huggingface_hub.scan_cache_dir",
+        lambda: types.SimpleNamespace(repos=[repo]),
+    )
+    monkeypatch.setattr(discovery, "ollama_models", lambda query="": [{
+        "model_id": "qwen3:8b", "source": "ollama", "source_label": "Ollama",
+        "format": "Q4_K_M", "can_prepare": False, "size_bytes": 4,
+        "message": "GGUF", "external_url": "http://127.0.0.1:8000/ui",
+    }])
+    payload = discovery.discover_local_models("qwen")
+    by_id = {row["model_id"]: row for row in payload["models"]}
+    assert by_id["Qwen/cached"]["can_prepare"] is True
+    assert by_id["qwen3:8b"]["can_prepare"] is False
+    assert payload["sources"] == {"huggingface_cache": 1, "ollama": 1}
 
 
 def test_acquisition_retains_download_only_models_and_marks_verified_store_ready(

@@ -542,6 +542,21 @@ class ResultStore:
         path = self.root / (run_id + ".json")
         return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
 
+    def list(self, limit: int = 50) -> list[dict]:
+        if not self.root.exists():
+            return []
+        rows = []
+        for path in self.root.glob("*.json"):
+            try:
+                rows.append(json.loads(path.read_text(encoding="utf-8")))
+            except (OSError, ValueError):
+                continue
+        rows.sort(
+            key=lambda row: float(row.get("completed_at") or row.get("started_at") or 0),
+            reverse=True,
+        )
+        return rows[:max(1, min(int(limit), 200))]
+
 
 def environment_manifest(repo_root=None) -> dict:
     """Capture reproducibility facts without claiming unavailable hardware."""

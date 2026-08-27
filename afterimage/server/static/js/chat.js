@@ -1,5 +1,5 @@
 import { state } from "./state.js";
-import { $, api, badge, esc, statusLabel, toast, watchJob } from "./shared.js";
+import { $, api, badge, copyText, esc, statusLabel, toast, watchJob } from "./shared.js";
 
 let stopWatching = null;
 
@@ -23,7 +23,18 @@ export function updateChatModels() {
   if (models.some((model) => model.model_id === previous)) select.value = previous;
   else if (models.length) select.value = models[0].model_id;
   sessionStorage.removeItem("afterimage.chatModel");
+  updateProfileOptions();
   updateModelContext();
+}
+
+function updateProfileOptions() {
+  const select = $("chat-profile");
+  const requested = sessionStorage.getItem("afterimage.chatProfile") || select.value || "auto";
+  const modelId = $("chat-model").value;
+  const saved = state.runtimeProfiles.filter((profile) => profile.model_id === modelId);
+  select.innerHTML = `<option value="auto">Auto</option><option value="fast">Faster</option><option value="balanced">Balanced</option><option value="min-memory">Lowest memory</option>${saved.length ? `<optgroup label="Research profiles">${saved.map((profile) => `<option value="saved:${esc(profile.id)}">${esc(profile.name)}</option>`).join("")}</optgroup>` : ""}`;
+  if ([...select.options].some((option) => option.value === requested)) select.value = requested;
+  sessionStorage.removeItem("afterimage.chatProfile");
 }
 
 function updateModelContext() {
@@ -33,12 +44,21 @@ function updateModelContext() {
     $("chat-model-context").innerHTML = `${badge("unknown", "No model ready")} <button class="text-button" data-chat-find>Find a model</button>`;
     attachmentButton.disabled = true;
     $("chat-send").disabled = true;
+    $("chat-endpoint").hidden = true;
     $("chat-model-context").querySelector("[data-chat-find]").addEventListener("click", () => { location.hash = "models"; });
     return;
   }
   const meta = capability(model);
   const pieces = [badge("ready"), meta.execution ? badge(meta.execution) : "", isVision(model) ? badge("vision", "Images enabled") : badge("text", "Text only")];
   $("chat-model-context").innerHTML = `${pieces.join(" ")} <span>${esc(model.comp_gb ? `${model.comp_gb.toFixed(1)} GB lossless store` : "Prepared locally")}</span>`;
+  const selectedProfile = $("chat-profile").value;
+  const saved = selectedProfile.startsWith("saved:") ? state.runtimeProfiles.find((profile) => `saved:${profile.id}` === selectedProfile) : null;
+  $("chat-endpoint").hidden = false;
+  $("chat-endpoint").innerHTML = `<div><span>OpenAI-compatible endpoint</span><code>http://127.0.0.1:8420/v1/chat/completions</code>${saved ? `<small>Using ${esc(saved.name)}</small>` : ""}</div><button class="text-button" data-copy-chat-endpoint>Copy request</button>`;
+  $("chat-endpoint").querySelector("[data-copy-chat-endpoint]").addEventListener("click", async () => {
+    const payload = { model: model.model_id, messages: [{ role: "user", content: "Hello" }], stream: true, ...(saved ? { runtime_profile_id: saved.id } : { execution_profile: selectedProfile }) };
+    await copyText(JSON.stringify(payload, null, 2)); toast("API request copied.");
+  });
   attachmentButton.disabled = !isVision(model) || Boolean(state.chat.activeJob);
   attachmentButton.title = isVision(model) ? "Attach images" : "The selected model is text only";
   $("chat-send").disabled = Boolean(state.chat.activeJob);
@@ -107,9 +127,11 @@ async function submitChat() {
     model: model.model_id,
     messages: apiMessages(),
     max_tokens: Number($("chat-tokens").value) || 128,
-    execution_profile: $("chat-profile").value,
     stream: false,
   };
+  const profile = $("chat-profile").value;
+  if (profile.startsWith("saved:")) body.runtime_profile_id = profile.slice(6);
+  else body.execution_profile = profile;
   const vram = Number($("chat-vram").value);
   const ram = Number($("chat-ram").value);
   const draft = $("chat-draft").value.trim();
@@ -174,7 +196,8 @@ function resizeInput() {
 }
 
 export function initChat() {
-  $("chat-model").addEventListener("change", updateModelContext);
+  $("chat-model").addEventListener("change", () => { updateProfileOptions(); updateModelContext(); });
+  $("chat-profile").addEventListener("change", updateModelContext);
   $("attach-button").addEventListener("click", () => $("chat-images").click());
   $("chat-images").addEventListener("change", (event) => { readImages(event.target.files); event.target.value = ""; });
   $("chat-form").addEventListener("submit", (event) => { event.preventDefault(); submitChat(); });

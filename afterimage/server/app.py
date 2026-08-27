@@ -44,6 +44,7 @@ from afterimage.reference import MEASURED_REFERENCE
 from afterimage.runtime.config import EngineConfig
 from afterimage.server.acquisition import acquire_model
 from afterimage.server.catalog import search_catalog
+from afterimage.server.discovery import discover_local_models
 from afterimage.server.hardware import disk_info, memory_info
 from afterimage.server.jobs import registry
 from afterimage.server.model_registry import model_registry
@@ -54,6 +55,7 @@ app = FastAPI(title="Afterimage", description="Lossless streaming inference cont
 
 _STATIC_DIR = pathlib.Path(__file__).parent / "static"
 _EXPERIMENT_RESULTS = ResultStore(DEFAULT_STORE_ROOT / "_experiment_results")
+_RESEARCH_ARTIFACTS = DEFAULT_STORE_ROOT.parent / "state" / "research-artifacts"
 app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
 
 
@@ -179,6 +181,7 @@ def list_models() -> dict:
 def catalog_models(
     q: str = "",
     cursor: str | None = None,
+    page: int = 1,
     page_size: int = 24,
     sort: str = "downloads",
     task: str | None = None,
@@ -187,7 +190,7 @@ def catalog_models(
     try:
         payload = search_catalog(
             query=q, cursor=cursor, page_size=page_size, sort=sort,
-            task=task, parameter_range=parameters,
+            task=task, parameter_range=parameters, page=page,
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
@@ -195,7 +198,8 @@ def catalog_models(
         return {
             "models": [], "error": "%s: %s" % (type(exc).__name__, exc),
             "cursor": cursor, "next_cursor": None, "previous_cursor": None,
-            "page": 1, "page_size": page_size, "exhausted": True,
+            "page": page, "page_size": page_size, "page_window": [page],
+            "exhausted": True,
         }
     local = {model["model_id"]: model for model in list_models()["models"]}
     for row in payload["models"]:
@@ -223,8 +227,7 @@ class AcquireRequest(BaseModel):
     prepare: bool = True
 
 
-@app.post("/api/models/acquire")
-def acquire(req: AcquireRequest) -> dict:
+def _queue_acquisition(req: AcquireRequest) -> dict:
     if not req.model_id.strip() or ".." in req.model_id:
         raise HTTPException(400, "invalid model id")
     active = [
@@ -264,6 +267,58 @@ def acquire(req: AcquireRequest) -> dict:
         "acquire", work, model_id=req.model_id, lane="model-lifecycle"
     )
     return {"job_id": job.id, "existing": False}
+
+
+@app.post("/api/models/acquire")
+def acquire(req: AcquireRequest) -> dict:
+    return _queue_acquisition(req)
+
+
+@app.get("/api/models/discover")
+def discover_models(q: str = "") -> dict:
+    """Find Afterimage, Hugging Face cache, and Ollama models already local."""
+
+    payload = discover_local_models(q.strip())
+    registered = {row["model_id"]: row for row in model_registry.list_models()}
+    for row in payload["models"]:
+        current = registered.get(row["model_id"])
+        if current:
+            row["afterimage_state"] = current["state"]
+        row.pop("snapshot_path", None)
+    return payload
+
+
+class ImportCachedRequest(BaseModel):
+    model_id: str
+
+
+@app.post("/api/models/import-cache")
+def import_cached_model(req: ImportCachedRequest) -> dict:
+    """Register a verified-on-disk Hub snapshot, then prepare it normally."""
+
+    row = next((
+        value for value in discover_local_models(req.model_id)["models"]
+        if value["source"] == "huggingface-cache"
+        and value["model_id"] == req.model_id
+    ), None)
+    if row is None:
+        raise HTTPException(404, "no cached Hugging Face snapshot for %r" % req.model_id)
+    if not row["can_prepare"]:
+        raise HTTPException(409, row["message"])
+    snapshot = pathlib.Path(row["snapshot_path"]).resolve()
+    if not snapshot.is_dir():
+        raise HTTPException(404, "cached snapshot is no longer present")
+    model_registry.upsert_model(
+        req.model_id, revision=row["revision"], state="downloaded",
+        stage="downloaded", local_snapshot=str(snapshot), bytes_done=row["size_bytes"],
+        bytes_total=row["size_bytes"], metadata={
+            "has_safetensors": True, "source_bytes": row["size_bytes"],
+            "revision": row["revision"], "discovered_from": "huggingface-cache",
+        }, error=None,
+    )
+    return _queue_acquisition(AcquireRequest(
+        model_id=req.model_id, revision=row["revision"], prepare=True,
+    ))
 
 
 @app.delete("/api/models/{model_id:path}")
@@ -516,6 +571,10 @@ def job_cancel(job_id: str) -> dict:
     job = registry.cancel(job_id)
     if job is None:
         raise HTTPException(404, "no such job: %r" % job_id)
+    if job.kind == "acquire" and job.model_id and job.status == "cancelled":
+        model_registry.upsert_model(
+            job.model_id, state="interrupted", stage="interrupted", error=None,
+        )
     return {"status": job.status}
 
 
@@ -545,6 +604,39 @@ async def job_progress_ws(websocket: WebSocket, job_id: str) -> None:
 
 
 # -- hypothesis experiments -----------------------------------------------
+
+class ResearchArtifactRequest(BaseModel):
+    name: str
+    content_base64: str
+    kind: str
+
+
+@app.post("/api/research/artifacts")
+def save_research_artifact(req: ResearchArtifactRequest) -> dict:
+    allowed = {"critical_path_profile", "spec_policy_state", "replay_plan_state"}
+    if req.kind not in allowed:
+        raise HTTPException(400, "unknown research artifact kind")
+    try:
+        raw = base64.b64decode(req.content_base64, validate=True)
+    except (ValueError, binascii.Error) as exc:
+        raise HTTPException(400, "artifact is not valid base64") from exc
+    if len(raw) > 8 * 1024 * 1024:
+        raise HTTPException(413, "research artifacts must be 8 MiB or smaller")
+    try:
+        json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise HTTPException(400, "research artifacts must be valid JSON") from exc
+    safe_name = "".join(
+        char if char.isalnum() or char in "._-" else "-" for char in req.name
+    ).strip(".-") or (req.kind + ".json")
+    if not safe_name.lower().endswith(".json"):
+        safe_name += ".json"
+    _RESEARCH_ARTIFACTS.mkdir(parents=True, exist_ok=True)
+    path = _RESEARCH_ARTIFACTS / (uuid.uuid4().hex[:10] + "-" + safe_name)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_bytes(raw)
+    tmp.replace(path)
+    return {"kind": req.kind, "name": safe_name, "path": str(path)}
 
 @app.get("/api/experiments")
 def experiments() -> dict:
@@ -579,11 +671,11 @@ class ExperimentRunRequest(BaseModel):
 def _resolved_experiment_config(hypothesis_id: str, req: ExperimentRunRequest,
                                 profile) -> EngineConfig:
     hypothesis = HYPOTHESES[hypothesis_id]
-    overrides = dict(req.config_overrides)
+    overrides = dict(profile.overrides)
+    overrides.update(req.config_overrides)
     overrides.update(req.candidate_overrides
                      if profile.id == hypothesis.candidate_profile
                      else req.control_overrides)
-    overrides.update(profile.overrides)
     if (hypothesis_id in ("h2-hazard-cost", "h11-neural-utility-spec")
             and profile.id == hypothesis.control_profile):
         overrides.pop("spec_policy_state", None)
@@ -925,6 +1017,7 @@ def start_experiment(hypothesis_id: str, req: ExperimentRunRequest) -> dict:
                              metadata={"model_id": req.model_id, "prompt": req.prompt,
                                        "max_new_tokens": req.max_new_tokens,
                                        "seed": req.seed,
+                                       "draft_model_id": req.draft_model_id,
                                        "environment": environment_manifest(
                                            pathlib.Path(__file__).parents[2])},
                              progress=lambda update: control.report(**update))
@@ -944,6 +1037,69 @@ def experiment_result(run_id: str) -> dict:
     if result is None:
         raise HTTPException(404, "no such completed experiment run: %r" % run_id)
     return result
+
+
+@app.get("/api/experiment-runs")
+def experiment_results(limit: int = 50) -> dict:
+    return {"runs": _EXPERIMENT_RESULTS.list(limit)}
+
+
+class RuntimeProfileRequest(BaseModel):
+    name: str
+    model_id: str
+    config: dict = Field(default_factory=dict)
+    source_run_id: str | None = None
+
+
+def _runtime_profile_payload(row: dict) -> dict:
+    return {
+        **row,
+        "endpoint": "http://127.0.0.1:8420/v1/chat/completions",
+        "models_endpoint": "http://127.0.0.1:8420/v1/models",
+    }
+
+
+@app.get("/api/runtime-profiles")
+def runtime_profiles(model_id: str | None = None) -> dict:
+    return {
+        "profiles": [
+            _runtime_profile_payload(row)
+            for row in model_registry.list_runtime_profiles(model_id)
+        ]
+    }
+
+
+@app.post("/api/runtime-profiles")
+def save_runtime_profile(req: RuntimeProfileRequest) -> dict:
+    model = model_registry.get_model(req.model_id)
+    if model is None or model["state"] != "ready":
+        raise HTTPException(409, "the profile model must be ready in Afterimage")
+    values = dict(req.config)
+    draft_model_id = values.pop("_draft_model_id", None)
+    try:
+        config = EngineConfig.from_dict(values)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    normalized = config.to_dict()
+    normalized["progress"] = False
+    if draft_model_id:
+        normalized["_draft_model_id"] = str(draft_model_id)
+    name = req.name.strip()
+    if not name or len(name) > 80:
+        raise HTTPException(400, "profile name must contain 1 to 80 characters")
+    profile_id = uuid.uuid4().hex[:12]
+    row = model_registry.save_runtime_profile(
+        profile_id, name=name, model_id=req.model_id, config=normalized,
+        source_run_id=req.source_run_id,
+    )
+    return _runtime_profile_payload(row)
+
+
+@app.delete("/api/runtime-profiles/{profile_id}")
+def delete_runtime_profile(profile_id: str) -> dict:
+    if not model_registry.delete_runtime_profile(profile_id):
+        raise HTTPException(404, "no such runtime profile")
+    return {"deleted": True, "id": profile_id}
 
 
 # -- inference: engine cache -------------------------------------------
@@ -1039,6 +1195,7 @@ class ChatCompletionRequest(BaseModel):
     temperature: float = 0.0
     stream: bool = False
     execution_profile: str = "auto"
+    runtime_profile_id: str | None = None
     vram_cap_gb: float | None = None
     vram_budget_gb: float | None = None
     ram_budget_gb: float | None = None
@@ -1154,6 +1311,26 @@ def _prepare_model_inputs(processor, messages: list[ChatMessage], *, vision: boo
 def _generation_config(
     req: ChatCompletionRequest, *, vision: bool
 ) -> tuple[EngineConfig, str | None]:
+    if req.runtime_profile_id:
+        saved = model_registry.get_runtime_profile(req.runtime_profile_id)
+        if saved is None:
+            raise HTTPException(404, "no such runtime profile")
+        if saved["model_id"] != req.model:
+            raise HTTPException(400, "runtime profile belongs to a different model")
+        values = dict(saved["config"])
+        draft_model = values.pop("_draft_model_id", None)
+        if req.vram_budget_gb is not None:
+            values["vram_budget_gb"] = req.vram_budget_gb
+        if req.ram_budget_gb is not None:
+            values["ram_budget_gb"] = req.ram_budget_gb
+        values["progress"] = False
+        try:
+            cfg = EngineConfig.from_dict(values)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        if vision and draft_model:
+            raise HTTPException(400, "draft-model speculation is not verified for vision chat")
+        return cfg, draft_model
     profile = req.execution_profile
     draft_model = req.draft_model
     vram_budget = req.vram_budget_gb

@@ -87,6 +87,8 @@ class JobRegistry:
                 logger.info("job %s (%s) started", job.id, job.kind)
                 try:
                     job.result = fn(job.control)
+                    if job.control.is_cancelled:
+                        raise JobCancelled()
                     job.status = "done"
                     model_registry.update_job(
                         job.id, status=job.status, progress=job.progress,
@@ -159,7 +161,19 @@ class JobRegistry:
         if job is None or job.status in {"done", "error", "cancelled"}:
             return job
         job.control.cancel()
-        job.status = "cancelling"
+        # Cancellation is a user-facing terminal state. A network read in a
+        # third-party downloader may take time to unwind after the cooperative
+        # signal. Leaving the API in ``cancelling`` strands the UI and every
+        # job behind the same lane. Hugging Face partials are resumable, so a
+        # download can release the public lane while its old request unwinds.
+        # GPU work remains serialized.
+        job.status = "cancelled"
+        if job.lane == "model-lifecycle" and (
+            job.progress.get("stage") in {None, "downloading"}
+            or not job.progress
+        ):
+            with self._lock:
+                self._lanes[job.lane] = threading.Lock()
         model_registry.update_job(job.id, status=job.status, progress=job.progress)
         return job
 
