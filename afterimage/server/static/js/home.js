@@ -36,8 +36,54 @@ function renderReference() {
   }
   const bf16 = reference.params_b * reference.bf16_gb_per_b_params;
   const store = reference.params_b * reference.compressed_gb_per_b_params;
-  const speed = reference.params_b * reference.fast_s_per_token_per_b;
-  node.innerHTML = `<div class="reference-model"><strong>${esc(reference.model)}</strong><span>RTX 3080 Laptop · cold cache</span></div><div class="reference-stats"><div><strong>${bf16.toFixed(1)} GB</strong><small>Original BF16</small></div><div><strong>${store.toFixed(1)} GB</strong><small>Lossless store</small></div><div><strong>${speed.toFixed(2)} s/token</strong><small>Measured faster profile</small></div></div>`;
+  // Deliberately no speed/s-per-token figure here: that number was
+  // measured on one specific machine (an RTX 3080 Laptop) and presenting
+  // it on a first run, before this viewer has measured anything on their
+  // own hardware, reads as a promise about their machine rather than a
+  // fact about a different one. Storage size is hardware-independent --
+  // the compressed store is the same size on any machine -- so it stays.
+  node.innerHTML = `<div class="reference-model"><strong>${esc(reference.model)}</strong><span>measured storage footprint</span></div><div class="reference-stats"><div><strong>${bf16.toFixed(1)} GB</strong><small>Original BF16</small></div><div><strong>${store.toFixed(1)} GB</strong><small>Afterimage store</small></div></div>`;
+}
+
+const CAMPAIGN_METHOD_LABELS = {
+  "airllm": "AirLLM", "accelerate": "HF Accelerate", "dfloat11": "DFloat11",
+  "exact-min": "Afterimage (min memory)", "exact-resident": "Afterimage (resident)",
+  "spec-fixed": "Afterimage (speculative)",
+};
+
+function methodLabel(id) { return CAMPAIGN_METHOD_LABELS[id] || id; }
+
+function renderCampaign() {
+  const panel = $("campaign-panel");
+  const node = $("campaign-card");
+  const lengths = state.campaign?.lengths || [];
+  if (!lengths.length) { panel.hidden = true; return; }
+  panel.hidden = false;
+  const active = lengths.find((length) => length.status === "in_progress") || lengths[lengths.length - 1];
+  const doneCount = lengths.filter((length) => length.status === "complete").length;
+  const rows = active.methods.map((method) => {
+    const spt = method.mean_seconds_per_token != null ? `${method.mean_seconds_per_token.toFixed(2)} s/tok` : "—";
+    return `<div class="campaign-method campaign-method-${esc(method.marker)}"><span>${esc(methodLabel(method.method_id))}</span><span>${method.blocks_done}/${active.blocks_requested} blocks</span><span>${spt}</span></div>`;
+  }).join("");
+  const pct = active.cells_required ? Math.round((active.cells_done / active.cells_required) * 100) : 0;
+  node.innerHTML = `
+    <div class="campaign-head">
+      <div><strong>${active.max_new_tokens}-token pass</strong><span>${esc(active.prompt_suite || "")} · ${doneCount}/${lengths.length} lengths complete</span></div>
+      <span class="campaign-status campaign-status-${active.status}">${active.status === "in_progress" ? "Running" : "Complete"}</span>
+    </div>
+    <div class="campaign-progress"><div class="campaign-progress-bar" style="width:${pct}%"></div></div>
+    <div class="campaign-progress-label">${active.cells_done}/${active.cells_required} cells${active.eta_human ? ` · ~${active.eta_human} remaining` : ""}</div>
+    <div class="campaign-methods">${rows}</div>`;
+}
+
+async function loadCampaign() {
+  try {
+    const data = await api("/api/campaigns");
+    updateState({ campaign: data });
+    renderCampaign();
+  } catch (_) {
+    $("campaign-panel").hidden = true;
+  }
 }
 
 function activeAcquireJob() {
@@ -130,10 +176,16 @@ export async function loadHome({ quiet = false } = {}) {
     $("machine-line-body").textContent = "Hardware details are unavailable.";
     $("machine-status-dot").className = "machine-status-dot bad";
   }
+  loadCampaign();
 }
 
 export function initHome() {
   $("refresh-hardware").addEventListener("click", () => loadHome());
+  // A campaign started outside the UI (the paper benchmark's own CLI/
+  // background process, not a job this server queued) has no job-status
+  // websocket to push updates through, so Home polls its own read-only
+  // snapshot independently of the job-driven refresh in app.js.
+  setInterval(() => { if (state.route === "home") loadCampaign(); }, 15000);
 }
 
 export function refreshHomeModels() { renderHomeStatus(); }

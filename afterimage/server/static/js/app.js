@@ -44,7 +44,15 @@ function bindNavigation() {
   const navigate = (route) => { location.hash = route; showRoute(route); };
   $$("[data-route]").forEach((button) => button.addEventListener("click", () => navigate(button.dataset.route)));
   $$("[data-route-link]").forEach((link) => link.addEventListener("click", (event) => { event.preventDefault(); navigate(link.dataset.routeLink); }));
-  $$("[data-go]").forEach((button) => button.addEventListener("click", () => navigate(button.dataset.go)));
+  // Delegated at the document level, not bound per-button at startup:
+  // [data-go] buttons are routinely injected later by innerHTML (the
+  // empty-library hero's "Browse models" CTA, chat's "Find a model"
+  // empty state, ...), and a one-time forEach here at bindNavigation()
+  // time never sees those -- they rendered with no listener at all.
+  document.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-go]");
+    if (button) navigate(button.dataset.go);
+  });
   $("mobile-menu").addEventListener("click", () => {
     const open = document.body.classList.toggle("menu-open");
     $("mobile-menu").setAttribute("aria-expanded", String(open));

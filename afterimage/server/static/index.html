@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#080b0f">
-  <meta name="description" content="Afterimage runs lossless BF16 language models beyond GPU memory.">
+  <meta name="description" content="Afterimage serves larger language models on the hardware you already have, without losing accuracy.">
   <title>Afterimage</title>
   <link rel="stylesheet" href="/static/css/app.css">
 </head>
@@ -13,7 +13,7 @@
     <aside class="sidebar" aria-label="Primary navigation">
       <a class="brand" href="#home" data-route-link="home" aria-label="Afterimage home">
         <span class="brand-mark" aria-hidden="true"><span></span></span>
-        <span><strong>Afterimage</strong><small>Lossless model streaming</small></span>
+        <span><strong>Afterimage</strong><small>Serve larger models on the hardware you have</small></span>
       </a>
       <nav class="nav-list">
         <button class="nav-item is-active" data-route="home"><span aria-hidden="true">⌂</span>Home</button>
@@ -52,6 +52,11 @@
           <div class="panel-head"><div><span class="kicker">Measured reference</span><h2>Evidence, not a ceiling</h2></div></div>
           <div id="reference-card" class="reference-card loading-line"></div>
         </section>
+
+        <section class="panel campaign-panel" id="campaign-panel" hidden>
+          <div class="panel-head"><div><span class="kicker">Benchmark campaign</span><h2>Running on this machine</h2></div></div>
+          <div id="campaign-card" class="campaign-card"></div>
+        </section>
       </section>
 
       <section class="page models-page" data-page="models" aria-labelledby="models-title">
@@ -63,7 +68,7 @@
           <label class="search-box model-search-box"><span aria-hidden="true">⌕</span><input id="catalog-query" type="search" placeholder="Search by model or organization, for example Qwen" autocomplete="off"><button class="button primary" type="submit">Search</button></label>
           <div class="catalog-controls">
             <div class="segmented" id="catalog-filters" aria-label="Model type">
-              <button type="button" class="is-active" data-filter="all">All</button><button type="button" data-filter="text">Text</button><button type="button" data-filter="vision">Vision</button><button type="button" data-filter="moe">MoE</button>
+              <button type="button" data-filter="all">All</button><button type="button" class="is-active" data-filter="text">Text</button><button type="button" data-filter="vision">Vision</button><button type="button" data-filter="moe">MoE</button>
             </div>
             <label class="select-label">Sort<select id="catalog-sort"><option value="downloads">Most downloaded</option><option value="recent">Recently updated</option><option value="likes">Most liked</option><option value="trending">Trending</option></select></label>
           </div>

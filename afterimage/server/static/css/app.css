@@ -123,6 +123,22 @@ h3 { font-size: 15px; }
 .reference-stats div { padding: 10px; border-radius: 8px; background: #0b1015; }
 .reference-stats strong { display: block; font-size: 14px; }
 .reference-stats small { color: var(--faint); font-size: 10px; }
+.campaign-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 10px; }
+.campaign-head strong { display: block; font-size: 15px; }
+.campaign-head span { color: var(--muted); font: 11px var(--mono); }
+.campaign-status { padding: 3px 9px; border-radius: 999px; font: 600 10px var(--mono); text-transform: uppercase; white-space: nowrap; }
+.campaign-status-in_progress { border: 1px solid #3e6859; background: var(--accent-bg); color: var(--accent); }
+.campaign-status-complete { border: 1px solid var(--line); background: var(--surface-2); color: var(--muted); }
+.campaign-progress { width: 100%; height: 6px; overflow: hidden; border-radius: 5px; background: #202932; }
+.campaign-progress-bar { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #42b78c, var(--accent)); transition: width .25s ease; }
+.campaign-progress-label { margin: 7px 0 15px; color: var(--faint); font: 11px var(--mono); }
+.campaign-methods { display: grid; gap: 1px; border-radius: var(--radius-sm); overflow: hidden; background: var(--line-soft); }
+.campaign-method { display: grid; grid-template-columns: 1fr auto auto; gap: 14px; padding: 8px 10px; background: var(--surface); font: 12px var(--mono); }
+.campaign-method span:first-child { font-family: var(--sans); color: var(--text); }
+.campaign-method span:last-child { color: var(--muted); text-align: right; }
+.campaign-method-fail span:first-child { color: var(--red); }
+.campaign-method-mixed span:first-child { color: var(--amber); }
+.campaign-method-pending { opacity: .55; }
 .compact-list { display: grid; gap: 7px; }
 .compact-model { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--line-soft); }
 .compact-model:last-child { border: 0; }

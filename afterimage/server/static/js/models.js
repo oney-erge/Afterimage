@@ -55,11 +55,22 @@ function bindModelActions(node) {
   node.querySelectorAll("[data-remove-model]").forEach((button) => button.addEventListener("click", () => removeModel(decodeURIComponent(button.dataset.removeModel), button)));
 }
 
+// The segmented control's server-side counterpart: All/Text/Vision search
+// different Hugging Face pipeline_tag values (there is no single tag that
+// means "any runnable chat model"), so the filter has to trigger a new
+// /api/catalog/models fetch, not just a client-side re-render of results
+// that were never fetched with that architecture in mind. MoE has no
+// pipeline_tag of its own -- it stays a client-side refinement (below) on
+// top of whichever task-filtered page came back.
+function taskForFilter(filter) {
+  if (filter === "vision") return "image-text-to-text";
+  if (filter === "all") return "";
+  return "text-generation"; // "text" and "moe" both search generative LLMs
+}
+
 function filteredCatalog() {
   const rows = state.catalog.models || [];
-  if (state.catalogFilter === "vision") return rows.filter((row) => row.modality === "vision-text");
   if (state.catalogFilter === "moe") return rows.filter((row) => row.mixture_of_experts);
-  if (state.catalogFilter === "text") return rows.filter((row) => row.modality !== "vision-text");
   return rows;
 }
 
@@ -204,6 +215,8 @@ export async function searchModels(page = 1, { focus = false } = {}) {
   state.catalogQuery = query;
   showAllComputerResults = false;
   const parameters = new URLSearchParams({ q: query, page_size: compactViewport() ? "6" : "12", sort: $("catalog-sort").value, page: String(page) });
+  const task = taskForFilter(state.catalogFilter);
+  if (task) parameters.set("task", task);
   try {
     const [payload, local] = await Promise.all([api(`/api/catalog/models?${parameters}`), api(`/api/models/discover?q=${encodeURIComponent(query)}`)]);
     state.catalog = payload; state.localDiscovery = local;
@@ -232,8 +245,14 @@ export function initModels({ onLibraryChanged = () => {} } = {}) {
   $("catalog-prev").addEventListener("click", () => searchModels(Math.max(1, Number(state.catalog.page || 1) - 1), { focus: true }));
   $("catalog-next").addEventListener("click", () => searchModels(Number(state.catalog.page || 1) + 1, { focus: true }));
   $$("#catalog-filters button").forEach((button) => button.addEventListener("click", () => {
+    if (state.catalogFilter === button.dataset.filter) return;
     state.catalogFilter = button.dataset.filter;
-    $$("#catalog-filters button").forEach((value) => value.classList.toggle("is-active", value === button)); renderCatalog();
+    $$("#catalog-filters button").forEach((value) => value.classList.toggle("is-active", value === button));
+    // All/Text/Vision each search a different HF pipeline_tag server-side
+    // (see taskForFilter) -- MoE re-fetches the same "text-generation"
+    // task as Text and refines client-side, but going through
+    // searchModels either way keeps one code path instead of two.
+    searchModels(1);
   }));
   $("model-dialog").querySelector(".dialog-close").addEventListener("click", () => $("model-dialog").close());
 }

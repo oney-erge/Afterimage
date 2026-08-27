@@ -36,6 +36,7 @@ from afterimage.cli import (
     DEFAULT_STORE_ROOT, RUN_PROFILES, _detect_gpu, _detect_ram_gb,
     _store_dir_for, automatic_run_profile,
 )
+from afterimage.bench.paper_campaign_progress import summarize_campaign
 from afterimage.runtime.adapters import classify_config
 from afterimage.experiments import (
     HYPOTHESES, PROFILES, ExperimentRun, ResultStore, oracle_gap,
@@ -178,7 +179,7 @@ def _extra_store_roots() -> list[pathlib.Path]:
     return roots
 
 
-def _scan_store_root(root: pathlib.Path, by_id: dict) -> None:
+def _scan_store_root(root: pathlib.Path, by_id: dict, mtimes: dict[str, float]) -> None:
     if not root.exists():
         return
     for p in sorted(root.iterdir()):
@@ -187,9 +188,22 @@ def _scan_store_root(root: pathlib.Path, by_id: dict) -> None:
             continue
         try:
             man = json.loads(man_path.read_text())
+            mtime = man_path.stat().st_mtime
         except (json.JSONDecodeError, OSError):
             continue
         model_id = man.get("model_id", p.name)
+        # Two store directories can legitimately declare the same
+        # model_id -- a stale rebuild kept alongside its replacement,
+        # e.g. store_14b_npz_old next to store_14b. Without a
+        # tiebreaker, whichever directory sorted() visits last wins by
+        # silent dict overwrite; that previously picked the
+        # alphabetically-later "_npz_old" directory over the current
+        # one every time. Prefer the manifest with the newer mtime
+        # instead, so a stale store never shadows a current one just
+        # because of its directory name.
+        if model_id in mtimes and mtimes[model_id] > mtime:
+            continue
+        mtimes[model_id] = mtime
         metadata = dict(by_id.get(model_id, {}).get("metadata", {}))
         metadata["manifest"] = {
             "total_orig_bytes": man["total_orig_bytes"],
@@ -205,9 +219,10 @@ def _scan_store_root(root: pathlib.Path, by_id: dict) -> None:
 @app.get("/api/models")
 def list_models() -> dict:
     by_id = {model["model_id"]: model for model in model_registry.list_models()}
-    _scan_store_root(DEFAULT_STORE_ROOT, by_id)
+    mtimes: dict[str, float] = {}
+    _scan_store_root(DEFAULT_STORE_ROOT, by_id, mtimes)
     for root in _extra_store_roots():
-        _scan_store_root(root, by_id)
+        _scan_store_root(root, by_id, mtimes)
     out = []
     for model in by_id.values():
         manifest = model.get("metadata", {}).get("manifest", {})
@@ -219,6 +234,24 @@ def list_models() -> dict:
             "ratio": manifest.get("ratio"),
         })
     return {"models": sorted(out, key=lambda row: row["updated_at"], reverse=True)}
+
+
+@app.get("/api/campaigns")
+def campaigns() -> dict:
+    """Live progress for a scripts/run_paper_comparison.py campaign, read
+    straight off the .partial/final JSON files it already checkpoints
+    after every (block, method) cell -- this is a read-only view, never a
+    control surface, and never touches the campaign's own process.
+
+    results/paper-comparison lives directly on this machine's filesystem
+    (the campaign is typically launched with this repo checked out inside
+    WSL2 at /mnt/c/..., i.e. the *same* NTFS files this server already
+    sees on the Windows side -- no network mount involved), so this is a
+    handful of small local JSON reads, safe to poll on every dashboard
+    refresh.
+    """
+    out_dir = pathlib.Path(__file__).resolve().parents[2] / "results" / "paper-comparison"
+    return {"lengths": summarize_campaign(out_dir)}
 
 
 @app.get("/api/catalog/models")
