@@ -137,6 +137,24 @@ def main() -> int:
                 "target_model=%r -- these must come from the same corpus" %
                 (path, payload.get("corpus_target_model"), corpus_payload["target_model"]))
 
+    # Scoring the same source twice is an easy command-line slip (the two
+    # flags differ by one word) and it does not fail loudly on its own: it
+    # produces a complete, plausible-looking analysis in which Scout
+    # trivially agrees with Primary everywhere, so rescue recall is 0,
+    # divergence is 0, and the honest conclusion "Scout adds nothing"
+    # would be an artifact of the invocation rather than a finding.
+    if (pathlib.Path(args.primary_scores).resolve()
+            == pathlib.Path(args.scout_scores).resolve()):
+        parser.error(
+            "--primary-scores and --scout-scores are the same file (%s) -- H21 "
+            "compares two DIFFERENT candidate sources" % args.primary_scores)
+    if primary_payload["source_model"] == scout_payload["source_model"]:
+        parser.error(
+            "--primary-scores and --scout-scores were both produced from "
+            "source_model=%r -- H21 compares two DIFFERENT candidate sources. "
+            "Score a second, distinct model with run_h21_score_source.py first."
+            % primary_payload["source_model"])
+
     traces = combine(corpus_payload, primary_payload, scout_payload)
     all_rows = [row for trace in traces for row in trace["rows"]]
 

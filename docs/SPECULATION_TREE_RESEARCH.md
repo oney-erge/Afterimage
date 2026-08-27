@@ -371,23 +371,50 @@ planner's configured cap) actually counts against.
 token-sequence prefix (e.g. Primary and Scout proposing continuations
 from the same already-accepted context) into one tree with that prefix
 represented once -- the real cost saving a tree-based scheme is supposed
-to realize over independently verifying each source's full path. The
-shared prefix is identified purely structurally, by walking both trees'
-roots and matching consecutive `(token_id, source)` pairs -- node IDs
-are never assumed to agree between the two inputs, since they come from
-independent sources with no shared ID space. Node identity in the
-output tree is freshly assigned, contiguous from 0; both inputs must
-each have exactly one root, and the merge's own output is run through
-`validate()` before being returned, so a caller never receives a
-merged tree that has not been checked.
+to realize over independently verifying each source's full path. Sharing
+is decided level by level and uniformly: two nodes at the same position
+are the same candidate when their `(token_id, source)` pair matches, and
+matched nodes recurse into their children; anything unmatched on either
+side is copied in whole, subtree included. Node IDs are never assumed to
+agree between the two inputs, since they come from independent sources
+with no shared ID space; output identity is freshly assigned, contiguous
+from 0, and output `depth` is recomputed from the merged position rather
+than inherited. The merge's own output is run through `validate()`
+before being returned.
 
-Covered by `tests/test_spec_tree.py` (19 tests): construction,
+`SpecTree` is a rooted **forest**, not necessarily a single tree, and
+`validate()` deliberately does not require one root. When two sources'
+first candidate tokens differ there is genuinely no shared node to hang
+them under, and inventing a synthetic root would fabricate a shared
+candidate the target would then be asked to verify. Because the root
+level is merged by the same rule as every other level, merging is
+closed: a multi-root result is itself a legal input to another
+`merge_prefixes` call, so three or more sources fold together pairwise.
+
+Two properties of this are worth stating plainly rather than leaving
+implicit. First, matching on `(token_id, source)` means Primary and
+Scout proposing the SAME token at the same position produce two separate
+nodes, each consuming a verification slot -- exact per-source credit
+attribution, bought at the cost of not deduplicating agreement, which is
+the common case. Which of those matters more is a real open question for
+H20/H27, deliberately not settled by this structural layer. Second,
+where two matched nodes carry different `source_prob`, self's value
+wins silently.
+
+Covered by `tests/test_spec_tree.py` (23 tests): construction,
 `children`/`path_to`, every `validate()` failure mode individually
 (missing parent, bad root depth, bad child depth, a genuine cycle
 distinguished from a depth-consistency failure on the same malformed
-input), and `merge_prefixes` (full dedup, fully disjoint paths, a
-partial-prefix-then-branch case, same-token-different-source correctly
-NOT shared, the single-root requirement, and contiguous output IDs).
+input), and `merge_prefixes` across linear, branching, pure-prefix,
+disjoint, and multi-root-closure shapes, plus a randomized property
+check that a merge never loses or duplicates a node (result size always
+within `[max(a, b), a + b]`). That property check exists because an
+earlier lockstep implementation of `merge_prefixes` silently dropped
+every remaining subtree whenever the two trees diverged by BRANCHING
+rather than by a token mismatch -- a 5-node merge returned 1 node, and
+`validate()` passed it, because a smaller tree is still a structurally
+valid one. Every merge test at the time used linear single-path trees,
+which is exactly the shape that cannot expose that bug.
 
 ### H21 -- Multi-Source Oracle Headroom (implemented)
 
@@ -707,9 +734,9 @@ dressed up as more principled than it is.
 |---|---|
 | G1 Candidate capacity (H19) | `N_free` (the largest candidate count within 10% of the N=1 sweep cost, `scripts/run_h19_candidate_sweep.py`'s `find_knee`) is >= 32, AND stable within 2x across every measured prompt length. A looser overhead threshold (e.g. 25%) passes almost trivially for a streaming-dominated engine and is not used here for exactly that reason. |
 | G2 Branching (H20) | tree beats equal-budget chain end to end |
-| G3 Scout (H21/H27) | at the project's default equal-total-budget=16 sweep, `equal_budget_union_gain` >= +0.03 (3 percentage points) at some tested Scout-slot allocation, AND `conditional_rescue_recall` at k=8 >= 0.20, AND `P(sustained rescue depth >= 2 \| Primary missed)` >= 0.30 at k=8. All three, not any one alone -- a Scout that only wins on one of these has not shown real, usable headroom. |
-| G4a Temporal persistence (H22a) | grouped-CV paired NLL improvement of B5 (HMM) over B1 (memoryless) has a >= 5% relative improvement AND its bootstrap 95% CI excludes zero (`scripts/run_h22_disagreement_hmm.py`'s own `G4a_temporal_persistence` gate, both conditions required) |
-| G4b Online predictability (H22b) | grouped-CV paired NLL improvement of B4 (cheap online features) over B1 has a >= 3% relative improvement (a lower bar than G4a's, since B4 is working with strictly less information than B5) AND its bootstrap 95% CI excludes zero. **G4a passing does NOT authorize proceeding past this gate** -- H25 onward needs online-usable prediction specifically, not just proof that latent state exists. |
+| G3 Scout (H21/H27) | at the project's default equal-total-budget=16 sweep, `equal_budget_union_gain` >= +0.03 (3 percentage points) at some tested Scout-slot allocation, AND `conditional_rescue_recall` at k=8 >= 0.20, AND `depth_probabilities[2]` >= 0.30 at k=8 -- which is `P(sustained depth >= 2 \| Primary missed AND Scout covered)`, conditioned on a rescue having happened, NOT on the miss alone (the miss-alone version is this times `conditional_rescue_recall`, and reading it as the former overstates it by exactly that factor). All three, not any one alone -- a Scout that only wins on one of these has not shown real, usable headroom. |
+| G4a Temporal persistence (H22a) | grouped-CV paired NLL improvement of B5 (HMM) over B1 (memoryless) has a >= 5% relative improvement AND its bootstrap 95% CI excludes zero (`scripts/run_h22_disagreement_hmm.py`'s own `G4a_temporal_persistence` gate, both conditions required). The CI must be a **cluster bootstrap over held-out trajectories**, one paired difference per trajectory -- not over CV folds; see the note below. |
+| G4b Online predictability (H22b) | grouped-CV paired NLL improvement of B4 (cheap online features) over B1 has a >= 3% relative improvement (a lower bar than G4a's, since B4 is working with strictly less information than B5) AND its bootstrap 95% CI excludes zero, same trajectory-level clustering. **G4a passing does NOT authorize proceeding past this gate** -- H25 onward needs online-usable prediction specifically, not just proof that latent state exists. |
 | G5 Posterior tree (H25) | beats OPT-Tree/SpecExec at matched target cost |
 | G6 Critic (H28) | calibrated, and costs only a small fraction of the savings it produces |
 | G7 Probes (H29) | future benefit pays for the sacrificed candidate slots |
@@ -721,6 +748,22 @@ G1/G3/G4a/G4b's specific numbers (32, 3pp, 20%, 30%, 5%, 3%) are this
 project's own judgment calls, not derived from an external standard --
 recorded here so a future revision that changes them has to say so
 explicitly, in a diff, rather than silently.
+
+**Why G4a/G4b's bootstrap clusters over trajectories, not CV folds.** An
+earlier revision bootstrapped the five per-fold NLL differences directly.
+That is wrong twice over: with 5 folds any two training splits share
+about three quarters of their data, so fold-to-fold spread understates
+real uncertainty; and five numbers whose signs happen to agree produce an
+interval excluding zero almost regardless of effect size. This was not
+theoretical -- on the same synthetic fixture, the per-fold version
+reported a ~2% effect as significant (CI [0.0137, 0.0354], excludes
+zero), while the trajectory-level cluster bootstrap on identical data
+reported CI [-0.0055, 0.0639], which does not. Trajectories are the right
+unit because positions within one are correlated, which is exactly what
+H22 hypothesizes; each contributes one unweighted observation so a few
+long trajectories cannot dominate. The two-part gate (significance AND
+effect size) is what caught the difference in both directions, and is the
+reason both halves are required rather than either alone.
 
 ## Measurement schema
 
@@ -794,13 +837,18 @@ from `scripts/run_h21_combine_sources.py`, calling
 `mean_depth`, `median_depth`, `depth_probabilities` (per tested depth).
 
 H22a/H22b (`scripts/run_h22_disagreement_hmm.py`): per-fold
-`b0_constant_frequency_nll` .. `b5_hmm_nll`; `gates.G4a_temporal_persistence`
-and `gates.G4b_online_predictability`, each with a `paired_nll_improvement`
-block (`mean`/`ci_low`/`ci_high`/`excludes_zero` from
-`bootstrap_nll_difference_ci`), a `threshold_relative_improvement`, and a
-combined `passes` boolean; `hmm_vs_cheap_features` (B4 vs B5, interpretive
-only -- not a gate); `state_selection.underpowered` /
-`cross_validation.underpowered` flags from `minimum_positions_for_hmm`.
+`b0_constant_frequency_nll` .. `b5_hmm_nll` (position-pooled, reported for
+auditability only); `cross_validation.bootstrap_unit` (`"trajectory"`),
+`scored_trajectories`, and `b1_reference_nll_per_trajectory`;
+`gates.G4a_temporal_persistence` and `gates.G4b_online_predictability`,
+each with a `paired_nll_improvement` block (`mean`/`ci_low`/`ci_high`/
+`excludes_zero`/`n_paired_observations` from
+`bootstrap_nll_difference_ci`, where `n_paired_observations` is the
+trajectory count, not the fold count), a `threshold_relative_improvement`,
+the measured `relative_improvement`, and a combined `passes` boolean;
+`hmm_vs_cheap_features` (B4 vs B5, interpretive only -- not a gate);
+`state_selection.underpowered` / `cross_validation.underpowered` flags
+from `minimum_positions_for_hmm`.
 
 **The metric this whole research line is really chasing:**
 

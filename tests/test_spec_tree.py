@@ -194,16 +194,90 @@ def test_merge_prefixes_treats_different_sources_as_not_shared():
     assert len(merged) == 4  # nothing shared; both full paths kept
 
 
-def test_merge_prefixes_requires_exactly_one_root_per_tree():
-    two_roots = SpecTree([_node(0, None, 1, 0), _node(1, None, 2, 0)])
-    single_root = _linear_tree([1])
-    with pytest.raises(SpecTreeError, match="exactly one root"):
-        single_root.merge_prefixes(two_roots)
-
-
 def test_merge_prefixes_output_node_ids_are_contiguous_from_zero():
     a = _linear_tree([1, 2, 3])
     b = _linear_tree([1, 9])
     merged = a.merge_prefixes(b)
     ids = sorted(n.node_id for n in merged.nodes)
     assert ids == list(range(len(merged)))
+
+
+# The tests above all use LINEAR trees, which is precisely the shape that
+# cannot exercise a branching divergence. An earlier implementation walked
+# the shared prefix in lockstep and abandoned BOTH subtrees the moment
+# either side had anything other than exactly one child -- silently
+# dropping real candidate nodes while still returning a tree that passed
+# validate() (a 5-node merge came back with 1 node). The cases below are
+# the shapes that catch that.
+
+def test_merge_prefixes_keeps_every_node_when_divergence_is_a_branch():
+    """A branches into two children where B has one. Nothing may be lost:
+    the shared root plus all three distinct continuations survive."""
+    a = SpecTree([_node(0, None, 1, 0), _node(1, 0, 2, 1), _node(2, 0, 3, 1)])
+    b = SpecTree([_node(0, None, 1, 0), _node(1, 0, 4, 1)])
+    merged = a.merge_prefixes(b)
+    merged.validate()
+    assert sorted(n.token_id for n in merged.nodes) == [1, 2, 3, 4]
+    root = merged.roots()[0]
+    assert {n.token_id for n in merged.children(root.node_id)} == {2, 3, 4}
+
+
+def test_merge_prefixes_keeps_the_tail_when_one_path_is_a_pure_prefix():
+    """A's whole path is a prefix of B's. B's extra depth must survive."""
+    a = _linear_tree([1, 2])
+    b = _linear_tree([1, 2, 3])
+    merged = a.merge_prefixes(b)
+    merged.validate()
+    assert sorted(n.token_id for n in merged.nodes) == [1, 2, 3]
+    assert len(merged) == 3
+
+
+def test_merge_prefixes_never_loses_or_duplicates_nodes_across_random_shapes():
+    """Property check over branching shapes: a merge can only ever
+    collapse shared nodes, so the result must hold at least as many nodes
+    as the larger input and at most the two inputs combined."""
+    import random
+    rng = random.Random(0)
+
+    def _random_tree(size):
+        nodes = [_node(0, None, rng.randint(1, 4), 0,
+                       source=rng.choice(("primary", "scout")))]
+        for i in range(1, size):
+            parent = rng.randrange(i)
+            nodes.append(_node(i, parent, rng.randint(1, 4), nodes[parent].depth + 1,
+                               source=rng.choice(("primary", "scout"))))
+        return SpecTree(nodes)
+
+    for _ in range(200):
+        a = _random_tree(rng.randint(1, 7))
+        b = _random_tree(rng.randint(1, 7))
+        a.validate()
+        b.validate()
+        merged = a.merge_prefixes(b)
+        merged.validate()
+        assert max(len(a), len(b)) <= len(merged) <= len(a) + len(b)
+
+
+def test_merge_prefixes_is_closed_over_multi_root_results():
+    """Two sources whose first tokens differ produce a legal multi-root
+    forest, and that forest must itself be mergeable -- otherwise three
+    sources could never be folded together pairwise."""
+    a = _linear_tree([1, 2])
+    b = _linear_tree([9, 8])
+    forest = a.merge_prefixes(b)
+    assert len(forest.roots()) == 2
+    forest.validate()
+    again = forest.merge_prefixes(a)  # a is already fully contained
+    again.validate()
+    assert len(again) == len(forest)  # nothing new to add, nothing lost
+
+
+def test_merge_prefixes_recomputes_depth_at_the_merged_position():
+    """A subtree grafted in keeps its structure but takes its depth from
+    where it lands, so validate()'s depth rule still holds."""
+    shallow = _linear_tree([5])
+    deep = _linear_tree([7, 8, 9])
+    merged = shallow.merge_prefixes(deep)
+    merged.validate()  # would raise if depths were inherited blindly
+    by_token = {n.token_id: n.depth for n in merged.nodes}
+    assert by_token == {5: 0, 7: 0, 8: 1, 9: 2}

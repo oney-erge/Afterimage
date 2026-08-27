@@ -52,12 +52,13 @@ import numpy as np
 
 from afterimage.runtime.speculation_oracle import (
     DiscreteHMM,
+    MultinomialLogisticRegression,
     bootstrap_nll_difference_ci,
     constant_frequency_baseline_nll,
     disagreement_bucket,
     evaluate_predictive_nll,
     grouped_k_fold,
-    logistic_regression_baseline_nll,
+    logistic_regression_nll_from_model,
     memoryless_baseline_nll,
     minimum_positions_for_hmm,
     select_n_states_by_held_out_nll,
@@ -72,7 +73,27 @@ _FEATURE_COLUMNS = ("primary_entropy", "primary_margin", "scout_entropy",
                     "scout_margin", "approx_js_divergence")
 _B2_COLUMNS = slice(0, 2)   # primary_entropy, primary_margin
 _B3_COLUMNS = slice(0, 5)   # + scout_entropy, scout_margin, approx_js_divergence
-# B4 = B3 columns plus a one-hot previous-bucket block, appended separately.
+_B4_COLUMNS = slice(None)   # + the one-hot previous-bucket block appended by
+                            # build_feature_label_sequences
+# The three cheap-feature baselines, in ladder order. Same model class
+# throughout -- only the input columns differ, which is what isolates
+# which features carry the signal rather than which algorithm does.
+_LR_BASELINES = {
+    "b2_primary_features_nll": _B2_COLUMNS,
+    "b3_primary_scout_features_nll": _B3_COLUMNS,
+    "b4_primary_scout_history_nll": _B4_COLUMNS,
+}
+
+
+def _pooled_lr_nll(model, feature_label_pairs: list, trace_indices: list[int],
+                   columns: slice) -> float:
+    """Held-out NLL of an already-fitted cheap-feature model over the
+    given traces. Returns NaN when the model could not be fitted or the
+    selected traces contain no scoreable position."""
+    if model is None:
+        return float("nan")
+    X, y = _flatten_features(feature_label_pairs, trace_indices, columns)
+    return logistic_regression_nll_from_model(model, X, y)
 
 
 def build_observation_sequences(traces: list[dict], observation_field: str,
@@ -294,6 +315,7 @@ def main() -> int:
 
     fold_splits = grouped_k_fold(len(cv_idx), args.cv_folds, seed=args.seed)
     fold_results = []
+    per_trace_nll: list[dict[str, float]] = []
     for fold_i, (fold_train_pos, fold_test_pos) in enumerate(fold_splits):
         train_trace_idx = [cv_idx[p] for p in fold_train_pos]
         test_trace_idx = [cv_idx[p] for p in fold_test_pos]
@@ -304,30 +326,51 @@ def main() -> int:
         b0 = constant_frequency_baseline_nll(train_obs, test_obs, n_symbols)
         b1 = memoryless_baseline_nll(train_obs, test_obs, n_symbols)
 
-        X_train_b2, y_train_b2 = _flatten_features(
-            feature_label_pairs, train_trace_idx, _B2_COLUMNS)
-        X_test_b2, y_test_b2 = _flatten_features(
-            feature_label_pairs, test_trace_idx, _B2_COLUMNS)
-        b2 = logistic_regression_baseline_nll(
-            X_train_b2, y_train_b2, X_test_b2, y_test_b2, n_symbols, seed=args.seed)
-
-        X_train_b3, y_train_b3 = _flatten_features(
-            feature_label_pairs, train_trace_idx, _B3_COLUMNS)
-        X_test_b3, y_test_b3 = _flatten_features(
-            feature_label_pairs, test_trace_idx, _B3_COLUMNS)
-        b3 = logistic_regression_baseline_nll(
-            X_train_b3, y_train_b3, X_test_b3, y_test_b3, n_symbols, seed=args.seed)
-
-        X_train_b4, y_train_b4 = _flatten_features(
-            feature_label_pairs, train_trace_idx, slice(None))
-        X_test_b4, y_test_b4 = _flatten_features(
-            feature_label_pairs, test_trace_idx, slice(None))
-        b4 = logistic_regression_baseline_nll(
-            X_train_b4, y_train_b4, X_test_b4, y_test_b4, n_symbols, seed=args.seed)
+        # Fit each cheap-feature baseline ONCE per fold, then reuse the
+        # fitted model to score each held-out trajectory separately below
+        # -- refitting per trajectory would be both wasteful and, if the
+        # seed ever stopped making the fit deterministic, subtly wrong.
+        lr_models = {}
+        for key, columns in _LR_BASELINES.items():
+            X_train, y_train = _flatten_features(
+                feature_label_pairs, train_trace_idx, columns)
+            lr_models[key] = (
+                MultinomialLogisticRegression.fit(
+                    X_train, y_train, n_symbols, seed=args.seed)
+                if len(X_train) else None)
 
         hmm, _ = fit_best_of(train_obs, selected_n_states, n_symbols,
                              args.restarts, args.max_iterations, args.seed)
+
+        b2 = _pooled_lr_nll(lr_models["b2_primary_features_nll"], feature_label_pairs,
+                            test_trace_idx, _B2_COLUMNS)
+        b3 = _pooled_lr_nll(lr_models["b3_primary_scout_features_nll"],
+                            feature_label_pairs, test_trace_idx, _B3_COLUMNS)
+        b4 = _pooled_lr_nll(lr_models["b4_primary_scout_history_nll"],
+                            feature_label_pairs, test_trace_idx, _B4_COLUMNS)
         b5 = evaluate_predictive_nll(hmm, test_obs)
+
+        # Per-trajectory scores: the bootstrap's clustering unit (see
+        # bootstrap_nll_difference_ci's docstring on why per-fold
+        # differences are not a valid input). Each held-out trace is
+        # scored on its own against the models this fold already fitted.
+        for trace_i in test_trace_idx:
+            seq = observation_sequences[trace_i]
+            if len(seq) < 2:
+                continue  # no next-position prediction exists to score
+            row = {
+                "b0_constant_frequency_nll": constant_frequency_baseline_nll(
+                    train_obs, [seq], n_symbols),
+                "b1_memoryless_current_bucket_nll": memoryless_baseline_nll(
+                    train_obs, [seq], n_symbols),
+                "b5_hmm_nll": evaluate_predictive_nll(hmm, [seq]),
+            }
+            for key, columns in _LR_BASELINES.items():
+                row[key] = _pooled_lr_nll(
+                    lr_models[key], feature_label_pairs, [trace_i], columns)
+            if any(np.isnan(value) for value in row.values()):
+                continue  # a trace no baseline could score is not a data point
+            per_trace_nll.append(row)
 
         fold_results.append({
             "fold": fold_i, "train_traces": len(train_trace_idx),
@@ -343,8 +386,23 @@ def main() -> int:
              (fold_i + 1, args.cv_folds, b0, b1, b2, b3, b4, b5))
 
     def _paired(key_baseline: str, key_model: str) -> list[float]:
-        return [fold[key_baseline] - fold[key_model] for fold in fold_results
-               if not (np.isnan(fold[key_baseline]) or np.isnan(fold[key_model]))]
+        """One paired difference per held-out TRAJECTORY, pooled across
+        folds (each trace is in exactly one test fold, so no trace is
+        counted twice)."""
+        return [row[key_baseline] - row[key_model] for row in per_trace_nll]
+
+    if not per_trace_nll:
+        raise RuntimeError(
+            "no held-out trajectory could be scored by every baseline -- with %d "
+            "cross-validation traces this usually means the traces are too short "
+            "(each needs at least 2 positions to have a next-position prediction "
+            "at all)" % len(cv_idx))
+
+    # The reference NLL the relative-improvement thresholds divide by has
+    # to be in the SAME unit as the bootstrap's own mean, i.e. a mean over
+    # trajectories, not the position-pooled per-fold figure reported above.
+    b1_reference = float(np.mean(
+        [row["b1_memoryless_current_bucket_nll"] for row in per_trace_nll]))
 
     gate_g4a = bootstrap_nll_difference_ci(
         _paired("b1_memoryless_current_bucket_nll", "b5_hmm_nll"),
@@ -381,6 +439,15 @@ def main() -> int:
             "cv_positions": cv_positions_total,
             "underpowered": bool(cv_underpowered),
             "fold_results": fold_results,
+            "bootstrap_unit": "trajectory",
+            "scored_trajectories": len(per_trace_nll),
+            "b1_reference_nll_per_trajectory": b1_reference,
+            "note": "fold_results are position-pooled per-fold NLLs, reported for "
+                    "auditability. The gates below do NOT bootstrap those: they "
+                    "bootstrap one paired difference per held-out TRAJECTORY "
+                    "(scored_trajectories of them), because k-fold aggregates are "
+                    "neither independent nor numerous enough for a meaningful "
+                    "interval -- see bootstrap_nll_difference_ci's docstring.",
         },
         "gates": {
             "G4a_temporal_persistence": {
@@ -390,11 +457,10 @@ def main() -> int:
                                "not that it is usable online.",
                 "paired_nll_improvement": gate_g4a,
                 "threshold_relative_improvement": 0.05,
+                "relative_improvement": _relative_improvement(gate_g4a, b1_reference),
                 "passes": (gate_g4a["mean"] is not None
                           and gate_g4a["excludes_zero"]
-                          and gate_g4a["mean"] / max(
-                              statistics_mean_of(fold_results, "b1_memoryless_current_bucket_nll"),
-                              1e-9) >= 0.05),
+                          and _relative_improvement(gate_g4a, b1_reference) >= 0.05),
             },
             "G4b_online_predictability": {
                 "description": "H22b: do CHEAP pre-sweep features (B4) beat the "
@@ -404,11 +470,10 @@ def main() -> int:
                                "before the sweep that produces it.",
                 "paired_nll_improvement": gate_g4b,
                 "threshold_relative_improvement": 0.03,
+                "relative_improvement": _relative_improvement(gate_g4b, b1_reference),
                 "passes": (gate_g4b["mean"] is not None
                           and gate_g4b["excludes_zero"]
-                          and gate_g4b["mean"] / max(
-                              statistics_mean_of(fold_results, "b1_memoryless_current_bucket_nll"),
-                              1e-9) >= 0.03),
+                          and _relative_improvement(gate_g4b, b1_reference) >= 0.03),
             },
         },
         "hmm_vs_cheap_features": {
@@ -429,9 +494,15 @@ def main() -> int:
     return 0
 
 
-def statistics_mean_of(fold_results: list[dict], key: str) -> float:
-    values = [fold[key] for fold in fold_results if not np.isnan(fold[key])]
-    return float(np.mean(values)) if values else float("nan")
+def _relative_improvement(gate: dict, reference_nll: float) -> float:
+    """The gate's absolute NLL gain expressed as a fraction of the
+    baseline it is being compared against -- the effect-size half of each
+    two-part gate. Statistical significance alone is not enough: a
+    bootstrap can call a 0.001-nat gain significant, and that is not a
+    result worth building a runtime mechanism on."""
+    if gate["mean"] is None or not np.isfinite(reference_nll) or reference_nll <= 0:
+        return 0.0
+    return float(gate["mean"] / reference_nll)
 
 
 if __name__ == "__main__":

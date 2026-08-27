@@ -49,8 +49,16 @@ class SpecTreeError(ValueError):
 
 class SpecTree:
     """A validated, immutable-after-construction collection of SpecNodes
-    forming a tree (a single root, no cycles, every non-root node's
-    parent already present).
+    forming a rooted forest: no cycles, every non-root node's parent
+    already present, and depth consistent with each node's parent.
+
+    Note "forest," not "single tree": one or more roots is legal, and
+    merge_prefixes deliberately produces a multi-root result when the two
+    sources' first candidate tokens differ (there is genuinely no shared
+    node to hang them under, and inventing a synthetic root would fake a
+    shared candidate the target would then be asked to verify). validate()
+    therefore does NOT require a single root -- an earlier revision of
+    this docstring claimed it did, which validate() never enforced.
 
     Construction does NOT validate automatically -- call validate()
     explicitly. This is deliberate: a caller building a tree incrementally
@@ -87,6 +95,12 @@ class SpecTree:
     def children(self, node_id: int | None) -> list[SpecNode]:
         """Direct children of node_id. Pass None for the root(s)."""
         return [self._nodes[cid] for cid in self._children.get(node_id, [])]
+
+    def roots(self) -> list[SpecNode]:
+        """Every depth-0 node (parent_id is None). More than one is legal
+        -- see the class docstring on why merge_prefixes can produce a
+        multi-root forest."""
+        return self.children(None)
 
     def path_to(self, node_id: int) -> list[SpecNode]:
         """Root-to-node_id path, inclusive of both endpoints, in root-
@@ -166,82 +180,81 @@ class SpecTree:
         based scheme is supposed to realize over independently verifying
         each source's full path.
 
-        A shared prefix is identified purely structurally, by walking
-        both trees' roots and matching consecutive (token_id, source)
-        pairs -- node_id values are NOT assumed to agree between the two
+        Sharing is decided level by level, uniformly: at each position two
+        nodes are the SAME candidate when their (token_id, source) pair
+        matches, and matched nodes recurse into their children. Anything
+        unmatched -- on either side -- is copied in whole, subtree
+        included. node_id values are NOT assumed to agree between the two
         input trees (they come from independent sources and have no
-        reason to share an ID space). Node identity in the OUTPUT tree is
-        freshly assigned, contiguous from 0, in the order nodes are
-        added (shared prefix first, then self's remaining unique nodes,
-        then other's remaining unique nodes) -- callers must not assume
-        merged node_ids relate to either input's own IDs.
+        reason to share an ID space); output node identity is freshly
+        assigned, contiguous from 0, and callers must not assume merged
+        node_ids relate to either input's own IDs. Output `depth` is
+        recomputed from the merged position rather than inherited, so a
+        subtree grafted at a different depth than it had in its source
+        tree still satisfies validate()'s depth-consistency rule.
+
+        The root level is treated exactly like any other sibling level,
+        which means merging is closed: a multi-root result (produced when
+        the two sources' first tokens differ -- see the class docstring)
+        is itself a legal input to another merge_prefixes call, so three
+        or more sources can be merged by folding pairwise.
+
+        Where two matched nodes carry different `source_prob` values,
+        SELF's value is the one kept. Matching requires the same `source`,
+        so both values came from the same model and should agree; if a
+        caller merges two trees from the same source with genuinely
+        different probabilities for one token, that disagreement is
+        silently resolved in self's favor rather than being flagged.
+
+        Note that including `source` in the match key means Primary and
+        Scout proposing the SAME token at the same position produce two
+        separate nodes, each consuming a verification slot. That keeps
+        per-source credit attribution exact (which source earned a hit),
+        at the cost of not deduplicating the case where the two sources
+        agree. Which of those matters more is a real open design question
+        for H20/H27, not something this structural layer should decide on
+        its own -- see docs/SPECULATION_TREE_RESEARCH.md.
 
         Both inputs are assumed already valid (call validate() on each
         first); this method does not re-validate its inputs, only the
         merge logic's own output before returning it.
         """
-        self_roots = self.children(None)
-        other_roots = other.children(None)
-        if len(self_roots) != 1 or len(other_roots) != 1:
-            raise SpecTreeError(
-                "merge_prefixes requires exactly one root per tree, got %d and %d" %
-                (len(self_roots), len(other_roots)))
-
         merged_nodes: list[SpecNode] = []
         next_id = 0
 
-        def _add(node: SpecNode, new_parent_id: int | None) -> int:
+        def _add(node: SpecNode, new_parent_id: int | None, depth: int) -> int:
             nonlocal next_id
             merged_nodes.append(dataclasses.replace(
-                node, node_id=next_id, parent_id=new_parent_id))
+                node, node_id=next_id, parent_id=new_parent_id, depth=depth))
             assigned = next_id
             next_id += 1
             return assigned
 
-        # Walk the shared prefix: as long as both trees have a single
-        # child at the current position with matching (token_id, source),
-        # merge them into one node. The moment they diverge (different
-        # token, different source, or either side branches into more than
-        # one child), the shared-prefix walk stops and each remaining
-        # subtree is copied in independently under the last shared node.
-        self_cursor: SpecNode | None = self_roots[0]
-        other_cursor: SpecNode | None = other_roots[0]
-        merged_parent_id: int | None = None
-        while (self_cursor is not None and other_cursor is not None
-               and self_cursor.token_id == other_cursor.token_id
-               and self_cursor.source == other_cursor.source):
-            merged_parent_id = _add(self_cursor, merged_parent_id)
-            self_children = self.children(self_cursor.node_id)
-            other_children = other.children(other_cursor.node_id)
-            if len(self_children) == 1 and len(other_children) == 1:
-                self_cursor, other_cursor = self_children[0], other_children[0]
-            else:
-                self_cursor, other_cursor = None, None
+        def _copy_subtree(tree: "SpecTree", node: SpecNode,
+                          new_parent_id: int | None, depth: int) -> None:
+            assigned = _add(node, new_parent_id, depth)
+            for child in tree.children(node.node_id):
+                _copy_subtree(tree, child, assigned, depth + 1)
 
-        def _copy_subtree(tree: "SpecTree", subtree_root: SpecNode | None,
-                          new_parent_id: int | None) -> None:
-            if subtree_root is None:
-                return
-            assigned = _add(subtree_root, new_parent_id)
-            for child in tree.children(subtree_root.node_id):
-                _copy_subtree(tree, child, assigned)
+        def _merge_levels(self_nodes: list[SpecNode], other_nodes: list[SpecNode],
+                          new_parent_id: int | None, depth: int) -> None:
+            unmatched_other = list(other_nodes)
+            for self_node in self_nodes:
+                match = next(
+                    (candidate for candidate in unmatched_other
+                     if candidate.token_id == self_node.token_id
+                     and candidate.source == self_node.source), None)
+                if match is None:
+                    _copy_subtree(self, self_node, new_parent_id, depth)
+                    continue
+                unmatched_other.remove(match)
+                assigned = _add(self_node, new_parent_id, depth)
+                _merge_levels(self.children(self_node.node_id),
+                              other.children(match.node_id), assigned, depth + 1)
+            for leftover in unmatched_other:
+                _copy_subtree(other, leftover, new_parent_id, depth)
 
-        # Whatever did not get folded into the shared-prefix walk above is
-        # copied in as-is: self_cursor/other_cursor point at the first
-        # diverging nodes (or None, if one tree's path was a pure prefix
-        # of the other's and fully consumed).
-        if self_cursor is not None:
-            _copy_subtree(self, self_cursor, merged_parent_id)
-        else:
-            for child in (self.children(self_roots[0].node_id) if merged_parent_id is None
-                         else []):
-                _copy_subtree(self, child, merged_parent_id)
-        if other_cursor is not None:
-            _copy_subtree(other, other_cursor, merged_parent_id)
-        else:
-            for child in (other.children(other_roots[0].node_id) if merged_parent_id is None
-                         else []):
-                _copy_subtree(other, child, merged_parent_id)
+        _merge_levels(self.roots(), other.roots(), None, 0)
 
         merged = SpecTree(merged_nodes)
         merged.validate()

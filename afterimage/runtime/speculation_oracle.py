@@ -106,9 +106,19 @@ def approximate_js_divergence_from_topk(
     The approximation: build the union of both sources' stored top-k
     token IDs, assign each source's recorded probability mass to the IDs
     it actually reported and 0.0 to IDs only the other source reported,
-    then compute standard JS divergence over that reduced support. This
-    UNDERCOUNTS true divergence whenever the two sources disagree mainly
-    in their tails (outside both stored top-k sets) -- a real limitation,
+    RENORMALIZE each side to sum to 1 over that reduced support, then
+    compute standard JS divergence over it. The renormalization step
+    matters and is not incidental: it means this compares the two
+    sources' distribution SHAPES over their combined top-k, and is blind
+    to how much total mass each one placed there in the first place. Two
+    sources that rank the same tokens in the same proportions score 0
+    divergence even if one committed 0.95 of its mass to that set and the
+    other only 0.30 -- a concentration difference the per-source
+    `entropy` and `margin` features are there to carry instead.
+
+    This UNDERCOUNTS true divergence whenever the two sources disagree
+    mainly in their tails (outside both stored top-k sets) -- a real
+    limitation,
     not hidden here, and the reason this function has "approximate" in
     its name rather than being called js_divergence like the exact
     version above (which needs full logits and is used where both
@@ -254,8 +264,13 @@ def compute_equal_budget_metrics(rows: list[dict], total_budget: int,
             "scout_slots": s,
             "coverage": coverage,
             "equal_budget_union_gain": coverage - baseline_coverage,
+            # None, not 0.0, at s=0: "coverage gained per Scout slot" is
+            # undefined when no Scout slot was allocated, and reporting a
+            # real-looking 0.0 there invites reading the baseline point as
+            # a measured no-effect result rather than as the reference the
+            # other points are measured against.
             "marginal_scout_coverage_per_slot": (
-                (coverage - baseline_coverage) / s if s > 0 else 0.0),
+                (coverage - baseline_coverage) / s if s > 0 else None),
             "unique_scout_hit_rate": statistics.mean(unique_scout_hits),
         }
 
@@ -304,6 +319,21 @@ def compute_sustained_rescue_depth(traces: list[dict], k: int,
     double-counting: each is a genuinely separate point where a tree
     expansion would have needed Scout's guidance, and "how far can I
     trust Scout starting HERE" is a different question at each of them.
+
+    NOTE ON THE CONDITIONING EVENT: depth_probabilities[d] is
+    P(depth >= d | Primary missed AND Scout covered), not
+    P(depth >= d | Primary missed). The denominator is the count of
+    rescue OPPORTUNITIES, which already required Scout to cover the miss
+    position. P(Scout covers | Primary missed) is a separate quantity --
+    compute_oracle_coverage_stats' conditional_rescue_recall -- and the
+    two multiply if an unconditional figure is wanted. Reading a depth
+    probability as though it were conditioned on the miss alone
+    overstates it by exactly the factor of that recall.
+
+    depth_probabilities[1] is therefore always 1.0 by construction (every
+    recorded opportunity has depth >= 1, since the miss position itself
+    is covered by definition). It is kept in the output as a visible
+    consistency check on that reasoning rather than removed.
     """
     lengths: list[int] = []
     for trace in traces:
@@ -569,17 +599,40 @@ class MultinomialLogisticRegression:
     three are the SAME model class with different input feature columns
     -- the ladder's point is isolating which features carry the signal,
     not comparing different algorithms.
+
+    Features are standardized (zero mean, unit variance) internally using
+    TRAIN-split statistics, which are stored on the model and reapplied
+    in predict_proba. This is not cosmetic: H22's real feature columns
+    span very different magnitudes -- entropy in nats (0-11 for a 151936-
+    token vocabulary), margin in raw logit units (routinely 0-30), JS
+    divergence bounded by ln 2, and 0/1 history one-hots. Fixed-step
+    full-batch gradient descent on unscaled columns like that is
+    dominated by the largest-magnitude feature and underfits the rest,
+    which would make B2/B3/B4 look weak for optimizer reasons rather than
+    because the features lack signal -- biasing G4b toward a false
+    negative, the expensive direction to be wrong in.
     """
     n_features: int
     n_classes: int
     weights: np.ndarray  # (n_features + 1, n_classes), last row is bias
+    feature_mean: np.ndarray
+    feature_scale: np.ndarray
 
     @classmethod
     def fit(cls, X: np.ndarray, y: np.ndarray, n_classes: int,
            learning_rate: float = 0.1, l2: float = 1e-3,
            max_iterations: int = 500, seed: int = 0) -> "MultinomialLogisticRegression":
         n_samples, n_features = X.shape
-        X_bias = np.hstack([X, np.ones((n_samples, 1))])
+        feature_mean = X.mean(axis=0)
+        feature_scale = X.std(axis=0)
+        # A constant column (std 0) carries no information; scaling it by 1
+        # leaves it at exactly 0 after centering rather than dividing by
+        # zero. This is common in practice here -- a history one-hot column
+        # for a bucket that never occurs in a given fold is all zeros.
+        feature_scale = np.where(feature_scale > 0, feature_scale, 1.0)
+        X_scaled = (X - feature_mean) / feature_scale
+
+        X_bias = np.hstack([X_scaled, np.ones((n_samples, 1))])
         rng = np.random.default_rng(seed)
         weights = rng.normal(scale=0.01, size=(n_features + 1, n_classes))
         y_onehot = np.eye(n_classes)[y]
@@ -591,15 +644,32 @@ class MultinomialLogisticRegression:
             grad = X_bias.T @ (probs - y_onehot) / n_samples
             grad[:-1] += l2 * weights[:-1]  # do not regularize the bias row
             weights -= learning_rate * grad
-        return cls(n_features, n_classes, weights)
+        return cls(n_features, n_classes, weights, feature_mean, feature_scale)
 
     def predict_proba(self, X: np.ndarray) -> np.ndarray:
         n_samples = X.shape[0]
-        X_bias = np.hstack([X, np.ones((n_samples, 1))])
+        X_scaled = (X - self.feature_mean) / self.feature_scale
+        X_bias = np.hstack([X_scaled, np.ones((n_samples, 1))])
         logits = X_bias @ self.weights
         logits -= logits.max(axis=1, keepdims=True)
         probs = np.exp(logits)
         return probs / probs.sum(axis=1, keepdims=True)
+
+
+def logistic_regression_nll_from_model(
+        model: MultinomialLogisticRegression,
+        X: np.ndarray, y: np.ndarray) -> float:
+    """Held-out NLL of an ALREADY-FITTED model. Split out from
+    logistic_regression_baseline_nll so a caller can fit once on a fold's
+    training split and then score each held-out trajectory separately --
+    which is what a cluster bootstrap over trajectories needs, and which
+    refitting per trajectory would make needlessly expensive.
+    """
+    if len(X) == 0:
+        return float("nan")
+    probs = model.predict_proba(X)
+    row_probs = probs[np.arange(len(y)), y]
+    return float(-np.mean(np.log(np.clip(row_probs, _LOG_EPS, None))))
 
 
 def logistic_regression_baseline_nll(
@@ -617,9 +687,7 @@ def logistic_regression_baseline_nll(
     if len(X_train) == 0 or len(X_held_out) == 0:
         return float("nan")
     model = MultinomialLogisticRegression.fit(X_train, y_train, n_classes, seed=seed)
-    probs = model.predict_proba(X_held_out)
-    row_probs = probs[np.arange(len(y_held_out)), y_held_out]
-    return float(-np.mean(np.log(np.clip(row_probs, _LOG_EPS, None))))
+    return logistic_regression_nll_from_model(model, X_held_out, y_held_out)
 
 
 def select_n_states_by_held_out_nll(
@@ -642,6 +710,15 @@ def select_n_states_by_held_out_nll(
             history = hmm.fit(train_sequences, max_iterations=max_iterations)
             if history and history[-1] > best_ll:
                 best_ll, best_hmm = history[-1], hmm
+        if best_hmm is None:
+            # Every restart failed to produce a usable fit (e.g. no
+            # training sequence was long enough for Baum-Welch to run a
+            # single iteration). Record the candidate as unscoreable
+            # rather than calling evaluate_predictive_nll(None, ...) and
+            # dying with an AttributeError several frames away.
+            scored.append({"n_states": n_states, "validation_nll": float("nan"),
+                           "train_log_likelihood": float("nan")})
+            continue
         validation_nll = evaluate_predictive_nll(best_hmm, validation_sequences)
         scored.append({"n_states": n_states, "validation_nll": validation_nll,
                        "train_log_likelihood": best_ll})
@@ -679,13 +756,33 @@ def grouped_k_fold(n_groups: int, k: int, seed: int) -> list[tuple[list[int], li
 def bootstrap_nll_difference_ci(paired_differences: list[float], n_resamples: int = 2000,
                                 seed: int = 0, confidence: float = 0.95) -> dict:
     """Bootstrap confidence interval on the mean of paired
-    (baseline_nll - model_nll) differences (one per CV fold, or per
-    trajectory), used because a single point estimate of "the HMM won by
-    X" says nothing about whether that margin could plausibly be zero
-    given the fold-to-fold variance -- see G4a/G4b's own CI-excludes-zero
+    (baseline_nll - model_nll) differences, used because a single point
+    estimate of "the HMM won by X" says nothing about whether that margin
+    could plausibly be zero -- see G4a/G4b's own CI-excludes-zero
     requirement in docs/SPECULATION_TREE_RESEARCH.md. Positive values
     mean the model beat the baseline (lower NLL is better, so
     baseline - model > 0 favors the model).
+
+    **Pass one difference per TRAJECTORY, not per CV fold.** Two reasons,
+    both of which make a per-fold call actively misleading rather than
+    merely weak:
+
+    1. k-fold aggregates are not independent -- with 5 folds any two
+       training splits share ~3/4 of their data, so the fold-to-fold
+       spread systematically understates real uncertainty and the
+       resulting interval is too narrow.
+    2. There are only k of them. Resampling 5 numbers whose signs happen
+       to agree yields an interval excluding zero essentially whenever
+       the model wins every fold, no matter how small the margin: five
+       differences of ~0.001 nats produce a CI of roughly
+       [0.0009, 0.0011], formally "significant" and practically nothing.
+
+    Trajectories are the right clustering unit because positions within
+    one trajectory are correlated -- which is precisely what H22
+    hypothesizes -- so resampling individual positions would understate
+    variance in the same way. Each trajectory contributes one unweighted
+    observation regardless of its length, so a few long trajectories
+    cannot dominate the interval.
     """
     if not paired_differences:
         return {"mean": None, "ci_low": None, "ci_high": None, "excludes_zero": None,

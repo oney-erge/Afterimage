@@ -30,6 +30,7 @@ from afterimage.runtime.speculation_oracle import (
     disagreement_bucket,
     entropy_of_logits,
     evaluate_predictive_nll,
+    logistic_regression_nll_from_model,
     grouped_k_fold,
     js_divergence,
     logistic_regression_baseline_nll,
@@ -447,6 +448,60 @@ def test_logistic_regression_baseline_nll_handles_empty_split():
     nll = logistic_regression_baseline_nll(
         np.zeros((0, 2)), np.zeros(0, dtype=int), np.zeros((0, 2)), np.zeros(0, dtype=int), 2)
     assert np.isnan(nll)
+
+
+def test_logistic_regression_is_invariant_to_feature_scale():
+    """H22's real features span very different magnitudes (entropy in
+    nats, margin in raw logit units, divergence bounded by ln 2, 0/1
+    one-hots). Without internal standardization, fixed-step gradient
+    descent is dominated by the largest column and underfits -- which
+    would make B2/B3/B4 look weak for optimizer reasons and bias G4b
+    toward a false negative. Rescaling a column must not change the fit.
+    """
+    rng = np.random.default_rng(0)
+    n = 600
+    small = rng.uniform(0, 3, n)
+    large = rng.uniform(0, 30, n)
+    y = (large > 15).astype(int)
+    split = n // 2
+
+    raw = np.column_stack([small, large])
+    # Same information, one column scaled by 100x.
+    rescaled = np.column_stack([small, large * 100.0])
+
+    nll_raw = logistic_regression_baseline_nll(
+        raw[:split], y[:split], raw[split:], y[split:], 2, seed=0)
+    nll_rescaled = logistic_regression_baseline_nll(
+        rescaled[:split], y[:split], rescaled[split:], y[split:], 2, seed=0)
+    assert nll_raw == pytest.approx(nll_rescaled, abs=1e-9)
+    # And the fit must actually be good, not merely consistent.
+    assert nll_raw < 0.2
+
+
+def test_logistic_regression_handles_a_constant_feature_column():
+    """A one-hot history column for a bucket that never occurs in a given
+    fold is all zeros -- standardizing it must not divide by zero."""
+    rng = np.random.default_rng(1)
+    n = 200
+    X = np.column_stack([rng.normal(size=n), np.zeros(n)])
+    y = (X[:, 0] > 0).astype(int)
+    nll = logistic_regression_baseline_nll(
+        X[:100], y[:100], X[100:], y[100:], 2, seed=0)
+    assert np.isfinite(nll)
+
+
+def test_logistic_regression_nll_from_model_matches_the_fit_and_score_helper():
+    """The split-out scorer must agree exactly with the combined helper,
+    since the H22 pipeline fits once per fold and then scores each
+    trajectory through the former."""
+    rng = np.random.default_rng(2)
+    X = rng.normal(size=(200, 3))
+    y = (X[:, 0] + X[:, 1] > 0).astype(int)
+    combined = logistic_regression_baseline_nll(
+        X[:100], y[:100], X[100:], y[100:], 2, seed=3)
+    model = MultinomialLogisticRegression.fit(X[:100], y[:100], 2, seed=3)
+    split_out = logistic_regression_nll_from_model(model, X[100:], y[100:])
+    assert combined == pytest.approx(split_out)
 
 
 # --------------------------------------------------------- select_n_states_by_held_out_nll
