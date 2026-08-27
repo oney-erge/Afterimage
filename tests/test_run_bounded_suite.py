@@ -223,3 +223,74 @@ def test_cool_down_never_reports_recovery_from_temperature_alone(monkeypatch):
     monkeypatch.setattr(bounded.time, "perf_counter", fake_perf_counter)
     result = bounded.cool_down(0.0, max_temperature_c=65.0)
     assert result["cooldown_reached_target"] is False
+
+
+def test_cool_down_checks_throttle_even_with_no_cooldown_flags_at_all(monkeypatch):
+    """The exact gap this fix closes: benchmark.sh's canonical invocation
+    passes neither --cooldown-seconds nor --cooldown-max-temp-c, so callers
+    reach cool_down(0.0, None). The old code returned {} immediately in that
+    case without ever calling gpu_thermal_snapshot() -- a genuinely
+    throttled GPU was invisible unless a caller separately opted in to a
+    temperature target. The throttle check must now be unconditional."""
+    from scripts import run_bounded_suite as bounded
+
+    monkeypatch.setattr(bounded, "gpu_thermal_snapshot", lambda: {
+        "temperature_c": "59", "throttle_reasons_active": "0x0000000000000020",
+        "throttled": True})
+    monkeypatch.setattr(bounded.time, "sleep", lambda _seconds: None)
+    clock = {"t": 0.0}
+
+    def fake_perf_counter():
+        clock["t"] += 120.0
+        return clock["t"]
+
+    monkeypatch.setattr(bounded.time, "perf_counter", fake_perf_counter)
+    result = bounded.cool_down(0.0, None)
+    assert result["cooldown_reached_target"] is False
+
+
+def test_cool_down_returns_immediately_when_not_throttled_and_no_flags_given(monkeypatch):
+    """The common case must stay cheap: an unthrottled GPU with the fully
+    default call still returns on the first snapshot, not after waiting."""
+    from scripts import run_bounded_suite as bounded
+
+    monkeypatch.setattr(bounded, "gpu_thermal_snapshot", lambda: {
+        "temperature_c": "59", "throttle_reasons_active": "0x0000000000000000",
+        "throttled": False})
+    result = bounded.cool_down(0.0, None)
+    assert result["cooldown_reached_target"] is True
+
+
+def test_cool_down_seconds_floor_also_requires_throttle_clear(monkeypatch):
+    """Previously the seconds-only floor path (--cooldown-seconds with no
+    --cooldown-max-temp-c) never consulted is_throttled() at all, so it
+    would wait out the floor and report done even on a still-throttled GPU.
+    The floor must now be a minimum, not a substitute for the throttle
+    check."""
+    from scripts import run_bounded_suite as bounded
+
+    calls = {"n": 0}
+
+    def snapshot():
+        calls["n"] += 1
+        # Throttled for the first two polls, then clears.
+        throttled = calls["n"] <= 2
+        return {"temperature_c": "59",
+                "throttle_reasons_active": "0x0000000000000020" if throttled else "0x0",
+                "throttled": throttled}
+
+    monkeypatch.setattr(bounded, "gpu_thermal_snapshot", snapshot)
+    monkeypatch.setattr(bounded.time, "sleep", lambda _seconds: None)
+    result = bounded.cool_down(1.0, None)
+    assert result["cooldown_reached_target"] is True
+    assert calls["n"] >= 3  # had to poll past the still-throttled snapshots
+
+
+def test_cool_down_unknown_throttle_reading_does_not_block(monkeypatch):
+    """No nvidia-smi / non-NVIDIA host: is_throttled() is None, not False.
+    That must read as "proceed", never as a confident "still throttled"."""
+    from scripts import run_bounded_suite as bounded
+
+    monkeypatch.setattr(bounded, "gpu_thermal_snapshot", lambda: {})
+    result = bounded.cool_down(0.0, None)
+    assert result["cooldown_reached_target"] is True

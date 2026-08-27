@@ -32,7 +32,7 @@ hardware, not a projection. The tradeoff: this is still disk-bound, so it
 runs seconds per token, not tokens per second.
 
 It comes with a CLI, a web UI, an OpenAI-compatible server, and a Python API.
-There's also an opt-in research lab where nineteen speedup ideas get tested
+There's also an opt-in research workspace where nineteen speedup ideas get tested
 against named controls and reported honestly, wins and losses both.
 
 ## Is this for you?
@@ -56,10 +56,12 @@ against named controls and reported honestly, wins and losses both.
   per token, not tokens per second.
 
 **Worth knowing before you install:**
-- Only Llama-family checkpoint layouts work: a top-level `model.layers` list
-  of decoder blocks, `model.embed_tokens`, and `model.lm_head`. Qwen, Llama,
-  and Mistral are the tested family; GPT-2/Falcon/MPT/BLOOM-style layouts do
-  not work. See [CONFIGURATION.md](docs/CONFIGURATION.md#supported-model-architectures).
+- The runtime now resolves decoder structure through model adapters instead
+  of one hard-coded object path. Dense Qwen, Llama, and Mistral remain the
+  release-verified families. Qwen packed-MoE streaming and Qwen3-VL execution
+  are implemented but still experimental until a full checkpoint passes the
+  GPU release suite. Other Hub models can still be downloaded and inspected.
+  See [CONFIGURATION.md](docs/CONFIGURATION.md#supported-model-architectures).
 - macOS runs CPU-only today (no CUDA, so the GPU decode kernels don't run).
 - AMD/ROCm is implemented but hasn't been run on real AMD hardware by this
   project -- treat it as untested, not verified.
@@ -126,9 +128,10 @@ afterimage compress Qwen/Qwen3-14B --dry-run
 ```
 
 `--dry-run` estimates download size, compressed-store size, and peak disk
-usage before you commit to the download -- it does not check whether the
-model's architecture is supported. That check happens when a store is
-actually built or run.
+usage before you commit to the download. The web application's Get flow also
+downloads the snapshot, inspects its execution compatibility, prepares an
+executable model when possible, and retains download-only snapshots without
+mislabeling model size as incompatibility.
 
 ### Run a real model
 
@@ -236,9 +239,11 @@ the lossless store remains stable at 1.45–1.49x compression.
   directly anyway, which is the case Afterimage doesn't need to solve.
 - AMD/ROCm is untested on real hardware by this project, and native Windows
   CUDA is less validated than the WSL2 path.
-- Checkpoint layout is a real, permanent limitation, not a bug: only the
-  Llama-family structure (`model.layers`, `model.embed_tokens`, `model.lm_head`)
-  is supported. See [CONFIGURATION.md](docs/CONFIGURATION.md#supported-model-architectures).
+- Checkpoint layout still determines execution compatibility. Model adapters
+  cover the release-verified dense path plus experimental Qwen MoE and Qwen3-VL
+  paths. A catalog result with no executable adapter remains downloadable but
+  is not marked Ready. See
+  [CONFIGURATION.md](docs/CONFIGURATION.md#supported-model-architectures).
 - Two opt-in paths are not lossless, and are labeled as such wherever they
   appear: `afterimage compress --quantize q8` trades bit-exactness for a
   smaller store, and `--lm-head-slice-rows` trades bit-exactness for a lower
@@ -287,11 +292,14 @@ pip install -e ".[server]"
 afterimage serve --host 127.0.0.1 --port 8420
 ```
 
-The server exposes `/v1/chat/completions`, compression job controls,
-pause/resume/cancel, budget feasibility, runtime statistics, and the H0-H18
-Experiment Lab.
+The server exposes `/v1/chat/completions`, a persistent model library,
+cursor-paginated Hub discovery, a unified Get pipeline, download and
+preparation job controls, cancellable local chat, runtime statistics, and the
+H0-H18 Research workspace. The bundled responsive UI is organized into Home,
+Models, Chat, and Research rather than exposing compression internals as
+separate user workflows.
 
-## Research lab
+## Research workspace
 
 Research methods are opt-in configurations and never replace the stable runtime
 defaults automatically.

@@ -5,6 +5,27 @@ No tagged releases yet. Everything below is `main`.
 
 ## [Unreleased]
 
+### 0.3.0 product workspace
+
+- Replaced the monolithic developer-console UI with responsive Home, Models,
+  Chat, and Research modules using shared CSS, state, API, and job components.
+- Added a persistent SQLite model/job registry and one Get lifecycle spanning
+  download, inspection, lossless preparation, checksum verification, and Ready.
+- Added cursor-paginated Hugging Face catalog discovery. Model size and unknown
+  architecture no longer disable Get; availability, format, execution evidence,
+  modality, MoE structure, and rough storage estimates are reported separately.
+- Added per-file transfer progress, bounded retry, cooperative in-file pause,
+  resume, cancel, interrupted-job recovery, disk preflight, and idempotent reruns.
+- Added local-inventory Chat with automatic model selection, live generated text,
+  Stop, guarded local image attachments, and Qwen3-VL processor integration.
+- Added structural model adapters, experimental packed-Qwen selected-expert MoE
+  streaming, and experimental Qwen3-VL language-decoder streaming groundwork.
+- Added cross-platform total/available RAM and disk reporting through `psutil`,
+  removed artificial global parameter ceilings, and retained only measured
+  reference evidence on Home.
+- Added focused model-state, catalog, adapter, MoE exactness, API-shell, and
+  optional Playwright desktop/mobile acceptance tests.
+
 ### Added
 - `afterimage quickstart`: compress + run a small model end to end (~2 GB,
   minutes) to prove an install works before committing to a 14B-class model.

@@ -177,8 +177,16 @@ HYPOTHESES = {
         measured=MeasuredOutcome(
             "gate",
             "Not a speedup itself -- this measurement is what told us the "
-            "other adaptive-control ideas (H3, H8) weren't worth building.",
-            "Measured joint oracle uplift: 2.56%, against a 12% gate.",
+            "other adaptive-control ideas (H3, H8) weren't worth building. "
+            "Read this as a semantic-only oracle screen, not a joint "
+            "semantic+system one: the dataset varies semantic_bucket across "
+            "four prompt families but holds system_bucket fixed at "
+            "cold_page_cache throughout, so it cannot estimate the value of "
+            "system-state context at all, only semantic-context value under "
+            "one fixed system-state regime.",
+            "Measured semantic-only oracle uplift: 2.56%, against the 12% "
+            "gate registered for joint semantic+system value; four held-out "
+            "prompt families, one system-state regime.",
             effect_pct=2.56)),
     "h1-critical-path": Hypothesis(
         "h1-critical-path", "Critical-path residency planner",
@@ -256,7 +264,7 @@ HYPOTHESES = {
             effect_pct=-30.5)),
     "h6-representations": Hypothesis(
         "h6-representations", "Per-tensor exact physical representations",
-        "A multi-choice physical design beats every uniform representation.",
+        "A multi-choice physical design beats the uniform-disk representation.",
         "per-tensor-representation-v1", "exact-streaming-v1", "representation_plan",
         "gain_over_uniform", 0.10, "reference_execution_equivalent",
         ("representation_options", "uniform_prepare_s"),
@@ -264,7 +272,15 @@ HYPOTHESES = {
         measured=MeasuredOutcome(
             "positive_screen",
             "The offline mixed-representation plan passed its prediction "
-            "gate, but it has not passed a held-out live execution.",
+            "gate against uniform disk specifically (not every uniform "
+            "representation -- uniform-RAM and uniform-VRAM controls were "
+            "not run), and it has not passed a held-out live execution. "
+            "The DP objective additionally sums each tensor's independently "
+            "measured counterfactual (marginal, one-at-a-time removal) cost; "
+            "critical-path bottleneck-switching does not guarantee those "
+            "marginal costs are additive when multiple tensors move at "
+            "once, so 38.56% is a planner prediction under an additive-cost "
+            "approximation, not a validated joint estimate.",
             "Across 441 real tensors, the exact DP predicted 15.01 s of "
             "preparation versus 24.42 s for uniform disk (38.56% lower), "
             "using 3.96 GB VRAM and 7.99 GB RAM. Pinned H2D was independently "
@@ -361,8 +377,9 @@ HYPOTHESES = {
             "contradicted",
             "No -- the regulated rerun was slower, and it waited on I/O "
             "more, not less.",
-            "5.89% slower paired (8 blocks); won only 3 of 8 pairs; exposed "
-            "wait rose 28.2% instead of falling.",
+            "5.89% slower paired (2 randomized blocks x 4 cases = 8 pairs); "
+            "won only 3 of 8 pairs; exposed wait rose 28.2% instead of "
+            "falling.",
             effect_pct=-5.89, n_pairs=8)),
     "h13-qubo-residency": Hypothesis(
         "h13-qubo-residency", "Event-interference QUBO residency",

@@ -48,6 +48,7 @@ import numpy as np
 import torch
 
 from .binstore import BinaryWeightReader, BinaryWeightWriter, blobref_to_dict
+from .adapters import classify_config, resolve_model_adapter
 from .compressed_store import CompressedLayer, compress_layer, decompress_layer_gpu
 from .config import EngineConfig
 from .controllers import PrefetchObservation, build_prefetch_controller
@@ -152,11 +153,20 @@ def _compress_one_tensor(task: tuple) -> dict:
     BlobRefs: offsets depend on write order into the single shared
     weights.bin, which only the main process (the sole writer) can assign.
     """
-    shard_path, key, chunk_size, quantize, max_bits, row_gather = task
+    if len(task) == 6:
+        shard_path, key, chunk_size, quantize, max_bits, row_gather = task
+        expert_index = None
+    else:
+        shard_path, key, chunk_size, quantize, max_bits, row_gather, expert_index = task
     from safetensors import safe_open
 
+    parent_key = key
     with safe_open(shard_path, framework="pt", device="cpu") as f:
-        W = f.get_tensor(key)
+        if expert_index is None:
+            W = f.get_tensor(key)
+        else:
+            W = f.get_slice(key)[int(expert_index)].contiguous()
+            key = "%s.__expert__.%d" % (key, expert_index)
     orig = W.numel() * W.element_size()
 
     if row_gather:
@@ -170,6 +180,7 @@ def _compress_one_tensor(task: tuple) -> dict:
         raw16 = W.contiguous().view(torch.int16).numpy()
         return {
             "key": key, "kind": "row_gather", "shape": list(W.shape),
+            "parent_key": parent_key if expert_index is not None else None,
             "hidden_size": int(W.shape[1]), "orig_bytes": orig,
             "comp_bytes": orig, "arrays": {"raw": raw16},
         }
@@ -183,6 +194,7 @@ def _compress_one_tensor(task: tuple) -> dict:
         layer = compress_layer(W, chunk_size=chunk_size, max_bits=max_bits)
         return {
             "key": key, "kind": "compressed", "shape": list(W.shape),
+            "parent_key": parent_key if expert_index is not None else None,
             "max_bits": int(layer.encoded.max_bits),
             "n_symbols": int(layer.encoded.n_symbols),
             "chunk_size": int(layer.encoded.chunk_size),
@@ -202,6 +214,7 @@ def _compress_one_tensor(task: tuple) -> dict:
     # test).
     return {
         "key": key, "kind": "raw", "shape": list(W.shape),
+        "parent_key": parent_key if expert_index is not None else None,
         "dtype": str(W.dtype), "orig_bytes": orig, "comp_bytes": orig,
         "arrays": {"raw": W.to(torch.float32).numpy()},
     }
@@ -210,7 +223,8 @@ def _compress_one_tensor(task: tuple) -> dict:
 def compress_model_to_disk(model_id: str, out_dir, config: EngineConfig | None = None,
                            progress_every: int = 50,
                            max_workers: int | None = None,
-                           control=None) -> dict:
+                           control=None, source_dir=None,
+                           revision: str | None = None) -> dict:
     """Offline pass: safetensors -> one compressed weights.bin + manifest.
 
     Parallel across tensors, except embed_tokens/lm_head-sized ones, which
@@ -243,27 +257,54 @@ def compress_model_to_disk(model_id: str, out_dir, config: EngineConfig | None =
     # ``consolidated*.safetensors`` is commonly a duplicate export for a
     # non-Transformers runtime.  Avoid downloading it and independently
     # verify the remaining set against model.safetensors.index.json.
-    snap = pathlib.Path(snapshot_download(
-        model_id, ignore_patterns=["consolidated*.safetensors"]))
+    snap = pathlib.Path(source_dir) if source_dir is not None else pathlib.Path(
+        snapshot_download(
+            model_id, revision=revision,
+            ignore_patterns=["consolidated*.safetensors"],
+        )
+    )
     shards = _transformers_weight_shards(snap)
     if not shards:
         raise FileNotFoundError("no .safetensors in " + str(snap))
 
-    hf_cfg = AutoConfig.from_pretrained(model_id)
+    hf_cfg = AutoConfig.from_pretrained(snap, trust_remote_code=False)
     tied = bool(getattr(hf_cfg, "tie_word_embeddings", False))
     # Row-gather only helps when embed_tokens is NOT also serving as
     # lm_head: lm_head needs the full output-projection matrix regardless,
     # so a tied model gains nothing from skipping embed_tokens's
     # materialization -- it would just have to load the identical bytes
     # under a different name a moment later.
-    row_gather_key = None if tied else "model.embed_tokens.weight"
+    layout = classify_config(hf_cfg)
+    embedding_key = (
+        "model.language_model.embed_tokens.weight"
+        if layout["modality"] == "vision-text"
+        else "model.embed_tokens.weight"
+    )
+    row_gather_key = None if tied else embedding_key
 
     all_tasks = []
+    expert_slices: dict[str, list[str]] = {}
     for shard in shards:
         with safe_open(str(shard), framework="pt", device="cpu") as f:
             for key in f.keys():
-                all_tasks.append((str(shard), key, cfg.chunk_size, cfg.quantize,
-                                  cfg.max_bits, key == row_gather_key))
+                shape = tuple(f.get_slice(key).get_shape())
+                packed_experts = (
+                    len(shape) == 3
+                    and key.endswith((".experts.gate_up_proj", ".experts.down_proj"))
+                )
+                if packed_experts:
+                    expert_slices[key] = [
+                        "%s.__expert__.%d" % (key, index)
+                        for index in range(shape[0])
+                    ]
+                    all_tasks.extend(
+                        (str(shard), key, cfg.chunk_size, cfg.quantize,
+                         cfg.max_bits, False, index)
+                        for index in range(shape[0])
+                    )
+                else:
+                    all_tasks.append((str(shard), key, cfg.chunk_size, cfg.quantize,
+                                      cfg.max_bits, key == row_gather_key, None))
 
     big_tasks = [t for t in all_tasks if t[1].endswith(_BIG_TENSOR_SUFFIXES)]
     small_tasks = [t for t in all_tasks if not t[1].endswith(_BIG_TENSOR_SUFFIXES)]
@@ -275,8 +316,9 @@ def compress_model_to_disk(model_id: str, out_dir, config: EngineConfig | None =
     ctl = control or JobControl()
 
     manifest = {"schema_version": CURRENT_SCHEMA_VERSION, "model_id": model_id,
+                "revision": revision,
                 "quantize": cfg.quantize, "chunk_size": cfg.chunk_size,
-                "tied": tied, "tensors": {}}
+                "tied": tied, "tensors": {}, "expert_slices": expert_slices}
     total_orig = 0
     total_comp = 0
     n = 0
@@ -356,7 +398,8 @@ class StreamingLosslessModel:
     """
 
     def __init__(self, model_id: str, store_dir, device: str = "cuda",
-                 config: EngineConfig | None = None, control=None):
+                 config: EngineConfig | None = None, control=None,
+                 source_dir=None):
         """config: an EngineConfig. Its defaults reproduce this engine's
         original fixed policy exactly (embed_tokens/lm_head/norms
         permanently VRAM-resident, every decoder-layer weight streamed from
@@ -379,7 +422,7 @@ class StreamingLosslessModel:
         paused/cancelled unless something explicitly calls it), so plain
         scripted use is unaffected.
         """
-        from transformers import AutoConfig, AutoModelForCausalLM
+        from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForImageTextToText
         from .control import JobControl
 
         self.config = config or EngineConfig()
@@ -456,6 +499,26 @@ class StreamingLosslessModel:
         self._prefetch_inflight_bytes: dict[int, int] = {}
         self._prefetch_lock = threading.Lock()
 
+        config_source = pathlib.Path(source_dir) if source_dir is not None else model_id
+        hf_cfg = AutoConfig.from_pretrained(config_source, trust_remote_code=False)
+        self.hf_cfg = hf_cfg
+        classification = classify_config(hf_cfg)
+        auto_model = (
+            AutoModelForImageTextToText
+            if classification["modality"] == "vision-text"
+            else AutoModelForCausalLM
+        )
+        with torch.device("meta"):
+            self.model = auto_model.from_config(hf_cfg, dtype=torch.bfloat16)
+        self.model.eval()
+        self.adapter = resolve_model_adapter(self.model)
+        self.layers = self.adapter.layers
+        self.n_layers = len(self.layers)
+        self._initial_forward_kwargs: dict[str, torch.Tensor] = {}
+        self._expert_slices: dict[str, list[str]] = self.manifest.get(
+            "expert_slices", {}
+        )
+
         self._tier = self._compute_tier_assignment(self.config)
         self._ram_cache: dict[str, torch.Tensor] = {}
         self._ram_cache_pageable_keys: set[str] = set()
@@ -468,33 +531,17 @@ class StreamingLosslessModel:
             print("VRAM capped to %.2f GB (%.1f%% of %.2f GB device)"
                   % (vram_cap_gb, frac * 100, total / 1e9), flush=True)
 
-        hf_cfg = AutoConfig.from_pretrained(model_id)
-        self.hf_cfg = hf_cfg
-        with torch.device("meta"):
-            self.model = AutoModelForCausalLM.from_config(hf_cfg, dtype=torch.bfloat16)
-        self.model.eval()
-
-        # This engine hard-codes a Llama-family layout: a top-level
-        # `.model.layers` list of decoder blocks, `.model.embed_tokens`, and
-        # `.lm_head`. Qwen, Llama and Mistral-family checkpoints match it;
-        # GPT-2/Falcon/MPT-family ones do not. Checking explicitly here
-        # turns an AttributeError buried inside _materialize_resident (which
-        # only makes sense if you already know this constraint) into one
-        # clear message naming the actual architecture -- see
-        # docs/CONFIGURATION.md's supported-architectures table.
-        if not (hasattr(self.model, "model") and hasattr(self.model.model, "layers")):
-            arch = getattr(hf_cfg, "architectures", None) or [type(self.model).__name__]
+        if (
+            self.config.lm_head_policy == "certified_mips"
+            and not self.adapter.capabilities.supports_certified_head
+        ):
             raise RuntimeError(
-                "unsupported model architecture %s for %s: this engine requires "
-                "a Llama-family layout (top-level .model.layers) -- Qwen, Llama "
-                "and Mistral-family checkpoints work; GPT-2/Falcon/MPT-family "
-                "ones do not. See docs/CONFIGURATION.md's supported-architectures "
-                "table." % (arch, model_id))
-
-        self.layers = self.model.model.layers
-        self.n_layers = len(self.layers)
+                "certified_mips is not available for the %s adapter"
+                % self.adapter.capabilities.layout
+            )
 
         self._materialize_resident()
+        self._install_expert_streaming()
         if (self.config.lm_head_policy == "certified_mips"
                 and self._tier.get(self.CHUNKED_HEAD_KEY) != "vram"):
             raise RuntimeError(
@@ -502,12 +549,12 @@ class StreamingLosslessModel:
                 "resident in VRAM; the compressed store has no certified random-row "
                 "index, so silently reading the full head would defeat the method")
         if self.config.lm_head_policy == "certified_mips":
-            if getattr(self.model.lm_head, "bias", None) is not None:
+            if getattr(self.adapter.output_head, "bias", None) is not None:
                 raise RuntimeError(
                     "certified_mips currently requires a bias-free lm_head; use "
                     "lm_head_policy='full' for this architecture")
             from .certified_mips import MIPSIndex
-            weight = self.model.lm_head.weight
+            weight = self.adapter.output_head.weight
             block_rows = 256
             blocks = (weight.shape[0] + block_rows - 1) // block_rows
             estimated_index_bytes = int(
@@ -677,7 +724,7 @@ class StreamingLosslessModel:
             for key in self.manifest["tensors"]:
                 if key in tiers:
                     continue
-                tiers[key] = "disk" if key.startswith("model.layers.") else "vram"
+                tiers[key] = "disk" if self.adapter.is_layer_key(key) else "vram"
             return tiers
 
         from .vram_planner import plan_from_manifest
@@ -760,6 +807,13 @@ class StreamingLosslessModel:
                 tiers[key] = "ram"
         for key in plan.disk_keys:
             tiers[key] = "disk"
+        # Packed experts are deliberately sliced so the router can fetch
+        # only selected experts. Keeping an individual slice resident is a
+        # future cache policy; the current selected-expert path is disk-only
+        # and must not let the generic planner claim otherwise.
+        for keys in self._expert_slices.values():
+            for key in keys:
+                tiers[key] = "disk"
         return tiers
 
     # -- store access ----------------------------------------------------
@@ -830,10 +884,10 @@ class StreamingLosslessModel:
         return out
 
     def _remember_layer_prepare(self, key: str, event_id: str | None) -> None:
-        if not event_id or not key.startswith("model.layers."):
+        if not event_id or not self.adapter.is_layer_key(key):
             return
         try:
-            layer_idx = int(key.split(".", 3)[2])
+            layer_idx = int(key[len(self.adapter.layer_prefix) + 1:].split(".", 1)[0])
         except (IndexError, ValueError):
             return
         self._layer_prepare_events.setdefault(layer_idx, []).append(event_id)
@@ -951,7 +1005,7 @@ class StreamingLosslessModel:
             stats.io_seconds += time.perf_counter() - t0
             return t
 
-        self.model.model.embed_tokens.forward = forward
+        self.adapter.embedding.forward = forward
 
     def _materialize_resident(self) -> None:
         """Materialize every VRAM- or RAM-tier tensor (which, under the
@@ -973,9 +1027,9 @@ class StreamingLosslessModel:
         left with no source now raises instead of quietly running on
         garbage.
         """
-        embed_key = "model.embed_tokens.weight"
+        embed_key = self.adapter.embedding_prefix + ".weight"
         row_gather = self._tier.get(embed_key) == "row_gather"
-        embed_mod = self.model.model.embed_tokens if row_gather else None
+        embed_mod = self.adapter.embedding if row_gather else None
 
         missing = []
         for name, mod in self.model.named_modules():
@@ -993,6 +1047,8 @@ class StreamingLosslessModel:
             for pname, _ in params + buffers:
                 key = (name + "." + pname) if name else pname
                 if key not in self.manifest["tensors"]:
+                    if key in self._expert_slices:
+                        continue
                     missing.append(key)
                     continue
                 tier = self._tier.get(key, "disk")
@@ -1058,17 +1114,27 @@ class StreamingLosslessModel:
         # Rebuild modules whose state is computed, not loaded. Their
         # non-persistent buffers were left on the meta device above; a
         # fresh instance recomputes them from config on the target device.
-        m = self.model.model
+        m = self.adapter.language_model
         if getattr(m, "rotary_emb", None) is not None:
             try:
-                m.rotary_emb = type(m.rotary_emb)(config=self.model.config,
+                m.rotary_emb = type(m.rotary_emb)(config=self.adapter.language_config,
                                                   device=self.device)
             except TypeError:
-                m.rotary_emb = type(m.rotary_emb)(self.model.config).to(self.device)
+                m.rotary_emb = type(m.rotary_emb)(
+                    self.adapter.language_config
+                ).to(self.device)
+        visual = self.adapter.vision_model
+        if visual is not None and getattr(visual, "rotary_pos_emb", None) is not None:
+            rotary = visual.rotary_pos_emb
+            # Qwen3-VL's vision rotary buffer is computed from two constructor
+            # scalars and is intentionally absent from safetensors.
+            visual.rotary_pos_emb = type(rotary)(
+                dim=rotary.dim, theta=rotary.theta
+            ).to(self.device)
 
         tied = getattr(self.model.config, "tie_word_embeddings", False)
         if tied and "lm_head.weight" in missing:
-            self.model.lm_head.weight = self.model.model.embed_tokens.weight
+            self.adapter.output_head.weight = self.adapter.embedding.weight
             missing.remove("lm_head.weight")
         if row_gather and embed_key in missing:
             missing.remove(embed_key)
@@ -1082,6 +1148,63 @@ class StreamingLosslessModel:
             self._install_embed_row_gather(embed_key)
 
         self.stats.reset()  # resident load is startup cost, not per-token
+
+    def _install_expert_streaming(self) -> None:
+        """Load only routed experts for packed Qwen MoE modules.
+
+        New stores split the packed 3D expert matrices into independent 2D
+        slices. The ordinary router remains resident in its decoder layer;
+        this replacement forward reads only experts selected for the current
+        tokens and frees each pair immediately after use.
+        """
+
+        if not self._expert_slices:
+            return
+        for module_name, module in self.model.named_modules():
+            gate_parent = module_name + ".gate_up_proj"
+            down_parent = module_name + ".down_proj"
+            if gate_parent not in self._expert_slices or down_parent not in self._expert_slices:
+                continue
+            if not all(hasattr(module, name) for name in ("num_experts", "act_fn")):
+                continue
+            engine = self
+
+            def forward(hidden_states, top_k_index, top_k_weights, *, _module=module,
+                        _gate=gate_parent, _down=down_parent):
+                final_hidden_states = torch.zeros_like(hidden_states)
+                with torch.no_grad():
+                    expert_mask = torch.nn.functional.one_hot(
+                        top_k_index, num_classes=_module.num_experts
+                    ).permute(2, 1, 0)
+                    expert_hit = torch.greater(
+                        expert_mask.sum(dim=(-1, -2)), 0
+                    ).nonzero()
+                for expert_value in expert_hit:
+                    engine.control.checkpoint()
+                    expert_index = int(expert_value[0])
+                    if expert_index == _module.num_experts:
+                        continue
+                    top_k_pos, token_idx = torch.where(expert_mask[expert_index])
+                    current_state = hidden_states[token_idx]
+                    gate_up = engine._load_tensor(
+                        "%s.__expert__.%d" % (_gate, expert_index)
+                    )
+                    down = engine._load_tensor(
+                        "%s.__expert__.%d" % (_down, expert_index)
+                    )
+                    gate, up = torch.nn.functional.linear(
+                        current_state, gate_up
+                    ).chunk(2, dim=-1)
+                    current = _module.act_fn(gate) * up
+                    current = torch.nn.functional.linear(current, down)
+                    current = current * top_k_weights[token_idx, top_k_pos, None]
+                    final_hidden_states.index_add_(
+                        0, token_idx, current.to(final_hidden_states.dtype)
+                    )
+                    del gate_up, down, gate, up, current
+                return final_hidden_states
+
+            module.forward = forward
 
     def _report_progress(self, layer_idx: int) -> None:
         """Live progress. Layer streaming is slow by construction (the whole
@@ -1128,7 +1251,7 @@ class StreamingLosslessModel:
         layer = self.layers[idx]
         layer_keys: list[str] = []
         for pname, _ in layer.named_parameters():
-            key = "model.layers.%d.%s" % (idx, pname)
+            key = self.adapter.layer_key(idx, pname)
             if key not in self.manifest["tensors"]:
                 continue
             if self._tier.get(key, "disk") != "disk":
@@ -1257,7 +1380,7 @@ class StreamingLosslessModel:
                 sum(int(ref["nbytes"])
                     for ref in self.manifest["tensors"][key]["blobs"].values())
                 for key, tier in self._tier.items()
-                if tier == "disk" and key.startswith("model.layers.%d." % idx))
+                if tier == "disk" and key.startswith(self.adapter.layer_key(idx) + "."))
             self._prefetch_inflight_bytes[idx] = inflight
             self.stats.prefetch_peak_inflight_bytes = max(
                 self.stats.prefetch_peak_inflight_bytes,
@@ -1320,7 +1443,7 @@ class StreamingLosslessModel:
 
         layer = self.layers[idx]
         for pname, _ in layer.named_parameters():
-            key = "model.layers.%d.%s" % (idx, pname)
+            key = self.adapter.layer_key(idx, pname)
             if key not in self.manifest["tensors"]:
                 continue
             tier = self._tier.get(key, "disk")
@@ -1355,15 +1478,23 @@ class StreamingLosslessModel:
     def _free_layer(self, idx: int) -> None:
         layer = self.layers[idx]
         for pname, _ in layer.named_parameters():
-            key = "model.layers.%d.%s" % (idx, pname)
+            key = self.adapter.layer_key(idx, pname)
             if key not in self.manifest["tensors"]:
                 continue
             if self._tier.get(key, "disk") == "vram":
                 continue  # permanent; never freed
             self._to_meta_param(layer, pname)
         self._frees += 1
-        if self.empty_cache_every and self._frees % self.empty_cache_every == 0:
+        if (
+            torch.cuda.is_available()
+            and self.empty_cache_every
+            and self._frees % self.empty_cache_every == 0
+        ):
             torch.cuda.empty_cache()
+
+    def _synchronize_device(self) -> None:
+        if str(self.device).startswith("cuda") and torch.cuda.is_available():
+            torch.cuda.synchronize()
 
     # -- execution -------------------------------------------------------
 
@@ -1390,7 +1521,7 @@ class StreamingLosslessModel:
 
         def make_post(idx):
             def post(module, args, kwargs, output):
-                torch.cuda.synchronize()
+                self._synchronize_device()
                 if self.trace.enabled or self.config.prefetch_policy == "mpc":
                     end = time.perf_counter()
                     start = self._layer_compute_start.pop(idx, end)
@@ -1418,8 +1549,8 @@ class StreamingLosslessModel:
         AirLLM (which streams it like anything else). Decoder layers are
         excluded because _install_hooks already streams those.
         """
-        embed_key = "model.embed_tokens.weight"
-        embed_mod = (self.model.model.embed_tokens
+        embed_key = self.adapter.embedding_prefix + ".weight"
+        embed_mod = (self.adapter.embedding
                      if self._tier.get(embed_key) == "row_gather" else None)
         # A chunked lm_head is driven by its own replaced forward (see
         # _install_chunked_lm_head), which loads and frees per row block.
@@ -1430,7 +1561,7 @@ class StreamingLosslessModel:
 
         out: dict[str, list[str]] = {}
         for name, mod in self.model.named_modules():
-            if not name or name.startswith("model.layers.") or mod is embed_mod:
+            if not name or name.startswith(self.adapter.layer_prefix + ".") or mod is embed_mod:
                 continue
             pnames = [
                 pname for pname, _ in mod.named_parameters(recurse=False)
@@ -1484,7 +1615,7 @@ class StreamingLosslessModel:
 
             def make_post(mn, pns):
                 def post(module, args, kwargs, output):
-                    torch.cuda.synchronize()
+                    self._synchronize_device()
                     for pn in pns:
                         self._to_meta_param(module, pn)
                     if self.empty_cache_every:
@@ -1503,12 +1634,12 @@ class StreamingLosslessModel:
         # the identical stored tensor again for the output projection; this
         # preserves the planner's low-VRAM headroom model because the full
         # embedding/head is not kept alive across decoder layers.
-        embed_key = "model.embed_tokens.weight"
+        embed_key = self.adapter.embedding_prefix + ".weight"
         tied_streamed = (
             bool(getattr(self.model.config, "tie_word_embeddings", False))
             and self._tier.get(embed_key) in ("disk", "ram"))
         if tied_streamed:
-            head = self.model.lm_head
+            head = self.adapter.output_head
 
             def tied_head_pre(module, args, kwargs):
                 self.control.checkpoint()
@@ -1516,7 +1647,7 @@ class StreamingLosslessModel:
                 return None
 
             def tied_head_post(module, args, kwargs, output):
-                torch.cuda.synchronize()
+                self._synchronize_device()
                 self._to_meta_param(module, "weight")
                 if self.empty_cache_every:
                     torch.cuda.empty_cache()
@@ -1580,6 +1711,11 @@ class StreamingLosslessModel:
         # predict proposal 0, followed by the proposed lookahead tokens.
         return torch.cat([seq[:, -1:], proposals], dim=1), 0
 
+    def set_initial_forward_kwargs(self, values: dict[str, torch.Tensor] | None) -> None:
+        """Set processor outputs needed on the first multimodal forward pass."""
+
+        self._initial_forward_kwargs = dict(values or {})
+
     @torch.no_grad()
     def forward_logits(self, input_ids: torch.Tensor, use_cache: bool = False) -> torch.Tensor:
         """One full forward pass. transformers drives the stack; the hooks
@@ -1620,13 +1756,14 @@ class StreamingLosslessModel:
         """
         io0, decode0 = self.stats.io_seconds, self.stats.decode_seconds
         t0 = time.perf_counter()
+        extra = self._initial_forward_kwargs if self._kv_cache is None else {}
         if use_cache:
             out = self.model(input_ids=input_ids, use_cache=True,
-                             past_key_values=self._kv_cache)
+                             past_key_values=self._kv_cache, **extra)
             self._kv_cache = out.past_key_values
         else:
-            out = self.model(input_ids=input_ids, use_cache=False)
-        torch.cuda.synchronize()
+            out = self.model(input_ids=input_ids, use_cache=False, **extra)
+        self._synchronize_device()
         wall = time.perf_counter() - t0
         io_delta = self.stats.io_seconds - io0
         decode_delta = self.stats.decode_seconds - decode0
@@ -1646,13 +1783,13 @@ class StreamingLosslessModel:
         io0, decode0 = self.stats.io_seconds, self.stats.decode_seconds
         t0 = time.perf_counter()
         if use_cache:
-            out = self.model.model(input_ids=input_ids, use_cache=True,
+            out = self.adapter.language_model(input_ids=input_ids, use_cache=True,
                                    past_key_values=self._kv_cache)
             self._kv_cache = out.past_key_values
         else:
-            out = self.model.model(input_ids=input_ids, use_cache=False)
+            out = self.adapter.language_model(input_ids=input_ids, use_cache=False)
         hidden = out.last_hidden_state[0, -1]
-        weight = self.model.lm_head.weight
+        weight = self.adapter.output_head.weight
         if self._certified_mips_index is None:
             self._certified_mips_index = MIPSIndex.build(weight)
 
@@ -1661,7 +1798,7 @@ class StreamingLosslessModel:
 
         result = certified_argmax(hidden, weight, self._certified_mips_index,
                                   fallback=full_fallback)
-        torch.cuda.synchronize()
+        self._synchronize_device()
         wall = time.perf_counter() - t0
         self.stats.compute_seconds += max(
             0.0, wall - (self.stats.io_seconds - io0) - (self.stats.decode_seconds - decode0))
@@ -1729,7 +1866,7 @@ class StreamingLosslessModel:
                 del W
             return torch.cat(parts, dim=-1)
 
-        self.model.lm_head.forward = forward
+        self.adapter.output_head.forward = forward
 
     @contextlib.contextmanager
     def _truncated_to(self, n_layers: int):
@@ -1747,12 +1884,12 @@ class StreamingLosslessModel:
         wrong logits (a silently-omitted causal mask) the one time this
         codebase tried it -- see _install_hooks's docstring.
         """
-        full = self.model.model.layers
-        self.model.model.layers = full[:n_layers]
+        full = self.adapter.layers
+        self.adapter.layers = full[:n_layers]
         try:
             yield
         finally:
-            self.model.model.layers = full
+            self.adapter.layers = full
 
     @torch.no_grad()
     def draft_self_logits(self, input_ids: torch.Tensor, exit_layer: int) -> torch.Tensor:

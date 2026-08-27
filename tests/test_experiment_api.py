@@ -23,9 +23,12 @@ def test_experiment_registry_and_ui_are_exposed():
         "h15-extent-qubo-residency", "h16-spec-critical-path",
         "h17-tensor-extents", "h18-rollback-cached-spec"}
     page = client.get("/").text
-    assert "Research Lab" in page
-    assert 'id="chat-vram" type="number" step="0.5" value="4"' in page
-    assert 'id="chat-draft" value="Qwen/Qwen3-0.6B"' in page
+    assert "Research" in page
+    assert 'id="chat-model"' in page
+    assert 'id="chat-stop"' in page
+    assert 'src="/static/js/app.js"' in page
+    assert "Compare execution profiles" in page
+    assert "Research Lab" not in page
     definition = client.get("/api/experiments/h12-bayesian-prefetch").json()
     assert definition["protocol"]["id"] == "adaptive-prefetch"
 

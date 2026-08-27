@@ -29,11 +29,16 @@ class JobControl:
     compress_model_to_disk invocation rather than reusing one instance.
     """
 
-    def __init__(self, progress_callback: Optional[Callable[[dict], None]] = None):
+    def __init__(
+        self,
+        progress_callback: Optional[Callable[[dict], None]] = None,
+        state_callback: Optional[Callable[[str], None]] = None,
+    ):
         self._paused = threading.Event()
         self._paused.set()  # set = "go"; clear = "paused"
         self._cancelled = threading.Event()
         self.progress_callback = progress_callback
+        self.state_callback = state_callback
 
     def pause(self) -> None:
         self._paused.clear()
@@ -56,9 +61,14 @@ class JobControl:
     def checkpoint(self) -> None:
         """Call at a natural pause boundary. Blocks while paused; raises
         JobCancelled if cancelled (including while blocked on a pause)."""
+        paused = not self._paused.is_set()
+        if paused and self.state_callback is not None:
+            self.state_callback("paused")
         self._paused.wait()
         if self._cancelled.is_set():
             raise JobCancelled()
+        if paused and self.state_callback is not None:
+            self.state_callback("running")
 
     def report(self, **fields) -> None:
         """Structured progress, forwarded to progress_callback if one was

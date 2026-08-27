@@ -49,21 +49,41 @@ install_retry "Python installation" "$uv" python install 3.11
 gpu=cpu
 if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then gpu=nvidia
 elif command -v rocm-smi >/dev/null 2>&1 && rocm-smi >/dev/null 2>&1; then gpu=amd; fi
-if command -v sha256sum >/dev/null 2>&1; then source_hash=$(sha256sum pyproject.toml | cut -d' ' -f1); else source_hash=$(shasum -a 256 pyproject.toml | cut -d' ' -f1); fi
+if command -v sha256sum >/dev/null 2>&1; then source_hash=$(sha256sum pyproject.toml uv.lock | sha256sum | cut -d' ' -f1); else source_hash=$(shasum -a 256 pyproject.toml uv.lock | shasum -a 256 | cut -d' ' -f1); fi
 fingerprint="$source_hash|uv=$uv_version|python=3.11|$gpu"
 installed=$(cat .venv/.afterimage-sync 2>/dev/null || true)
-if [ "$action" = repair ] || [ "$installed" != "$fingerprint" ] || [ ! -x "$exe" ]; then
-  reinstall=(); [ "$action" = repair ] && reinstall+=(--reinstall)
+runtime_healthy=0
+if [ -x .venv/bin/python ] && [ -x "$exe" ] && .venv/bin/python - "$gpu" >/dev/null 2>&1 <<'PY'
+import sys
+import torch
+import afterimage
+
+backend = sys.argv[1]
+ok = (
+    (backend != "nvidia" or torch.version.cuda is not None)
+    and (backend != "amd" or getattr(torch.version, "hip", None) is not None)
+)
+raise SystemExit(0 if ok else 1)
+PY
+then
+  runtime_healthy=1
+fi
+if [ "$action" = repair ] || [ "$installed" != "$fingerprint" ] || [ "$runtime_healthy" -ne 1 ]; then
+  reinstall=()
+  if [ "$action" = repair ] || [ "$runtime_healthy" -ne 1 ]; then
+    reinstall+=(--reinstall-package torch)
+  fi
   case "$gpu" in
     nvidia) torch_index=https://download.pytorch.org/whl/cu124; extras='.[gpu,server]' ;;
     amd) torch_index=https://download.pytorch.org/whl/rocm6.1; extras='.[server]'; echo "AMD support is experimental." ;;
     *) torch_index=https://download.pytorch.org/whl/cpu; extras='.[server]' ;;
   esac
   install_retry "PyTorch installation" "$uv" pip install --python .venv/bin/python "${reinstall[@]}" torch --index-url "$torch_index"
-  install_retry "Afterimage installation" "$uv" pip install --python .venv/bin/python "${reinstall[@]}" --editable "$extras"
-  printf '%s' "$fingerprint" > .venv/.afterimage-sync
+  app_reinstall=(); [ "$action" = repair ] && app_reinstall+=(--reinstall-package afterimage-llm)
+  install_retry "Afterimage installation" "$uv" pip install --python .venv/bin/python "${app_reinstall[@]}" --editable "$extras"
 fi
 "$exe" doctor
+printf '%s' "$fingerprint" > .venv/.afterimage-sync
 install_complete
 serve_args=(serve); [ "$no_browser" -eq 0 ] && serve_args+=(--open)
 exec "$exe" "${serve_args[@]}"

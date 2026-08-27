@@ -24,11 +24,11 @@ floor, Afterimage wins with residency and speculation turned on. See
 
 ## Which models actually work?
 
-Checkpoints with a Llama-family layout: a top-level `model.layers` list of
-decoder blocks, `model.embed_tokens`, and `model.lm_head`. Qwen, Llama, and
-Mistral are the tested family. Several other dense architectures pass the
-same structural check but haven't been run end to end by this project yet.
-GPT-2, Falcon, MPT, and BLOOM-style layouts do not work. Full table:
+Dense Qwen, Llama, and Mistral are the release-verified families. A shared
+adapter now handles decoder traversal, and Qwen packed-MoE plus Qwen3-VL paths
+are implemented as experimental capabilities. Other Hub models remain
+downloadable even when Afterimage does not yet have an execution adapter.
+Full evidence table:
 [CONFIGURATION.md](CONFIGURATION.md#supported-model-architectures).
 
 ## Which hardware is actually validated?
@@ -70,11 +70,11 @@ Several distinct, separately labeled things, not one blanket claim:
 
 `afterimage compress MODEL --dry-run` estimates download size, compressed
 store size, and peak disk usage (both the download and the store exist on
-disk at once mid-pass) before you commit to anything. It does not check
-whether the model's architecture is supported -- that check happens when a
-store is actually built or run. Reference: a 14B model was about 30 minutes
-to download and 6 minutes to compress on a 16-core machine; both vary a lot
-with your connection and CPU.
+disk at once mid-pass) before you commit to anything. In the web UI, Get adds
+compatibility inspection, persistent progress, pause, resume, cancel, and
+store verification around that process. Reference: a 14B model was about 30
+minutes to download and 6 minutes to compress on a 16-core machine; both vary
+a lot with your connection and CPU.
 
 ## Do I need a draft model?
 

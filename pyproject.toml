@@ -5,16 +5,20 @@
 # still installs the `afterimage` import package and the `afterimage` CLI
 # command below -- only the name typed at `pip install` changes.
 name = "afterimage-llm"
-version = "0.2.0"
+version = "0.3.0"
 description = "Lossless weight-compressed streaming inference for models larger than your GPU"
-license = {file = "LICENSE"}
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 requires-python = ">=3.10"
 dependencies = [
     "torch>=2.2",
     "numpy>=1.24",
-    "transformers>=4.40",
+    # Qwen3-VL entered Transformers in the 4.57 line. Keep the lower bound
+    # aligned with the vision adapter and AutoModelForImageTextToText path.
+    "transformers>=4.57.1",
     "safetensors>=0.4",
     "huggingface_hub>=0.20",
+    "psutil>=6.0",
     # Compiles the compression codec's chunk packer (huffman_chunked.py,
     # 19.2x measured over the pure-Python loop, byte-identical output) and
     # is what decode_chunks_numba (cpu_decode.py) runs on -- the only decode
@@ -30,9 +34,13 @@ Issues = "https://github.com/oney-erge/Afterimage/issues"
 
 [project.optional-dependencies]
 gpu = ["torch>=2.2", "triton>=2.2"]
-server = ["fastapi>=0.110", "uvicorn[standard]>=0.29", "pydantic>=2.0", "websockets>=12.0"]
-bench = ["airllm", "accelerate>=1.0"]
-dev = ["pytest>=8.0", "pytest-benchmark>=4.0", "httpx>=0.27", "ruff>=0.6"]
+server = ["fastapi>=0.110", "uvicorn[standard]>=0.29", "pydantic>=2.0", "websockets>=12.0", "pillow>=10.0"]
+# dfloat11 ships CUDA-version-specific extras (cuda12/cuda11); cuda12 is the
+# default here because it matches this project's reference RTX 3080 driver
+# stack (see docs/TROUBLESHOOTING.md). Install "dfloat11[cuda11]" by hand
+# instead if the target machine is on CUDA 11.
+bench = ["airllm", "accelerate>=1.0", "dfloat11[cuda12]"]
+dev = ["pytest>=8.0", "pytest-benchmark>=4.0", "httpx>=0.27", "ruff>=0.6", "playwright>=1.49"]
 
 [project.scripts]
 afterimage = "afterimage.cli:main"
@@ -48,7 +56,7 @@ markers = [
 include = ["afterimage*"]
 
 [tool.setuptools.package-data]
-"afterimage.server" = ["static/*"]
+"afterimage.server" = ["static/*", "static/css/*", "static/js/*"]
 afterimage = ["py.typed"]
 
 [tool.ruff]

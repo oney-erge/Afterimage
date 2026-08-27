@@ -120,14 +120,26 @@ afterimage serve                    # OpenAI-compatible API + web UI on :8420
 docker compose up                   # needs the NVIDIA Container Toolkit
 ```
 
-The web UI's "Try it" panel has the same dial as the CLI: a profile picker,
-a VRAM slider with live feasibility checking against `/api/plan`, a draft
-model field, and a live seconds-per-token readout once generation starts.
+The web UI has four focused areas:
+
+- Home reports actual GPU, VRAM, total and available RAM, and model-store disk.
+- Models searches the paginated Hub catalog and drives Get through download,
+  preparation, verification, and Ready states with shared job controls.
+- Chat selects from Ready models, applies an automatic execution profile,
+  streams live text, supports Stop, and enables local image attachments only
+  for a vision-capable model.
+- Research presents the registered experiments as a vertical list and keeps
+  execution-profile comparison outside ordinary Chat.
 
 The API is OpenAI-compatible (`/v1/chat/completions`, `/v1/models`) plus
 Afterimage's own fields for the dial, documented in
 [CONFIGURATION.md](CONFIGURATION.md#server-side-api-fields). Operational
 endpoints: `GET /health`, `GET /api/version`, `GET /api/stats`.
+
+The native lifecycle endpoints are `GET /api/catalog/models`,
+`POST /api/models/acquire`, `GET /api/models`, `GET /api/jobs`, the job
+pause/resume/cancel routes, and `POST /api/chat`. Model and job state is stored
+in `~/.afterimage/state/afterimage.sqlite3` by default.
 
 ```python
 import openai

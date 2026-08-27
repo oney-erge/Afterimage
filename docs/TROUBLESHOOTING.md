@@ -96,17 +96,16 @@ its small (0.6B) model, so it isn't a predictor of these 14B numbers;
 That's expected, not a hang. `--quiet` suppresses progress output if you'd
 rather redirect to a log.
 
-## Unsupported model architecture
+## Model downloaded but not Ready
 
 ```
-RuntimeError: unsupported model architecture [...] for MODEL_ID: this engine
-requires a Llama-family layout (top-level .model.layers) -- Qwen, Llama and
-Mistral-family checkpoints work; GPT-2/Falcon/MPT-family ones do not.
+RuntimeError: model layout is not yet executable by Afterimage: [...]
 ```
 
-This is a real, permanent limitation, not a bug. See
-[CONFIGURATION.md](CONFIGURATION.md#supported-model-architectures). There's
-no workaround short of a different model.
+The snapshot is still useful and remains in the Hugging Face cache, but the
+current Afterimage adapters cannot execute its decoder layout. This is not a
+model-size limit. Choose a verified family or add and validate an adapter; see
+[CONFIGURATION.md](CONFIGURATION.md#supported-model-architectures).
 
 ## The web UI shows "not feasible" for a budget that should fit
 

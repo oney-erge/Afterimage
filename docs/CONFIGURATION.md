@@ -49,29 +49,27 @@ dedicated subcommands for building profiles, traces and plans.
 
 ## Supported model architectures
 
-The actual requirement is structural, not a fixed list: a top-level
-`model.layers` list of decoder blocks, `model.embed_tokens`, and
-`model.lm_head`. `StreamingLosslessModel` checks exactly that
-(`hasattr(model, "model") and hasattr(model.model, "layers")`) and refuses
-construction with a clear error naming the architecture if it doesn't hold,
-instead of failing confusingly deeper in.
+Model discovery, storage format, execution compatibility, and expected
+performance are separate properties. Model size never disables Get. The web
+pipeline downloads a snapshot first, inspects its config on the meta device,
+and only marks the model Ready after an executable adapter and store checksum
+verification both succeed.
 
-That gate is wider than "Llama-family" -- checked directly against every
-architecture below by constructing each on the meta device and testing the
-same condition this engine tests at load time (`transformers` 5.15.1):
+`ModelAdapter` currently resolves the ordinary causal-language layout and the
+Qwen3-VL `model.language_model` layout. This removes decoder traversal from
+hard-coded engine paths while keeping the evidence labels conservative:
 
-| Family | Status |
+| Family | Execution status |
 |---|---|
-| Qwen (Qwen2, Qwen3), Llama, Llama 2/3, Mistral | works, the primary tested family -- also exercised end to end (compress + run) |
-| Gemma, Gemma 2, Gemma 3 (text), Phi-3, OLMo, StableLM, Cohere, Persimmon | passes the same structural check -- dense, standard `model.layers` decoder blocks, same tensor-naming convention as the tested family. Not yet exercised end to end by this project; worth trying, expected to work. |
-| Qwen3-MoE, Mixtral, OLMoE | passes the structural check, and `EngineConfig.expert_codec` already has explicit per-expert-tensor handling (default `"independent"`: each expert compresses on its own, no cross-expert assumption). Not yet run end to end against a real MoE checkpoint by this project -- try it, but verify your own output before trusting it for anything that matters. |
-| GPT-2, Falcon, MPT, BLOOM and other non-Llama layouts | **not supported**, confirmed against the same check. Construction fails with a clear error naming the architecture, instead of a silent wrong result. |
+| Qwen2/Qwen3 dense, Llama, Mistral | **Verified family.** These are the release-evidenced dense layouts. |
+| Gemma-family text, Phi-3, OLMo, StableLM, Cohere, Persimmon | **Expected.** Their decoder structure matches the causal adapter, but this project has not release-verified every checkpoint. |
+| Qwen3-MoE packed experts | **Experimental.** Preparation splits packed expert tensors losslessly, and runtime routing loads only selected experts. CPU unit tests cover slice reconstruction and selected-expert numerical equivalence; a real large checkpoint has not passed the GPU release suite yet. |
+| Qwen3-VL dense and Qwen3-VL-MoE | **Experimental.** AutoProcessor image inputs, the resident vision front end, the adapted language decoder, and multimodal chat are wired. A real Qwen3-VL checkpoint has not passed the end-to-end GPU release suite yet. |
+| Other layouts | **Download only until adapted.** They remain discoverable and downloadable. Afterimage reports that execution is not yet verified instead of conflating architecture with model size. |
 
-If you're not sure, `afterimage run` fails fast and names the problem before
-doing real work. `compress --dry-run` only estimates download/store/disk
-size; it does not check architecture, so a compressed store built with
-`compress` can still be rejected by `run` if the checkpoint's layout isn't
-supported.
+The CLI `compress --dry-run` remains a size estimator. The web Get lifecycle is
+the compatibility-aware path: Remote, Downloading, Downloaded, Preparing,
+Verifying, then Ready.
 
 **Apple Silicon:** no CUDA means no GPU decode kernels, so Afterimage runs
 CPU-only on a Mac today. A streamed 14B model on CPU is slow enough to be a

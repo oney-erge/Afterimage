@@ -103,12 +103,22 @@ if (Get-Command nvidia-smi -ErrorAction SilentlyContinue) {
 }
 $nativeWindows = [Environment]::OSVersion.Platform -eq "Win32NT"
 $platformTag = if ($nativeWindows) { "windows" } else { "unix" }
-$fingerprint = "$((Get-FileHash pyproject.toml -Algorithm SHA256).Hash)|uv=$UvVersion|python=3.11|$gpu|$platformTag"
+$dependencyHash = (@("pyproject.toml", "uv.lock") | ForEach-Object {
+  (Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash
+}) -join ":"
+$fingerprint = "$dependencyHash|uv=$UvVersion|python=3.11|$gpu|$platformTag"
 $marker = ".\.venv\.afterimage-sync"
 $installed = if (Test-Path -LiteralPath $marker) { (Get-Content -LiteralPath $marker -Raw).Trim() } else { "" }
-if ($Action -eq "repair" -or $installed -ne $fingerprint -or -not (Test-Path -LiteralPath $exe)) {
+$runtimeHealthy = $false
+if ((Test-Path -LiteralPath $python) -and (Test-Path -LiteralPath $exe)) {
+  & $python -c "import sys, torch, afterimage; backend=sys.argv[1]; ok=(backend != 'nvidia' or torch.version.cuda is not None) and (backend != 'amd' or getattr(torch.version, 'hip', None) is not None); raise SystemExit(0 if ok else 1)" $gpu *> $null
+  $runtimeHealthy = $LASTEXITCODE -eq 0
+}
+if ($Action -eq "repair" -or $installed -ne $fingerprint -or -not $runtimeHealthy) {
   $reinstall = @()
-  if ($Action -eq "repair") { $reinstall = @("--reinstall") }
+  if ($Action -eq "repair" -or -not $runtimeHealthy) {
+    $reinstall = @("--reinstall-package", "torch")
+  }
   $torchIndex = if ($gpu -eq "nvidia") { "https://download.pytorch.org/whl/cu124" } else { "https://download.pytorch.org/whl/cpu" }
   Invoke-InstallRetry "PyTorch installation" {
     $previousErrorActionPreference = $ErrorActionPreference
@@ -126,21 +136,23 @@ if ($Action -eq "repair" -or $installed -ne $fingerprint -or -not (Test-Path -Li
   }
   Write-Step "Installing Afterimage and server dependencies..."
   Invoke-InstallRetry "Afterimage installation" {
+    $appReinstall = @()
+    if ($Action -eq "repair") { $appReinstall = @("--reinstall-package", "afterimage-llm") }
     $previousErrorActionPreference = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
-    $output = & $uv pip install --python $python @reinstall --editable $extras 2>&1
+    $output = & $uv pip install --python $python @appReinstall --editable $extras 2>&1
     $installExit = $LASTEXITCODE
     $ErrorActionPreference = $previousErrorActionPreference
     $output | Write-Host
     if ($installExit -ne 0) { throw "Afterimage installation failed: $($output -join [Environment]::NewLine)" }
   }
-  Set-Content -LiteralPath $marker -Value $fingerprint -NoNewline
 } else {
   Write-Step "Dependencies are already up to date."
 }
 Write-Step "Running hardware and dependency checks..."
 & $exe doctor
 if ($LASTEXITCODE -ne 0) { throw "Afterimage doctor failed with exit $LASTEXITCODE." }
+Set-Content -LiteralPath $marker -Value $fingerprint -NoNewline
 Complete-Install
 if (Test-Ready) {
   Write-Host "Afterimage is already running at $url" -ForegroundColor Green

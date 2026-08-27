@@ -41,6 +41,11 @@ from afterimage.runtime.config import EngineConfig
 MODEL = "Qwen/Qwen3-14B"
 DRAFT_MODEL = "Qwen/Qwen3-0.6B"
 STORE = "/root/afterimage/store_14b"
+# DFloat11 (arXiv:2504.11651, NeurIPS'25) ships pre-compressed checkpoints
+# under its own Hub org rather than compressing an arbitrary --model at
+# runtime; this is the real DFloat11/Qwen3-14B-DF11 repo, verified to exist
+# and to match the canonical MODEL parameter-for-parameter, not guessed.
+DFLOAT11_MODEL = "DFloat11/Qwen3-14B-DF11"
 
 # Inter-cell cooldown, set once from --cooldown-seconds / --cooldown-max-temp-c.
 # Module-level because every timed cell in every runner must observe the same
@@ -76,6 +81,14 @@ def _installed_accelerate_title() -> str:
         return "Hugging Face Accelerate (version unknown -- not importable)"
 
 
+def _installed_dfloat11_title() -> str:
+    try:
+        from importlib.metadata import version
+        return "DFloat11 %s" % version("dfloat11")
+    except Exception:
+        return "DFloat11 (version unknown -- not importable)"
+
+
 METHODS = {
     "airllm": Method("airllm", _installed_airllm_title(), "airllm", {},
                      "reference_greedy", 30.0),
@@ -83,6 +96,10 @@ METHODS = {
         "accelerate", _installed_accelerate_title(), "accelerate",
         {"gpu_memory": "1500MB", "cpu_memory": "8GB"},
         "reference_greedy", 30.0),
+    "dfloat11": Method(
+        "dfloat11", _installed_dfloat11_title(), "dfloat11",
+        {"model_id": DFLOAT11_MODEL, "cpu_offload": False},
+        "reference_greedy", 20.0),
     "exact-min": Method(
         "exact-min", "Afterimage exact streaming, minimum-memory control", "afterimage",
         {"vram_budget_gb": 1.80, "decode_slice_elems": 1 << 20,
@@ -381,11 +398,24 @@ def cool_down(seconds: float, max_temperature_c: float | None) -> dict:
     below any reasonable cooldown target -- because a GPU clocked that low
     no longer generates enough heat to look hot. A temperature-only gate
     would have measured "cool enough" and immediately resumed the still-
-    throttled run. This additionally requires ``is_throttled()`` to read
-    False before considering the GPU recovered, regardless of temperature.
+    throttled run.
+
+    Throttle-clear is therefore mandatory and unconditional: even the fully
+    default call ``cool_down(0.0, None)`` -- what every timed cell got
+    whenever a caller (canonical benchmark.sh included) passed neither
+    --cooldown-seconds nor --cooldown-max-temp-c -- waits out
+    ``is_throttled() is True`` up to the 600 s hard ceiling before
+    proceeding. This used to be gated behind ``max_temperature_c`` being
+    set, and separately the seconds-only floor path never consulted
+    ``is_throttled()`` at all, so a genuinely throttled GPU was invisible to
+    cool_down() unless a caller happened to also pass a temperature target.
+    --cooldown-seconds and --cooldown-max-temp-c now only ADD an idle floor
+    and/or a temperature ceiling on top of the mandatory throttle check;
+    they do not gate whether that check runs. An unknown throttle reading
+    (``is_throttled()`` returns None -- no nvidia-smi, non-NVIDIA host) does
+    not block, matching every other place in this module that treats
+    "unknown" as distinct from a confident "not throttled".
     """
-    if seconds <= 0 and max_temperature_c is None:
-        return {}
     started = time.perf_counter()
     deadline = started + max(seconds, 0.0)
     reached = None
@@ -397,18 +427,17 @@ def cool_down(seconds: float, max_temperature_c: float | None) -> dict:
         except (TypeError, ValueError):
             temperature = None
         throttled = snapshot.get("throttled")
-        if max_temperature_c is not None and temperature is not None:
-            reached = temperature <= max_temperature_c and throttled is not True
-            # Honour the floor wait even once cool, so a fast-cooling run
-            # still gets a consistent inter-cell gap.
-            if reached and now >= deadline:
-                break
-        elif now >= deadline:
-            break
-        if now >= deadline and max_temperature_c is None:
+        temperature_ok = max_temperature_c is None or (
+            temperature is not None and temperature <= max_temperature_c)
+        throttle_ok = throttled is not True  # None (unknown) does not block.
+        reached = temperature_ok and throttle_ok
+        # Honour the floor wait even once ready, so a fast-cooling run still
+        # gets a consistent inter-cell gap.
+        if reached and now >= deadline:
             break
         # Hard ceiling: never wait more than 10 minutes for a GPU that is
-        # simply not cooling, and say so in the record rather than hanging.
+        # simply not cooling or not clearing its throttle, and say so in the
+        # record rather than hanging.
         if now - started > 600:
             reached = False
             break
@@ -455,7 +484,8 @@ def environment_manifest(repo_root: pathlib.Path, tokenizer,
         "host_memory": command_output(["free", "-b"]),
         "storage": storage_device_info(store or pathlib.Path.home()),
         "packages": {name: package_version(name) for name in (
-            "airllm", "transformers", "accelerate", "safetensors", "numpy")},
+            "airllm", "transformers", "accelerate", "dfloat11", "safetensors",
+            "numpy")},
         "git_commit": command_output(["git", "-C", str(repo_root), "rev-parse", "HEAD"]),
         "git_status": command_output(["git", "-C", str(repo_root), "status", "--short"]),
         "tokenizer_commit": getattr(tokenizer, "init_kwargs", {}).get("_commit_hash"),
@@ -508,7 +538,8 @@ def result_row(case: PromptCase, method: Method, prompt: str, input_tokens: int,
 def run_airllm(method: Method, rendered: list[dict], n_tokens: int,
                deadline: float,
                rows_checkpoint: Callable[[list[dict]], None] | None = None,
-               repeats: int = 1,
+               repeats: int = 1, repeat_offset: int = 0,
+               warmup_tokens: int = 0,
                ) -> tuple[list[dict], dict]:
     from airllm import AutoModel
 
@@ -521,6 +552,26 @@ def run_airllm(method: Method, rendered: list[dict], n_tokens: int,
     init_s = time.perf_counter() - init_t0
     rows = []
     try:
+        if warmup_tokens > 0 and rendered:
+            # Untimed: absorbs first-call CUDA/Triton/allocator compilation
+            # so it does not land inside repeat 0's measured seconds/token.
+            # docs/RESULTS_LOG.md's own reproduction found 0.165/0.047/0.056
+            # s/token across three back-to-back Qwen3-0.6B repeats -- most of
+            # that spread is exactly this one-time warm-up cost.
+            warm = rendered[0]
+            enc = model.tokenizer(warm["prompt"], return_tensors="pt", truncation=True)
+            ids = enc["input_ids"].cuda()
+            warm_pad = model.tokenizer.pad_token_id
+            if warm_pad is None:
+                warm_pad = model.tokenizer.eos_token_id
+            if isinstance(warm_pad, (list, tuple)):
+                warm_pad = warm_pad[0] if warm_pad else None
+            if warm_pad is None:
+                warm_pad = 0
+            model.generate(ids, max_new_tokens=warmup_tokens, eos_token_id=[],
+                           pad_token_id=int(warm_pad), do_sample=False, use_cache=True)
+            torch.cuda.synchronize()
+            del ids, enc
         # Repeats are the outer dimension so a truncated run (deadline hit)
         # still holds a complete sweep of every case for the repeats it did
         # finish, rather than many repeats of the first case and none of the
@@ -559,7 +610,7 @@ def run_airllm(method: Method, rendered: list[dict], n_tokens: int,
             rows.append(result_row(
                 item["case"], method, item["prompt"], item["input_tokens"],
                 generated, answer, wall, torch.cuda.max_memory_allocated() / 1e9,
-                cache, {"generation_mode": "greedy", "repeat": repeat,
+                cache, {"generation_mode": "greedy", "repeat": repeat_offset + repeat,
                         "gpu_thermal": gpu_thermal_snapshot(), **cooldown}))
             if rows_checkpoint is not None:
                 rows_checkpoint(rows)
@@ -577,7 +628,8 @@ def run_airllm(method: Method, rendered: list[dict], n_tokens: int,
 def run_accelerate(method: Method, rendered: list[dict], n_tokens: int,
                    deadline: float,
                    rows_checkpoint: Callable[[list[dict]], None] | None = None,
-                   repeats: int = 1,
+                   repeats: int = 1, repeat_offset: int = 0,
+                   warmup_tokens: int = 0,
                    ) -> tuple[list[dict], dict]:
     from afterimage.baselines.b0_hf_offload import load_hf_offload_baseline
 
@@ -590,6 +642,9 @@ def run_accelerate(method: Method, rendered: list[dict], n_tokens: int,
     init_s = time.perf_counter() - init_t0
     rows = []
     try:
+        if warmup_tokens > 0 and rendered:
+            # Untimed, see run_airllm's identical rationale.
+            baseline.generate(rendered[0]["prompt"], warmup_tokens)
         for repeat, item in [(r, it) for r in range(repeats) for it in rendered]:
             if time.perf_counter() >= deadline:
                 break
@@ -601,7 +656,7 @@ def run_accelerate(method: Method, rendered: list[dict], n_tokens: int,
                 item["case"], method, item["prompt"], item["input_tokens"],
                 generated, result["text"], result["wall_seconds"],
                 result["peak_vram_gb"], cache,
-                {"generation_mode": "greedy", "repeat": repeat,
+                {"generation_mode": "greedy", "repeat": repeat_offset + repeat,
                  "device_map": baseline.device_map,
                  "offload_dir": baseline.offload_dir,
                  "gpu_memory_limit": method.overrides["gpu_memory"],
@@ -619,6 +674,101 @@ def run_accelerate(method: Method, rendered: list[dict], n_tokens: int,
         torch.cuda.empty_cache()
     return rows, {"initialization_seconds": init_s,
                   "device_map": rows[0]["device_map"] if rows else {}}
+
+
+def run_dfloat11(method: Method, rendered: list[dict], n_tokens: int,
+                 deadline: float,
+                 rows_checkpoint: Callable[[list[dict]], None] | None = None,
+                 repeats: int = 1, repeat_offset: int = 0,
+                 warmup_tokens: int = 0,
+                 ) -> tuple[list[dict], dict]:
+    """DFloat11 (arXiv:2504.11651, NeurIPS'25): the closest published
+    convergent-evidence baseline to Afterimage's own compression mechanism
+    (Huffman-coded bf16 exponents, GPU LUT decode -- see docs/LITERATURE.md
+    and afterimage/probe/entropy.py). It decompresses into GPU/host memory
+    at load time rather than streaming compressed weights per token, so
+    this is a compression-ratio-class baseline, not a streaming-class one,
+    which is exactly the comparison this project's own literature review
+    calls for measuring head-to-head rather than trusting two papers'
+    separately-measured numbers.
+
+    Loads ``method.overrides["model_id"]`` (default DFLOAT11_MODEL, the
+    real published DFloat11/Qwen3-14B-DF11 checkpoint -- parameter-for-
+    parameter the same model as MODEL) rather than compressing MODEL itself;
+    DFloat11 ships fixed pre-compressed repos per model, it does not
+    compress an arbitrary checkpoint at runtime.
+    """
+    from dfloat11 import DFloat11Model
+
+    model_id = method.overrides.get("model_id", DFLOAT11_MODEL)
+    cpu_offload = method.overrides.get("cpu_offload", False)
+    init_t0 = time.perf_counter()
+    model = DFloat11Model.from_pretrained(
+        model_id, device_map="auto", cpu_offload=cpu_offload)
+    tokenizer = rendered[0]["tokenizer"]
+    # device_map="auto" is standard HF Accelerate dispatch; `model.device`
+    # is the conventional way to find where a dispatched model's inputs
+    # belong. Fall back to cuda:0 for the single-consumer-GPU case this
+    # project targets if that attribute is ever absent.
+    input_device = getattr(model, "device", None) or torch.device("cuda")
+    init_s = time.perf_counter() - init_t0
+    rows = []
+
+    def _pad_token_id() -> int:
+        pad = tokenizer.pad_token_id
+        if pad is None:
+            pad = tokenizer.eos_token_id
+        if isinstance(pad, (list, tuple)):
+            pad = pad[0] if pad else None
+        return int(pad) if pad is not None else 0
+
+    try:
+        if warmup_tokens > 0 and rendered:
+            # Untimed, see run_airllm's identical rationale.
+            enc = tokenizer(rendered[0]["prompt"], return_tensors="pt").to(input_device)
+            with torch.no_grad():
+                model.generate(**enc, max_new_tokens=warmup_tokens, eos_token_id=[],
+                               pad_token_id=_pad_token_id(), do_sample=False,
+                               use_cache=True)
+            torch.cuda.synchronize()
+            del enc
+        for repeat, item in [(r, it) for r in range(repeats) for it in rendered]:
+            if time.perf_counter() >= deadline:
+                break
+            enc = tokenizer(item["prompt"], return_tensors="pt").to(input_device)
+            cooldown = cool_down(COOLDOWN_SECONDS, COOLDOWN_MAX_TEMPERATURE_C)
+            cache = drop_caches()
+            reset_cuda_peak()
+            t0 = time.perf_counter()
+            with torch.no_grad():
+                output = model.generate(
+                    **enc, max_new_tokens=n_tokens, eos_token_id=[],
+                    pad_token_id=_pad_token_id(), do_sample=False, use_cache=True,
+                    return_dict_in_generate=True)
+            torch.cuda.synchronize()
+            wall = time.perf_counter() - t0
+            sequence = output.sequences if hasattr(output, "sequences") else output
+            generated = sequence[0, enc["input_ids"].shape[1]:].tolist()
+            answer = tokenizer.decode(generated, skip_special_tokens=True)
+            rows.append(result_row(
+                item["case"], method, item["prompt"], item["input_tokens"],
+                generated, answer, wall, torch.cuda.max_memory_allocated() / 1e9,
+                cache, {"generation_mode": "greedy",
+                        "repeat": repeat_offset + repeat,
+                        "dfloat11_model": model_id, "cpu_offload": cpu_offload,
+                        "gpu_thermal": gpu_thermal_snapshot(), **cooldown}))
+            if rows_checkpoint is not None:
+                rows_checkpoint(rows)
+            log("  %-18s %.2f s/token  %r%s" %
+                (item["case"].id, rows[-1]["seconds_per_token"], answer,
+                 "" if repeats == 1 else "  [repeat %d/%d]" % (repeat + 1, repeats)))
+            del output, sequence, enc
+    finally:
+        del model
+        gc.collect()
+        torch.cuda.empty_cache()
+    return rows, {"initialization_seconds": init_s, "dfloat11_model": model_id,
+                  "cpu_offload": cpu_offload}
 
 
 def engine_for(method: Method, *, critical_profile: str | None = None,
@@ -647,7 +797,7 @@ def run_afterimage(method: Method, rendered: list[dict], n_tokens: int,
                    burn_in_rendered: list[dict] | None = None,
                    burn_in_tokens: int = 0,
                    rows_checkpoint: Callable[[list[dict]], None] | None = None,
-                   repeats: int = 1,
+                   repeats: int = 1, repeat_offset: int = 0,
                    ) -> tuple[list[dict], dict]:
     init_t0 = time.perf_counter()
     engine, cfg = engine_for(method, critical_profile=critical_profile,
@@ -709,7 +859,7 @@ def run_afterimage(method: Method, rendered: list[dict], n_tokens: int,
             stats = engine.stats
             extra = {
                 "generation_mode": "speculative_greedy" if cfg.draft_mode != "none" else "greedy",
-                "repeat": repeat,
+                "repeat": repeat_offset + repeat,
                 "config": cfg.to_dict(),
                 "config_fingerprint": cfg.fingerprint(),
                 "exactness_contract": cfg.exactness_contract,
@@ -1405,6 +1555,10 @@ def main() -> int:
                                                 repeats=args.repeats)
                 elif method.kind == "accelerate":
                     rows, metadata = run_accelerate(
+                        method, rendered, args.max_new_tokens, deadline,
+                        save_interim_rows, repeats=args.repeats)
+                elif method.kind == "dfloat11":
+                    rows, metadata = run_dfloat11(
                         method, rendered, args.max_new_tokens, deadline,
                         save_interim_rows, repeats=args.repeats)
                 else:

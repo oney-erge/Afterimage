@@ -10,29 +10,43 @@ Run via `afterimage serve` (afterimage/cli.py) or directly:
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import dataclasses
+import io
 import json
 import logging
 import pathlib
+import shutil
 import statistics
 import threading
 import time
 import uuid
+from typing import Any
 
 import numpy as np
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from afterimage.cli import DEFAULT_STORE_ROOT, _detect_gpu, _detect_ram_gb, _store_dir_for
+from afterimage.cli import (
+    DEFAULT_STORE_ROOT, RUN_PROFILES, _detect_gpu, _detect_ram_gb,
+    _store_dir_for, automatic_run_profile,
+)
+from afterimage.runtime.adapters import classify_config
 from afterimage.experiments import (
     HYPOTHESES, PROFILES, ExperimentRun, ResultStore, oracle_gap,
     environment_manifest, registry_payload, run_paired,
 )
 from afterimage.reference import MEASURED_REFERENCE
 from afterimage.runtime.config import EngineConfig
+from afterimage.server.acquisition import acquire_model
+from afterimage.server.catalog import search_catalog
+from afterimage.server.hardware import disk_info, memory_info
 from afterimage.server.jobs import registry
+from afterimage.server.model_registry import model_registry
 
 logger = logging.getLogger(__name__)
 
@@ -40,11 +54,12 @@ app = FastAPI(title="Afterimage", description="Lossless streaming inference cont
 
 _STATIC_DIR = pathlib.Path(__file__).parent / "static"
 _EXPERIMENT_RESULTS = ResultStore(DEFAULT_STORE_ROOT / "_experiment_results")
+app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
 
 
 @app.get("/", response_class=HTMLResponse)
-def index() -> str:
-    return (_STATIC_DIR / "index.html").read_text(encoding="utf-8")
+def index():
+    return FileResponse(_STATIC_DIR / "index.html")
 
 
 # -- operability: health, version, last-run stats -----------------------
@@ -93,172 +108,192 @@ def hardware() -> dict:
     if torch.cuda.is_available():
         free, total = torch.cuda.mem_get_info()
         free, total = free / 1e9, total / 1e9
-    return {"gpu": gpu, "ram_gb": _detect_ram_gb(), "cuda_available": torch.cuda.is_available(),
-            "vram_free_gb": free, "vram_total_gb": total}
-
-
-# MEASURED_REFERENCE (imported above): Qwen3-14B on the RTX 3080 Laptop
-# (README's benchmark table / docs/ALL_HYPOTHESES_AND_BASELINES.md).
-# Extrapolating to other sizes assumes the same architecture family and
-# roughly linear scaling of store size and streamed-read time with
-# parameter count -- true to first order for same-precision dense
-# transformers, not a promise for any specific checkpoint. Every number
-# this produces is an ESTIMATE; only a real compress + run on the actual
-# model is a measurement.
-
-
-def _capability_estimate(params_b: float) -> dict:
-    ref = MEASURED_REFERENCE
+    memory = memory_info()
+    disk = disk_info(DEFAULT_STORE_ROOT)
     return {
-        "params_b": round(params_b, 2),
-        "bf16_gb": round(params_b * ref["bf16_gb_per_b_params"], 1),
-        "compressed_store_gb": round(params_b * ref["compressed_gb_per_b_params"], 1),
-        "min_memory_s_per_token": round(params_b * ref["min_memory_s_per_token_per_b"], 1),
-        "fast_s_per_token": round(params_b * ref["fast_s_per_token_per_b"], 1),
+        "gpu": gpu,
+        "memory": memory,
+        "disk": disk,
+        # Backwards-compatible aliases. New UI uses explicit GiB fields.
+        "ram_gb": memory["total_gib"],
+        "ram_available_gb": memory["available_gib"],
+        "cuda_available": torch.cuda.is_available(),
+        "vram_free_gb": free,
+        "vram_total_gb": total,
     }
 
 
 @app.get("/api/capability")
 def capability() -> dict:
-    """What this GPU can actually do, in plain terms -- the "what this means
-    for you" card on the Home screen is built entirely from this response.
-    Every number here is a rough extrapolation from one measured checkpoint,
-    not a benchmark; the response says so explicitly so the UI never has to
-    invent that caveat itself.
-
-    streaming_fast_max_params_b can come out LARGER than
-    streaming_slow_max_params_b -- that is not a bug. They answer different
-    questions ("biggest model that stays fast under speculation" vs.
-    "biggest model minimum-memory streaming can still limp through") and are
-    not nested: nothing here promises the fast profile's acceptance rate
-    (measured only at the 14B/0.6B draft pair) holds at other scales.
-    """
+    """Return measured evidence without inventing a global model-size ceiling."""
     import torch
     ref = MEASURED_REFERENCE
     gpu = _detect_gpu()
-    vram_gb = gpu.get("vram_gb")
-    ram_gb = _detect_ram_gb()
-
-    native_fit_max_params_b = None
-    streaming_fast_max_params_b = None
-    streaming_slow_max_params_b = None
-    if vram_gb:
-        # Whole bf16 model resident, no streaming -- roughly what you could
-        # do WITHOUT Afterimage. ~15% headroom reserved for KV cache and
-        # activations, itself a rough rule of thumb, not a measurement.
-        native_fit_max_params_b = round(
-            (vram_gb * 0.85) / ref["bf16_gb_per_b_params"], 1)
-        # "Fast" (speculative) needs roughly the measured fixed VRAM floor
-        # (residency + draft model) to first order, regardless of size; if
-        # the card clears that floor, speed then scales ~linearly with
-        # params. 15s/token is a chosen "still feels interactive" ceiling.
-        # Extrapolated from the one measured 14B/0.6B draft pair -- larger
-        # targets may see a lower speculative acceptance rate than that
-        # pair did, which this simple scaling does not model.
-        if vram_gb >= ref["fast_vram_floor_gb"]:
-            streaming_fast_max_params_b = round(
-                15.0 / ref["fast_s_per_token_per_b"], 1)
-        # Minimum-memory streaming has essentially no VRAM floor to speak
-        # of, so size stops being the limit at all -- only speed does.
-        # 45s/token is a chosen "still usable, but slow" ceiling.
-        streaming_slow_max_params_b = round(
-            45.0 / ref["min_memory_s_per_token_per_b"], 1)
-
     return {
-        "vram_gb": vram_gb, "ram_gb": ram_gb,
+        "vram_gb": gpu.get("vram_gb"), "ram_gb": _detect_ram_gb(),
         "cuda_available": torch.cuda.is_available(),
-        "measured_reference_model": ref["model"],
-        "native_fit_max_params_b": native_fit_max_params_b,
-        "streaming_fast_max_params_b": streaming_fast_max_params_b,
-        "streaming_slow_max_params_b": streaming_slow_max_params_b,
-        "estimates": [_capability_estimate(p) for p in (4, 7, 14, 32, 70)],
+        "streaming": {
+            "beyond_vram": True,
+            "note": (
+                "Model size is not limited by VRAM alone. Larger models need "
+                "more local storage and generally run more slowly."
+            ),
+        },
+        "measured_reference": dict(ref),
     }
 
 
 @app.get("/api/models")
 def list_models() -> dict:
-    out = []
+    by_id = {model["model_id"]: model for model in model_registry.list_models()}
     if DEFAULT_STORE_ROOT.exists():
         for p in sorted(DEFAULT_STORE_ROOT.iterdir()):
             man_path = p / "manifest.json"
             if man_path.exists():
                 man = json.loads(man_path.read_text())
-                out.append({"model_id": man.get("model_id", p.name), "store": str(p),
-                           "orig_gb": man["total_orig_bytes"] / 1e9,
-                           "comp_gb": man["total_comp_bytes"] / 1e9, "ratio": man["ratio"]})
-    return {"models": out}
+                model_id = man.get("model_id", p.name)
+                metadata = dict(by_id.get(model_id, {}).get("metadata", {}))
+                metadata["manifest"] = {
+                    "total_orig_bytes": man["total_orig_bytes"],
+                    "total_comp_bytes": man["total_comp_bytes"],
+                    "ratio": man["ratio"],
+                }
+                by_id[model_id] = model_registry.upsert_model(
+                    model_id, revision=man.get("revision"), state="ready", stage="ready",
+                    store_path=str(p), metadata=metadata,
+                )
+    out = []
+    for model in by_id.values():
+        manifest = model.get("metadata", {}).get("manifest", {})
+        out.append({
+            **model,
+            "store": model.get("store_path"),
+            "orig_gb": manifest.get("total_orig_bytes", 0) / 1e9,
+            "comp_gb": manifest.get("total_comp_bytes", 0) / 1e9,
+            "ratio": manifest.get("ratio"),
+        })
+    return {"models": sorted(out, key=lambda row: row["updated_at"], reverse=True)}
 
 
-# This engine's hard-coded Llama-family layout (see streaming_engine.py's
-# construction-time architecture check) -- kept in sync manually rather than
-# imported, since HF's search API returns architecture strings, not a
-# loaded config we could introspect the same way the engine does.
-_SUPPORTED_ARCHITECTURES = (
-    "LlamaForCausalLM", "Qwen2ForCausalLM", "Qwen3ForCausalLM",
-    "MistralForCausalLM",
-)
+@app.get("/api/catalog/models")
+def catalog_models(
+    q: str = "",
+    cursor: str | None = None,
+    page_size: int = 24,
+    sort: str = "downloads",
+    task: str | None = None,
+    parameters: str | None = None,
+) -> dict:
+    try:
+        payload = search_catalog(
+            query=q, cursor=cursor, page_size=page_size, sort=sort,
+            task=task, parameter_range=parameters,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001 - remote failure is returned as catalog state
+        return {
+            "models": [], "error": "%s: %s" % (type(exc).__name__, exc),
+            "cursor": cursor, "next_cursor": None, "previous_cursor": None,
+            "page": 1, "page_size": page_size, "exhausted": True,
+        }
+    local = {model["model_id"]: model for model in list_models()["models"]}
+    for row in payload["models"]:
+        if row["model_id"] in local:
+            row["local"] = local[row["model_id"]]
+            row["availability"] = local[row["model_id"]]["state"]
+    return payload
 
 
 @app.get("/api/models/search")
 def search_models(q: str = "", limit: int = 20) -> dict:
-    """Search the HuggingFace Hub for bf16 safetensors checkpoints and
-    classify each one's fit against this machine's detected VRAM, using the
-    same estimate /api/capability is built from. Best-effort: a network or
-    API failure returns an empty list with an explanation rather than a
-    500 -- this must never block someone who already knows the model id
-    they want and is using /api/compress directly."""
+    """Compatibility shim for clients using the former non-paginated route."""
     try:
-        from huggingface_hub import HfApi
-        api = HfApi()
-        results = list(api.list_models(
-            search=q or None, filter="safetensors", sort="downloads",
-            limit=max(1, min(limit, 50)),
-            expand=["safetensors", "config", "downloads"]))
+        payload = catalog_models(q=q, page_size=max(1, min(limit, 50)))
     except Exception as exc:
         return {"models": [], "error": "%s: %s" % (type(exc).__name__, exc)}
+    if isinstance(payload, dict):
+        payload["deprecated"] = "Use /api/catalog/models for cursor pagination."
+    return payload
 
-    cap = capability()
-    vram_gb = cap["vram_gb"]
-    ref = MEASURED_REFERENCE
-    already = {m["model_id"] for m in list_models()["models"]}
 
-    out = []
-    for m in results:
-        model_id = m.id
-        params_b = None
-        safetensors = getattr(m, "safetensors", None)
-        if safetensors and getattr(safetensors, "total", None):
-            params_b = safetensors.total / 1e9
-        architectures = list(getattr(m, "config", {}).get("architectures", [])
-                            if getattr(m, "config", None) else [])
-        supported = (not architectures
-                    or any(a in _SUPPORTED_ARCHITECTURES for a in architectures))
+class AcquireRequest(BaseModel):
+    model_id: str
+    revision: str | None = None
+    prepare: bool = True
 
-        row = {
-            "model_id": model_id, "downloads": getattr(m, "downloads", None),
-            "params_b": round(params_b, 2) if params_b else None,
-            "architectures": architectures,
-            "supported_architecture": supported,
-            "already_compressed": model_id in already,
-            "fit": "unknown",
-        }
-        if not supported:
-            row["fit"] = "unsupported"
-        elif params_b:
-            estimate = _capability_estimate(params_b)
-            row.update(estimate)
-            if vram_gb is None:
-                row["fit"] = "unknown"
-            elif params_b <= (vram_gb * 0.85) / ref["bf16_gb_per_b_params"]:
-                row["fit"] = "native"
-            elif estimate["fast_s_per_token"] <= 15.0 and vram_gb >= ref["fast_vram_floor_gb"]:
-                row["fit"] = "streams_fast"
-            elif estimate["min_memory_s_per_token"] <= 45.0:
-                row["fit"] = "streams_slow"
-            else:
-                row["fit"] = "streams_very_slow"
-        out.append(row)
-    return {"models": out}
+
+@app.post("/api/models/acquire")
+def acquire(req: AcquireRequest) -> dict:
+    if not req.model_id.strip() or ".." in req.model_id:
+        raise HTTPException(400, "invalid model id")
+    active = [
+        job for job in registry.list()
+        if job and job.model_id == req.model_id
+        and job.status in {"queued", "running", "pause_requested", "paused", "cancelling"}
+    ]
+    if active:
+        return {"job_id": active[0].id, "existing": True}
+
+    model_registry.upsert_model(
+        req.model_id, revision=req.revision, state="queued", stage="queued",
+        error=None,
+    )
+
+    def work(control):
+        from afterimage.runtime.control import JobCancelled
+
+        try:
+            return acquire_model(
+                req.model_id, revision=req.revision, prepare=req.prepare,
+                control=control,
+            )
+        except JobCancelled:
+            model_registry.upsert_model(
+                req.model_id, state="interrupted", stage="interrupted", error=None,
+            )
+            raise
+        except Exception as exc:
+            model_registry.upsert_model(
+                req.model_id, state="failed", stage="failed",
+                error="%s: %s" % (type(exc).__name__, exc),
+            )
+            raise
+
+    job = registry.create(
+        "acquire", work, model_id=req.model_id, lane="model-lifecycle"
+    )
+    return {"job_id": job.id, "existing": False}
+
+
+@app.delete("/api/models/{model_id:path}")
+def remove_model(model_id: str, confirm_model_id: str) -> dict:
+    """Remove one prepared store. The shared Hugging Face cache is retained."""
+
+    if confirm_model_id != model_id:
+        raise HTTPException(400, "confirm_model_id must exactly match model_id")
+    active = [
+        job for job in registry.list()
+        if job and job.model_id == model_id
+        and job.status in {"queued", "running", "pause_requested", "paused", "cancelling"}
+    ]
+    if active:
+        raise HTTPException(409, "cancel the active model job before removing this model")
+    store = _store_dir_for(model_id).resolve()
+    root = DEFAULT_STORE_ROOT.resolve()
+    if store.parent != root:
+        raise HTTPException(400, "resolved store path is outside the model store")
+    removed_store = False
+    if store.exists():
+        shutil.rmtree(store)
+        removed_store = True
+    removed_record = model_registry.delete_model(model_id)
+    return {
+        "model_id": model_id,
+        "removed_store": removed_store,
+        "removed_record": removed_record,
+        "huggingface_cache_retained": True,
+    }
 
 
 # -- compression job ------------------------------------------------------
@@ -277,9 +312,48 @@ def compress(req: CompressRequest) -> dict:
     cfg = EngineConfig(chunk_size=req.chunk_size, quantize=req.quantize)
 
     def work(control):
-        return compress_model_to_disk(req.model_id, out_dir, config=cfg, control=control)
+        from afterimage.runtime.binstore import verify_store
+        from afterimage.runtime.control import JobCancelled
 
-    job = registry.create("compress", work)
+        try:
+            manifest = compress_model_to_disk(
+                req.model_id, out_dir, config=cfg, control=control
+            )
+            valid, bad_keys = verify_store(out_dir)
+            if not valid:
+                raise RuntimeError(
+                    "prepared store checksum mismatch: %s" % ", ".join(bad_keys[:5])
+                )
+            existing = model_registry.get_model(req.model_id) or {}
+            metadata = dict(existing.get("metadata", {}))
+            metadata["manifest"] = {
+                "total_orig_bytes": manifest["total_orig_bytes"],
+                "total_comp_bytes": manifest["total_comp_bytes"],
+                "ratio": manifest["ratio"],
+            }
+            model_registry.upsert_model(
+                req.model_id, state="ready", stage="ready",
+                store_path=str(out_dir), metadata=metadata, error=None,
+            )
+            return manifest
+        except JobCancelled:
+            model_registry.upsert_model(
+                req.model_id, state="interrupted", stage="interrupted", error=None,
+            )
+            raise
+        except Exception as exc:
+            model_registry.upsert_model(
+                req.model_id, state="failed", stage="failed",
+                error="%s: %s" % (type(exc).__name__, exc),
+            )
+            raise
+
+    model_registry.upsert_model(
+        req.model_id, state="preparing", stage="compressing", error=None,
+    )
+    job = registry.create(
+        "compress", work, model_id=req.model_id, lane="model-lifecycle"
+    )
     return {"job_id": job.id}
 
 
@@ -379,7 +453,9 @@ def compare(req: CompareRequest) -> dict:
                     baseline["seconds_per_token"] / row["seconds_per_token"])
         return {"prompt": req.prompt, "rows": rows}
 
-    job = registry.create("compare", work)
+    job = registry.create(
+        "compare", work, model_id=req.model_id, lane="gpu"
+    )
     return {"job_id": job.id}
 
 
@@ -394,33 +470,53 @@ def _get_job(job_id: str):
 
 @app.get("/api/jobs")
 def list_jobs() -> dict:
-    return {"jobs": [{"id": j.id, "kind": j.kind, "status": j.status} for j in registry.list()]}
+    return {"jobs": [
+        {
+            "id": j.id, "kind": j.kind, "model_id": j.model_id,
+            "lane": j.lane, "status": j.status, "progress": j.progress,
+            "error": j.error, "created_at": j.created_at,
+        }
+        for j in registry.list() if j is not None
+    ]}
 
 
 @app.get("/api/jobs/{job_id}")
 def job_status(job_id: str) -> dict:
     job = _get_job(job_id)
-    return {"id": job.id, "kind": job.kind, "status": job.status,
+    return {"id": job.id, "kind": job.kind, "model_id": job.model_id,
+            "lane": job.lane, "status": job.status,
             "progress": job.progress, "error": job.error,
             "result": job.result if job.status == "done" else None}
 
 
 @app.post("/api/jobs/{job_id}/pause")
 def job_pause(job_id: str) -> dict:
-    _get_job(job_id).control.pause()
-    return {"status": "paused"}
+    job = registry.pause(job_id)
+    if job is None:
+        raise HTTPException(404, "no such job: %r" % job_id)
+    if job.status not in {"pause_requested", "paused"}:
+        raise HTTPException(409, "job cannot be paused from %s" % job.status)
+    return {"status": job.status}
 
 
 @app.post("/api/jobs/{job_id}/resume")
 def job_resume(job_id: str) -> dict:
-    _get_job(job_id).control.resume()
-    return {"status": "resumed"}
+    job = registry.resume(job_id)
+    if job is None:
+        raise HTTPException(404, "no such job: %r" % job_id)
+    if job.status != "running":
+        raise HTTPException(
+            409, "this process cannot resume an interrupted job; start Get again to recover"
+        )
+    return {"status": "running"}
 
 
 @app.post("/api/jobs/{job_id}/cancel")
 def job_cancel(job_id: str) -> dict:
-    _get_job(job_id).control.cancel()
-    return {"status": "cancelling"}
+    job = registry.cancel(job_id)
+    if job is None:
+        raise HTTPException(404, "no such job: %r" % job_id)
+    return {"status": job.status}
 
 
 @app.websocket("/ws/jobs/{job_id}")
@@ -441,7 +537,7 @@ async def job_progress_ws(websocket: WebSocket, job_id: str) -> None:
             if snapshot != last:
                 await websocket.send_json(snapshot)
                 last = snapshot
-            if job.status in ("done", "error", "cancelled"):
+            if job.status in ("done", "error", "cancelled", "interrupted"):
                 break
             await asyncio.sleep(0.5)
     except WebSocketDisconnect:
@@ -655,6 +751,16 @@ def start_experiment(hypothesis_id: str, req: ExperimentRunRequest) -> dict:
     hypothesis = HYPOTHESES.get(hypothesis_id)
     if hypothesis is None:
         raise HTTPException(404, "no such hypothesis: %r" % hypothesis_id)
+    active_experiment = next((
+        job for job in registry.list()
+        if job and job.kind.startswith("experiment:")
+        and job.status in {"queued", "running", "pause_requested", "paused", "cancelling"}
+    ), None)
+    if active_experiment is not None:
+        raise HTTPException(
+            409, "experiment %s is already active; finish or cancel it first"
+            % active_experiment.id,
+        )
     if req.repeats < 1:
         raise HTTPException(400, "repeats must be >= 1")
     missing = []
@@ -780,7 +886,7 @@ def start_experiment(hypothesis_id: str, req: ExperimentRunRequest) -> dict:
                         sequence = engine.generate_greedy(ids, req.max_new_tokens)
                     wall = time.perf_counter() - start
                     generated = int(sequence.shape[1] - ids.shape[1])
-                    head_rows = int(engine.model.lm_head.weight.shape[0])
+                    head_rows = int(engine.adapter.output_head.weight.shape[0])
                     mips_possible_rows = generated * head_rows
                     return {
                         "committed_tokens_per_second": generated / max(wall, 1e-12),
@@ -825,7 +931,10 @@ def start_experiment(hypothesis_id: str, req: ExperimentRunRequest) -> dict:
         path = _EXPERIMENT_RESULTS.write_once(run)
         return {"run_id": run.id, "result_path": str(path), "run": run.to_dict()}
 
-    job = registry.create("experiment:" + hypothesis_id, work)
+    job = registry.create(
+        "experiment:" + hypothesis_id, work,
+        model_id=req.model_id or None, lane="gpu",
+    )
     return {"job_id": job.id, "hypothesis_id": hypothesis_id}
 
 
@@ -867,7 +976,8 @@ class _EngineCache:
                     logger.info("evicting engine for %s to load %s", self._key[0], model_id)
                     self._sm.close()
                     self._sm = None
-                from transformers import AutoTokenizer
+                from transformers import AutoConfig, AutoProcessor, AutoTokenizer
+                import torch
                 from afterimage.runtime.streaming_engine import StreamingLosslessModel
 
                 store_dir = _store_dir_for(model_id)
@@ -875,8 +985,26 @@ class _EngineCache:
                     raise HTTPException(
                         404, "no compressed store for %r -- POST /api/compress first" % model_id)
                 logger.info("loading %s (config %s)", model_id, cfg.fingerprint())
-                self._tok = AutoTokenizer.from_pretrained(model_id)
-                self._sm = StreamingLosslessModel(model_id, store_dir, device="cuda", config=cfg)
+                local = model_registry.get_model(model_id) or {}
+                snapshot_value = local.get("local_snapshot")
+                source = (
+                    pathlib.Path(snapshot_value)
+                    if snapshot_value and pathlib.Path(snapshot_value).exists()
+                    else model_id
+                )
+                model_config = AutoConfig.from_pretrained(source, trust_remote_code=False)
+                vision = classify_config(model_config)["modality"] == "vision-text"
+                self._tok = (
+                    AutoProcessor.from_pretrained(source, trust_remote_code=False)
+                    if vision
+                    else AutoTokenizer.from_pretrained(source, trust_remote_code=False)
+                )
+                self._sm = StreamingLosslessModel(
+                    model_id, store_dir,
+                    device="cuda" if torch.cuda.is_available() else "cpu",
+                    config=cfg,
+                    source_dir=source,
+                )
                 self._key = key
                 logger.info("%s loaded", model_id)
             return self._sm, self._tok
@@ -901,7 +1029,7 @@ _engine_cache = _EngineCache()
 
 class ChatMessage(BaseModel):
     role: str
-    content: str
+    content: str | list[dict[str, Any]]
 
 
 class ChatCompletionRequest(BaseModel):
@@ -910,6 +1038,7 @@ class ChatCompletionRequest(BaseModel):
     max_tokens: int = 128
     temperature: float = 0.0
     stream: bool = False
+    execution_profile: str = "auto"
     vram_cap_gb: float | None = None
     vram_budget_gb: float | None = None
     ram_budget_gb: float | None = None
@@ -925,15 +1054,155 @@ class ChatCompletionRequest(BaseModel):
 
 @app.get("/v1/models")
 def openai_models() -> dict:
-    models = list_models()["models"]
+    models = [model for model in list_models()["models"] if model["state"] == "ready"]
     return {"object": "list",
             "data": [{"id": m["model_id"], "object": "model", "owned_by": "afterimage"}
                      for m in models]}
 
 
-def _build_prompt(tok, messages: list[ChatMessage]) -> str:
-    return tok.apply_chat_template([m.model_dump() for m in messages],
-                                   tokenize=False, add_generation_prompt=True)
+def _tokenizer(processor):
+    return getattr(processor, "tokenizer", processor)
+
+
+def _decode_image(value: Any):
+    from PIL import Image
+
+    url = value.get("url") if isinstance(value, dict) else value
+    if not isinstance(url, str) or not url.startswith("data:image/"):
+        raise HTTPException(
+            400, "images must be local data URLs; Afterimage does not fetch remote image URLs"
+        )
+    try:
+        header, encoded = url.split(",", 1)
+        if ";base64" not in header:
+            raise ValueError("not base64")
+        raw = base64.b64decode(encoded, validate=True)
+    except (ValueError, binascii.Error) as exc:
+        raise HTTPException(400, "invalid image data URL") from exc
+    if len(raw) > 10 * 1024 * 1024:
+        raise HTTPException(413, "each image must be 10 MiB or smaller")
+    try:
+        with Image.open(io.BytesIO(raw)) as image:
+            image.verify()
+        return Image.open(io.BytesIO(raw)).convert("RGB")
+    except (OSError, ValueError) as exc:
+        raise HTTPException(400, "invalid image payload") from exc
+
+
+def _normalized_messages(messages: list[ChatMessage], *, vision: bool) -> tuple[list, int]:
+    normalized = []
+    image_count = 0
+    for message in messages:
+        if isinstance(message.content, str):
+            normalized.append({"role": message.role, "content": message.content})
+            continue
+        parts = []
+        for part in message.content:
+            kind = part.get("type")
+            if kind == "text":
+                parts.append({"type": "text", "text": str(part.get("text", ""))})
+            elif kind == "image_url":
+                if not vision:
+                    raise HTTPException(400, "the selected model is not vision-capable")
+                image_count += 1
+                if image_count > 4:
+                    raise HTTPException(400, "a request can contain at most 4 images")
+                parts.append({"type": "image", "image": _decode_image(part.get("image_url"))})
+            else:
+                raise HTTPException(400, "unsupported message content type: %r" % kind)
+        normalized.append({
+            "role": message.role,
+            "content": (
+                parts if vision else "\n".join(
+                    value["text"] for value in parts if value["type"] == "text"
+                )
+            ),
+        })
+    return normalized, image_count
+
+
+def _prepare_model_inputs(processor, messages: list[ChatMessage], *, vision: bool, device: str):
+    normalized, image_count = _normalized_messages(messages, vision=vision)
+    if vision:
+        kwargs = {
+            "tokenize": True, "add_generation_prompt": True,
+            "return_dict": True, "return_tensors": "pt",
+        }
+        try:
+            inputs = processor.apply_chat_template(
+                normalized, enable_thinking=False, **kwargs
+            )
+        except TypeError:
+            inputs = processor.apply_chat_template(normalized, **kwargs)
+        values = {
+            key: value.to(device) if hasattr(value, "to") else value
+            for key, value in dict(inputs).items()
+        }
+        ids = values.pop("input_ids")
+        return ids, values, image_count
+    tokenizer = _tokenizer(processor)
+    prompt_kwargs = {"tokenize": False, "add_generation_prompt": True}
+    try:
+        prompt = tokenizer.apply_chat_template(
+            normalized, enable_thinking=False, **prompt_kwargs
+        )
+    except TypeError:
+        prompt = tokenizer.apply_chat_template(normalized, **prompt_kwargs)
+    return tokenizer(prompt, return_tensors="pt").input_ids.to(device), {}, 0
+
+
+def _generation_config(
+    req: ChatCompletionRequest, *, vision: bool
+) -> tuple[EngineConfig, str | None]:
+    profile = req.execution_profile
+    draft_model = req.draft_model
+    vram_budget = req.vram_budget_gb
+    if profile == "auto" and vram_budget is None and draft_model is None:
+        profile, _reason = automatic_run_profile(_detect_gpu().get("vram_gb"))
+        if vision and profile == "fast":
+            profile = "balanced"
+        preset = RUN_PROFILES[profile]
+        vram_budget = preset["vram_budget_gb"]
+        draft_model = None if vision else preset["draft_model"]
+    elif profile in RUN_PROFILES:
+        preset = RUN_PROFILES[profile]
+        if vram_budget is None:
+            vram_budget = preset["vram_budget_gb"]
+        if draft_model is None and not vision:
+            draft_model = preset["draft_model"]
+    if vision and draft_model:
+        raise HTTPException(400, "draft-model speculation is not verified for vision chat")
+    cfg = EngineConfig(
+        vram_cap_gb=req.vram_cap_gb, vram_budget_gb=vram_budget,
+        ram_budget_gb=req.ram_budget_gb, progress=False,
+        draft_mode=("model" if draft_model else "none"), spec_k=req.spec_k,
+        spec_target_cache=req.spec_target_cache,
+        lm_head_slice_rows=req.lm_head_slice_rows,
+    )
+    return cfg, draft_model
+
+
+def _prepare_generation(req: ChatCompletionRequest, control=None):
+    local = model_registry.get_model(req.model)
+    if local is not None and local["state"] != "ready":
+        raise HTTPException(409, "model %r is %s, not ready" % (req.model, local["state"]))
+    metadata = (local or {}).get("metadata", {}).get("compatibility", {})
+    vision = metadata.get("modality") == "vision-text"
+    cfg, draft_model = _generation_config(req, vision=vision)
+    sm, processor = _engine_cache.get(req.model, cfg)
+    if control is None:
+        from afterimage.runtime.control import JobControl
+        control = JobControl()
+    sm.control = control
+    vision = sm.adapter.capabilities.modality == "vision-text"
+    ids, extra, image_count = _prepare_model_inputs(
+        processor, req.messages, vision=vision, device=sm.device
+    )
+    sm.set_initial_forward_kwargs(extra)
+    tokenizer = _tokenizer(processor)
+    draft = _engine_cache.get_draft(draft_model, sm.device) if draft_model else None
+    stop_ids = {tokenizer.eos_token_id} if tokenizer.eos_token_id is not None else set()
+    return sm, tokenizer, ids, stop_ids, draft, image_count
 
 
 def _stats_usage(sm, ids_len: int, completion_len: int) -> dict:
@@ -965,17 +1234,7 @@ def _stats_usage(sm, ids_len: int, completion_len: int) -> dict:
 def chat_completions(req: ChatCompletionRequest):
     logger.info("chat completion: model=%s max_tokens=%d stream=%s draft=%s",
                req.model, req.max_tokens, req.stream, req.draft_model or "none")
-    cfg = EngineConfig(vram_cap_gb=req.vram_cap_gb, vram_budget_gb=req.vram_budget_gb,
-                       ram_budget_gb=req.ram_budget_gb, progress=False,
-                       draft_mode=("model" if req.draft_model else "none"),
-                       spec_k=req.spec_k,
-                       spec_target_cache=req.spec_target_cache,
-                       lm_head_slice_rows=req.lm_head_slice_rows)
-    sm, tok = _engine_cache.get(req.model, cfg)
-    draft = _engine_cache.get_draft(req.draft_model, sm.device) if req.draft_model else None
-    prompt = _build_prompt(tok, req.messages)
-    ids = tok(prompt, return_tensors="pt").input_ids.to(sm.device)
-    stop_ids = {tok.eos_token_id} if tok.eos_token_id is not None else set()
+    sm, tok, ids, stop_ids, draft, _image_count = _prepare_generation(req)
 
     cid = "chatcmpl-" + uuid.uuid4().hex[:24]
     created = int(time.time())
@@ -1009,6 +1268,58 @@ def chat_completions(req: ChatCompletionRequest):
             "usage": _stats_usage(sm, ids.shape[1], completion_len)}
 
 
+@app.post("/api/chat")
+def start_chat(req: ChatCompletionRequest) -> dict:
+    """Start cancellable local chat for the bundled web application."""
+
+    if req.stream:
+        req = req.model_copy(update={"stream": False})
+
+    def work(control):
+        import torch
+
+        sm, tokenizer, ids, stop_ids, draft, image_count = _prepare_generation(
+            req, control=control
+        )
+        token_ids: list[int] = []
+
+        def on_token(token_id: int) -> None:
+            token_ids.append(token_id)
+            control.report(
+                stage="generating", text=tokenizer.decode(
+                    token_ids, skip_special_tokens=True
+                ), tokens=len(token_ids), images=image_count,
+            )
+
+        sm.stats.reset()
+        if torch.cuda.is_available():
+            torch.cuda.reset_peak_memory_stats()
+        with torch.no_grad():
+            if draft is not None:
+                sequence, _policy = sm.generate_adaptive(
+                    ids, max_new_tokens=req.max_tokens, draft_model=draft,
+                    temperature=req.temperature, on_token=on_token,
+                    stop_token_ids=stop_ids,
+                )
+            else:
+                sequence = sm.generate_greedy(
+                    ids, max_new_tokens=req.max_tokens, on_token=on_token,
+                    stop_token_ids=stop_ids,
+                )
+        completion_len = sequence.shape[1] - ids.shape[1]
+        _engine_cache._last_completion_len = completion_len
+        text = tokenizer.decode(
+            sequence[0, ids.shape[1]:], skip_special_tokens=True
+        )
+        return {
+            "model": req.model, "text": text,
+            "usage": _stats_usage(sm, ids.shape[1], completion_len),
+        }
+
+    job = registry.create("chat", work, model_id=req.model, lane="gpu")
+    return {"job_id": job.id}
+
+
 def _stream_chat(sm, tok, ids, req: ChatCompletionRequest, cid: str, created: int,
                  stop_ids: set, draft=None):
     """Runs generation in a background thread, pushing each token's decoded
@@ -1031,7 +1342,7 @@ def _stream_chat(sm, tok, ids, req: ChatCompletionRequest, cid: str, created: in
     import torch
 
     q: queue.Queue = queue.Queue()
-    TOKEN, DONE = "token", "done"
+    TOKEN, ERROR, DONE = "token", "error", "done"
     gen_t0 = time.perf_counter()
 
     def on_token(tok_id: int) -> None:
@@ -1051,6 +1362,8 @@ def _stream_chat(sm, tok, ids, req: ChatCompletionRequest, cid: str, created: in
                 else:
                     sm.generate_greedy(ids, max_new_tokens=req.max_tokens,
                                        on_token=on_token, stop_token_ids=stop_ids)
+        except Exception as exc:  # noqa: BLE001 - serialize generation failure to SSE
+            q.put((ERROR, "%s: %s" % (type(exc).__name__, exc)))
         finally:
             q.put((DONE, None))
 
@@ -1086,6 +1399,12 @@ def _stream_chat(sm, tok, ids, req: ChatCompletionRequest, cid: str, created: in
             continue
         if kind == DONE:
             break
+        if kind == ERROR:
+            yield "data: " + json.dumps({
+                "id": cid, "object": "error", "error": {"message": value}
+            }) + "\n\n"
+            yield "data: [DONE]\n\n"
+            return
         n_tokens += 1
         yield chunk({"content": value})
     yield chunk({}, finish_reason="stop")
