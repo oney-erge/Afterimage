@@ -23,12 +23,24 @@ log(candidate)] per independent randomized block" statistic this project's
 own methodology review recommended over pooling every (block, case) pair
 as if it were an independent observation.
 
-This is a real engineering trade-off, not a free upgrade: block-major
-execution reloads every method's model once per block instead of once for
-the whole run (5-6 methods x --blocks reloads instead of 5-6), which is why
---blocks defaults to 3 ("each pass 3 times") rather than the 8-12 blocks a
-confirmatory paper claim should eventually use -- raise --blocks for that
-once a pilot run's block-to-block variance is known.
+Every (block, method) cell runs in its own fresh subprocess
+--------------------------------------------------------------------------
+See run_paper_comparison_worker.py's module docstring for the full
+rationale. In short: a resident draft model (spec-fixed), DFloat11's
+custom CUDA kernels, or AirLLM's own internal state are not guaranteed to
+release GPU/allocator state when a method finishes in-process, and Python's
+allocator does not reliably return freed host pages to the OS either -- so
+"peak VRAM"/"peak host RAM" measured mid-process for the Nth method in a
+block is contaminated by whatever the first N-1 methods left behind. A
+fresh OS process per cell is the only isolation guarantee for both.
+
+This is a real engineering trade-off, not a free upgrade: block-major,
+subprocess-isolated execution reloads every method's model once per
+(block, method) cell instead of once for the whole run (5-6 methods x
+--blocks reloads instead of 5-6, plus one interpreter start each), which is
+why --blocks defaults to 3 ("each pass 3 times") rather than the 8-12
+blocks a confirmatory paper claim should eventually use -- raise --blocks
+for that once a pilot run's block-to-block variance is known.
 
 Requires (WSL2/Linux only, matching run_bounded_suite.py and benchmark.sh):
 CUDA, a prepared Afterimage store for --model, and the optional-dependency
@@ -47,12 +59,14 @@ Or via the one-click wrapper: ./paper_benchmark.sh
 from __future__ import annotations
 
 import argparse
-import gc
+import json
 import math
 import pathlib
 import random
 import statistics
+import subprocess
 import sys
+import tempfile
 import time
 import traceback
 
@@ -71,16 +85,17 @@ from scripts.run_bounded_suite import (
     load_tokenizer,
     log,
     render_cases,
-    run_accelerate,
-    run_afterimage,
-    run_airllm,
-    run_dfloat11,
 )
 from scripts import run_bounded_suite as bounded
+
+WORKER_SCRIPT = pathlib.Path(__file__).resolve().parent / "run_paper_comparison_worker.py"
 
 # The core headline comparison: one representative from each execution
 # family (published disk-offload baseline, published GPU-resident
 # compression baseline, and Afterimage's own exact-streaming controls).
+# dfloat11 (not dfloat11-gpu-resident) is the default because it is the
+# variant that actually fits this project's reference 8 GB RTX 3080 for a
+# 14B model -- see the comment on METHODS["dfloat11"] in run_bounded_suite.py.
 DEFAULT_METHODS = ("airllm", "accelerate", "dfloat11", "exact-min",
                    "exact-resident", "spec-fixed")
 DEFAULT_TOKEN_LENGTHS = (4, 32, 128)
@@ -93,13 +108,63 @@ DEFAULT_TOKEN_LENGTHS = (4, 32, 128)
 CONTROL_METHOD = "exact-min"
 
 DEPENDENCY_PACKAGE = {"airllm": "airllm", "accelerate": "accelerate",
-                      "dfloat11": "dfloat11"}
+                      "dfloat11": "dfloat11", "dfloat11-gpu-resident": "dfloat11"}
+
+# Boundaries for vram_regime() sit at the midpoints between this repo's own
+# configured Afterimage budgets: exact-min 1.80 GB, spec-fixed 2.70 GB,
+# exact-resident 4.00 GB (see METHODS in run_bounded_suite.py) -- not
+# arbitrary round numbers.
+_VRAM_REGIME_2GB_CEILING = 3.35
+_VRAM_REGIME_4GB_CEILING = 6.0
 
 
 def _shuffled_order(methods: list[str], rng: random.Random) -> list[str]:
     order = list(methods)
     rng.shuffle(order)
     return order
+
+
+def vram_regime(peak_vram_gb: float) -> str:
+    """Buckets a measured peak VRAM figure into one of this project's two
+    standard low-memory comparison regimes, so results at genuinely
+    different memory budgets are never presented in one table as though
+    memory were held equal. A method's *configured* budget and its
+    *measured* peak_vram_gb can differ (AirLLM/Accelerate/DFloat11 are not
+    configured to an Afterimage-style budget at all), so this buckets the
+    measured number, which is what a reader actually cares about.
+    """
+    if peak_vram_gb <= _VRAM_REGIME_2GB_CEILING:
+        return "~2 GB"
+    if peak_vram_gb <= _VRAM_REGIME_4GB_CEILING:
+        return "~4 GB"
+    return "other (%.2f GB)" % peak_vram_gb
+
+
+def pareto_frontier(points: list[dict]) -> list[dict]:
+    """The Pareto-optimal subset of (peak_vram_gb, seconds_per_token)
+    points -- lower is better on both axes. A point is dropped only if some
+    other point is at least as good on both axes and strictly better on at
+    least one. This is the honest way to compare methods that were never
+    configured to the same memory budget (see vram_regime): a method at
+    higher VRAM only belongs in the frontier if nothing cheaper is also at
+    least as fast, and a method at lower VRAM only belongs if nothing
+    equally cheap beats its time.
+
+    Each point must carry "peak_vram_gb" and "seconds_per_token"; every
+    other key is passed through unchanged.
+    """
+    frontier = []
+    for i, point in enumerate(points):
+        dominated = any(
+            j != i
+            and other["peak_vram_gb"] <= point["peak_vram_gb"]
+            and other["seconds_per_token"] <= point["seconds_per_token"]
+            and (other["peak_vram_gb"] < point["peak_vram_gb"]
+                 or other["seconds_per_token"] < point["seconds_per_token"])
+            for j, other in enumerate(points))
+        if not dominated:
+            frontier.append(point)
+    return sorted(frontier, key=lambda p: p["peak_vram_gb"])
 
 
 def paired_block_log_ratios(rows_by_method: dict[str, list[dict]],
@@ -154,10 +219,48 @@ def paired_block_log_ratios(rows_by_method: dict[str, list[dict]],
     return result
 
 
+def _run_cell_in_subprocess(config: dict, work_dir: pathlib.Path,
+                            timeout_s: float) -> dict:
+    """Runs exactly one (block, method) cell in a fresh subprocess. See
+    run_paper_comparison_worker.py's module docstring for why: isolating
+    GPU/allocator state and host-RAM high-water marks between methods is
+    not achievable from inside one long-lived process, no matter how
+    carefully each method's own code calls del/gc.collect()/empty_cache().
+    """
+    config_path = work_dir / "cell_config.json"
+    out_path = work_dir / "cell_result.json"
+    out_path.unlink(missing_ok=True)
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+    try:
+        proc = subprocess.run(
+            [sys.executable, str(WORKER_SCRIPT), "--config", str(config_path),
+             "--out", str(out_path)],
+            cwd=str(pathlib.Path(__file__).resolve().parent.parent),
+            capture_output=True, text=True, timeout=timeout_s, check=False)
+    except subprocess.TimeoutExpired as exc:
+        return {"rows": [], "metadata": {}, "peak_host_rss_bytes": None,
+               "error": "worker timed out after %.1fs" % timeout_s,
+               "traceback": repr(exc)}
+    if proc.stdout:
+        log(proc.stdout.rstrip())
+    if proc.stderr:
+        log(proc.stderr.rstrip())
+    if not out_path.exists():
+        return {"rows": [], "metadata": {}, "peak_host_rss_bytes": None,
+               "error": "worker produced no output (exit %d)" % proc.returncode,
+               "traceback": proc.stderr or None}
+    try:
+        return json.loads(out_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        return {"rows": [], "metadata": {}, "peak_host_rss_bytes": None,
+               "error": "worker output was not valid JSON: %r" % exc,
+               "traceback": traceback.format_exc()}
+
+
 def run_one_token_length(args, tokenizer, rendered: list[dict],
                          selected: list[str], out_path: pathlib.Path,
                          repo_root: pathlib.Path, n_tokens: int,
-                         dirty: str | None) -> dict:
+                         dirty: str | None, work_dir: pathlib.Path) -> dict:
     partial = out_path.with_suffix(out_path.suffix + ".partial")
     if out_path.exists():
         raise FileExistsError("refusing to overwrite immutable result: %s" % out_path)
@@ -165,7 +268,7 @@ def run_one_token_length(args, tokenizer, rendered: list[dict],
         raise FileExistsError("partial result already exists: %s" % partial)
 
     result = {
-        "schema_version": 1,
+        "schema_version": 2,
         "kind": "paper_comparison_randomized_block",
         "status": "running",
         "exploratory": args.blocks < 8,
@@ -179,6 +282,7 @@ def run_one_token_length(args, tokenizer, rendered: list[dict],
         "cooldown_max_temp_c": args.cooldown_max_temp_c,
         "control_method": CONTROL_METHOD,
         "cache_regime": "cold page cache before every timed cell",
+        "cell_isolation": "one fresh subprocess per (block, method) cell",
         "model": args.model,
         "dfloat11_model": args.dfloat11_model,
         "draft_model": args.draft_model,
@@ -190,6 +294,7 @@ def run_one_token_length(args, tokenizer, rendered: list[dict],
         "reproducible_from_commit": not bool(dirty),
         "method_order_per_block": [],
         "rows_by_method": {method_id: [] for method_id in selected},
+        "peak_host_rss_bytes_by_cell": [],
         "failures": [],
     }
     checkpoint(partial, result)
@@ -197,7 +302,7 @@ def run_one_token_length(args, tokenizer, rendered: list[dict],
     started = time.perf_counter()
     deadline = started + args.time_budget_minutes_per_length * 60
     rng = random.Random(args.seed)
-    draft_model = None
+    case_ids = [item["case"].id for item in rendered]
 
     for block in range(args.blocks):
         if time.perf_counter() >= deadline:
@@ -209,7 +314,8 @@ def run_one_token_length(args, tokenizer, rendered: list[dict],
         log("\nBLOCK %d/%d  order: %s" % (block + 1, args.blocks, ", ".join(order)))
         for method_id in order:
             method = METHODS[method_id]
-            if time.perf_counter() >= deadline:
+            remaining = deadline - time.perf_counter()
+            if remaining <= 0:
                 result["failures"].append({
                     "block": block, "method": method_id,
                     "error": "not started: time budget exhausted"})
@@ -222,75 +328,61 @@ def run_one_token_length(args, tokenizer, rendered: list[dict],
             bounded.COOLDOWN_MAX_TEMPERATURE_C = args.cooldown_max_temp_c
             cool_down(args.cooldown_seconds, args.cooldown_max_temp_c)
 
-            # Every run_* function's own rows_checkpoint callback receives
-            # the *complete* rows-so-far list for this one (block, method)
-            # call, starting from an empty list each call (repeats=1) --
-            # never a delta. pre_block_count marks where this block's rows
-            # start in the accumulated per-method list, so both the
-            # interim callback and the final sync below can replace exactly
-            # this block's slice, idempotently, instead of appending on top
-            # of what the callback already wrote (which would double-count
-            # every row once the call returns).
-            pre_block_count = len(result["rows_by_method"][method_id])
-
-            def checkpoint_cb(rows, method_id=method_id, mark=pre_block_count):
-                result["rows_by_method"][method_id] = (
-                    result["rows_by_method"][method_id][:mark] + rows)
-                result["elapsed_seconds"] = time.perf_counter() - started
-                checkpoint(partial, result)
-
             log("  METHOD: %s" % method.title)
-            rows = []
-            try:
-                if method.kind == "airllm":
-                    rows, metadata = run_airllm(
-                        method, rendered, n_tokens, deadline, checkpoint_cb,
-                        repeats=1, repeat_offset=block, warmup_tokens=args.warmup_tokens)
-                elif method.kind == "accelerate":
-                    rows, metadata = run_accelerate(
-                        method, rendered, n_tokens, deadline, checkpoint_cb,
-                        repeats=1, repeat_offset=block, warmup_tokens=args.warmup_tokens)
-                elif method.kind == "dfloat11":
-                    rows, metadata = run_dfloat11(
-                        method, rendered, n_tokens, deadline, checkpoint_cb,
-                        repeats=1, repeat_offset=block, warmup_tokens=args.warmup_tokens)
-                else:
-                    if method_id == "spec-fixed" and draft_model is None:
-                        from afterimage.runtime.streaming_engine import load_draft_model
-                        log("  loading resident draft model %s" % args.draft_model)
-                        draft_model = load_draft_model(args.draft_model, device="cuda")
-                    rows, metadata = run_afterimage(
-                        method, rendered, n_tokens, deadline,
-                        draft_model=draft_model if method_id == "spec-fixed" else None,
-                        burn_in_rendered=rendered[:1] if args.warmup_tokens > 0 else None,
-                        burn_in_tokens=args.warmup_tokens,
-                        rows_checkpoint=checkpoint_cb, repeats=1, repeat_offset=block)
-                result["rows_by_method"][method_id] = (
-                    result["rows_by_method"][method_id][:pre_block_count] + rows)
-            except Exception as exc:
+            cell_config = {
+                "method_id": method_id, "model": args.model,
+                "dfloat11_model": args.dfloat11_model, "draft_model": args.draft_model,
+                "store": args.store, "n_tokens": n_tokens, "block": block,
+                "warmup_tokens": args.warmup_tokens,
+                "cooldown_seconds": args.cooldown_seconds,
+                "cooldown_max_temp_c": args.cooldown_max_temp_c,
+                "seconds_remaining": deadline - time.perf_counter(),
+                "case_ids": case_ids,
+            }
+            # +180s slack beyond the nominal remaining budget: the worker's
+            # own deadline check is what actually truncates a cell's case
+            # sweep, this is only a backstop against a genuinely hung
+            # subprocess (a stuck download, a wedged driver), not the
+            # mechanism that enforces --time-budget-minutes-per-length.
+            cell_result = _run_cell_in_subprocess(
+                cell_config, work_dir, timeout_s=remaining + 180.0)
+            result["rows_by_method"][method_id].extend(cell_result.get("rows") or [])
+            result["peak_host_rss_bytes_by_cell"].append({
+                "block": block, "method": method_id,
+                "peak_host_rss_bytes": cell_result.get("peak_host_rss_bytes")})
+            if cell_result.get("error"):
                 result["failures"].append({
-                    "block": block, "method": method_id, "error": repr(exc),
-                    "traceback": traceback.format_exc()})
-                log("  FAILED: %r" % exc)
+                    "block": block, "method": method_id,
+                    "error": cell_result["error"],
+                    "traceback": cell_result.get("traceback")})
+                log("  FAILED: %s" % cell_result["error"])
             result["elapsed_seconds"] = time.perf_counter() - started
             checkpoint(partial, result)
 
-    if draft_model is not None:
-        del draft_model
-        gc.collect()
-        torch.cuda.empty_cache()
-
     methods_out = []
+    pareto_points = []
     for method_id in selected:
         rows = result["rows_by_method"][method_id]
+        summary = aggregate(rows) if rows else {}
+        peak_rss_values = [
+            cell["peak_host_rss_bytes"] for cell in result["peak_host_rss_bytes_by_cell"]
+            if cell["method"] == method_id and cell["peak_host_rss_bytes"] is not None]
         entry = {"method_id": method_id, "title": METHODS[method_id].title,
                  "declared_exactness": METHODS[method_id].exactness,
-                 "rows": rows, "summary": aggregate(rows) if rows else {}}
+                 "rows": rows, "summary": summary,
+                 "peak_host_rss_bytes": max(peak_rss_values) if peak_rss_values else None}
         if method_id != CONTROL_METHOD:
             entry["paired_vs_control"] = paired_block_log_ratios(
                 result["rows_by_method"], CONTROL_METHOD, method_id)
+        if summary.get("peak_vram_gb") is not None and summary.get("seconds_per_token") is not None:
+            entry["vram_regime"] = vram_regime(summary["peak_vram_gb"])
+            pareto_points.append({
+                "method_id": method_id, "peak_vram_gb": summary["peak_vram_gb"],
+                "seconds_per_token": summary["seconds_per_token"],
+                "vram_regime": entry["vram_regime"]})
         methods_out.append(entry)
     result["methods"] = methods_out
+    result["pareto_frontier"] = pareto_frontier(pareto_points)
     del result["rows_by_method"]
 
     result["elapsed_seconds"] = time.perf_counter() - started
@@ -370,12 +462,13 @@ def main() -> int:
     if args.cooldown_seconds < 0:
         parser.error("--cooldown-seconds must not be negative")
 
+    # Only used directly by this process for load_tokenizer/render_cases/
+    # environment_manifest below; every actual method execution happens in
+    # a worker subprocess, which receives model/store/draft_model/
+    # dfloat11_model explicitly through its own cell config instead of
+    # inheriting these globals.
     bounded.MODEL = args.model
-    bounded.DRAFT_MODEL = args.draft_model
-    bounded.DFLOAT11_MODEL = args.dfloat11_model
     bounded.STORE = args.store
-    bounded.COOLDOWN_SECONDS = args.cooldown_seconds
-    bounded.COOLDOWN_MAX_TEMPERATURE_C = args.cooldown_max_temp_c
 
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA is required for the hardware comparison")
@@ -417,12 +510,14 @@ def main() -> int:
         args.model.split("/")[-1].lower() + "-" + time.strftime("%Y-%m-%d"))
 
     written = []
-    for n_tokens in token_lengths:
-        out_path = out_dir / ("%s-%dtok.json" % (label, n_tokens))
-        log("\n%s\nTOKEN LENGTH %d (%s)\n%s" % ("=" * 60, n_tokens, out_path, "=" * 60))
-        run_one_token_length(args, tokenizer, rendered, selected, out_path,
-                             repo_root, n_tokens, dirty)
-        written.append(str(out_path))
+    with tempfile.TemporaryDirectory(prefix="afterimage-paper-cell-") as work_dir_name:
+        work_dir = pathlib.Path(work_dir_name)
+        for n_tokens in token_lengths:
+            out_path = out_dir / ("%s-%dtok.json" % (label, n_tokens))
+            log("\n%s\nTOKEN LENGTH %d (%s)\n%s" % ("=" * 60, n_tokens, out_path, "=" * 60))
+            run_one_token_length(args, tokenizer, rendered, selected, out_path,
+                                 repo_root, n_tokens, dirty, work_dir)
+            written.append(str(out_path))
 
     log("\nAll token lengths complete. Wrote: %s" % ", ".join(written))
     log("Rebuild the results index with: python scripts/build_results_index.py "

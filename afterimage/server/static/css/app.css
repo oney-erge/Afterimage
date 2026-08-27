@@ -144,9 +144,12 @@ select { min-height: 34px; padding: 6px 31px 6px 9px; }
 .progress-track span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #42b78c, var(--accent)); transition: width .25s ease; }
 .job-row { display: grid; grid-template-columns: minmax(200px, 1fr) minmax(240px, 1.3fr) auto; align-items: center; gap: 20px; padding: 13px 4px; border-bottom: 1px solid var(--line); }
 .job-title strong { display: block; overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.job-title { min-width: 0; }
 .job-title small, .progress-copy { color: var(--faint); font-size: 10px; }
 .job-progress { min-width: 0; }
 .progress-copy { display: flex; justify-content: space-between; gap: 10px; }
+.progress-copy span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.progress-copy span:last-child { flex: 0 0 auto; }
 .pagination { display: flex; justify-content: flex-end; gap: 8px; margin-top: 17px; }
 .notice { margin-bottom: 12px; padding: 11px 13px; border: 1px solid var(--line); border-radius: 8px; font-size: 12px; }
 .notice.error { border-color: #543235; background: #211416; color: var(--red); }
@@ -283,7 +286,7 @@ select { min-height: 34px; padding: 6px 31px 6px 9px; }
 .model-operations { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 42px; }
 .model-operations .content-section { min-width: 0; margin-top: 0; }
 .model-operations .model-list, .model-operations .job-list { border-top: 0; }
-.model-operations .compact-model-row, .model-operations .job-row { grid-template-columns: 1fr; gap: 8px; min-height: 0; padding: 14px 0; }
+.model-operations .compact-model-row, .model-operations .job-row { grid-template-columns: minmax(0, 1fr); gap: 8px; min-width: 0; min-height: 0; padding: 14px 0; }
 .model-operations .model-description { text-align: left; }
 .model-operations .row-actions { justify-content: flex-start; }
 .model-operations .job-progress { width: 100%; }

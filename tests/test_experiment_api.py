@@ -1,3 +1,5 @@
+import importlib
+
 import pytest
 
 pytest.importorskip("fastapi")
@@ -6,6 +8,7 @@ import torch
 from safetensors.torch import save_file
 
 from afterimage.runtime.control import JobControl
+from afterimage.server.model_registry import ModelRegistry
 from afterimage.server.app import (
     ExperimentRunRequest, _specialized_experiment, app,
 )
@@ -46,6 +49,28 @@ def test_h2_refuses_an_unfrozen_or_missing_calibration_state():
 
 def test_unknown_hypothesis_is_404():
     assert TestClient(app).get("/api/experiments/not-real").status_code == 404
+
+
+def test_saved_research_profile_is_accepted_by_chat_config(tmp_path, monkeypatch):
+    app_module = importlib.import_module("afterimage.server.app")
+    local_registry = ModelRegistry(tmp_path / "state.sqlite3")
+    local_registry.upsert_model("Qwen/test", state="ready", stage="ready")
+    monkeypatch.setattr(app_module, "model_registry", local_registry)
+    response = TestClient(app_module.app).post("/api/runtime-profiles", json={
+        "name": "Measured candidate", "model_id": "Qwen/test",
+        "config": {"vram_budget_gb": 6.0, "ram_budget_gb": 8.0},
+        "source_run_id": "run1",
+    })
+    assert response.status_code == 200
+    saved = response.json()
+    request = app_module.ChatCompletionRequest(
+        model="Qwen/test", messages=[], runtime_profile_id=saved["id"],
+    )
+    config, draft_model = app_module._generation_config(request, vision=False)
+    assert config.vram_budget_gb == 6.0
+    assert config.ram_budget_gb == 8.0
+    assert draft_model is None
+    assert saved["endpoint"].endswith("/v1/chat/completions")
 
 
 def test_h0_and_h3_specialized_runners_produce_verdicts():

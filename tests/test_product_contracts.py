@@ -96,11 +96,12 @@ def test_cancel_is_terminal_and_releases_a_stalled_download_lane(tmp_path, monke
 
     first = jobs.create("acquire", blocked, model_id="one", lane="model-lifecycle")
     assert first_started.wait(timeout=1)
-    assert jobs.cancel(first.id).status == "cancelled"
     second = jobs.create(
         "acquire", lambda _control: second_started.set() or {"ready": True},
         model_id="two", lane="model-lifecycle",
     )
+    assert not second_started.wait(timeout=0.1)
+    assert jobs.cancel(first.id).status == "cancelled"
     assert second_started.wait(timeout=1)
     release_first.set()
     for _ in range(100):

@@ -31,7 +31,8 @@ def live_server(tmp_path):
     )
     url = f"http://127.0.0.1:{port}"
     try:
-        for _ in range(60):
+        deadline = time.monotonic() + 45
+        while time.monotonic() < deadline:
             try:
                 with urllib.request.urlopen(url + "/", timeout=0.25) as response:
                     if response.status == 200:
@@ -132,14 +133,15 @@ def test_desktop_and_mobile_product_flow(live_server):
 
         page.route("**/*", mock_api)
         page.goto(live_server, wait_until="networkidle")
+        page.locator("#hardware-grid .metric-card").first.wait_for()
         assert "32.0 GB" in page.locator("#hardware-grid").inner_text()
         assert "?" not in page.locator("#hardware-grid").inner_text()
 
         page.locator('[data-route="models"]').click()
         page.locator("#catalog-query").fill("Qwen")
         page.locator("#catalog-search").evaluate("form => form.requestSubmit()")
-        page.wait_for_timeout(100)
         get_button = page.locator("[data-catalog-get]")
+        get_button.wait_for()
         assert get_button.is_enabled()
         assert "70B parameters" in page.locator("#catalog-results").inner_text()
         assert "qwen3:8b" in page.locator("#computer-results").inner_text()
@@ -153,6 +155,7 @@ def test_desktop_and_mobile_product_flow(live_server):
         assert "v1/chat/completions" in page.locator("#chat-endpoint").inner_text()
 
         page.locator('[data-route="research"]').click()
+        page.locator("#research-form").wait_for()
         assert page.locator("#research-form").is_visible()
         assert page.locator(".research-builder").count() == 1
         assert "A positive mechanism screen" not in page.locator("[data-page=research]").inner_text()
@@ -163,6 +166,7 @@ def test_desktop_and_mobile_product_flow(live_server):
         page.locator("#mobile-menu").click()
         page.locator('[data-route="models"]').click()
         assert page.locator("#catalog-results").bounding_box()["width"] < 390
+        assert page.evaluate("document.documentElement.scrollWidth") == 390
         assert page.locator(".catalog-card").count() == 1
         assert page_errors == []
         browser.close()

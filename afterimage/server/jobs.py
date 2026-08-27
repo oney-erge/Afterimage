@@ -76,8 +76,22 @@ class JobRegistry:
         job.control.state_callback = on_state
 
         def run() -> None:
-            lane_lock = self._lane_lock(lane)
-            with lane_lock:
+            lane_lock = None
+            while lane_lock is None:
+                if job.control.is_cancelled:
+                    job.status = "cancelled"
+                    model_registry.update_job(job.id, status=job.status)
+                    return
+                candidate = self._lane_lock(lane)
+                if not candidate.acquire(timeout=0.1):
+                    continue
+                with self._lock:
+                    current = self._lanes.get(lane)
+                if current is not candidate:
+                    candidate.release()
+                    continue
+                lane_lock = candidate
+            try:
                 if job.control.is_cancelled:
                     job.status = "cancelled"
                     model_registry.update_job(job.id, status=job.status)
@@ -107,6 +121,8 @@ class JobRegistry:
                         error=job.error,
                     )
                     logger.exception("job %s (%s) failed", job.id, job.kind)
+            finally:
+                lane_lock.release()
 
         with self._lock:
             self._jobs[job.id] = job

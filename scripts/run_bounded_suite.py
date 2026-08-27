@@ -96,8 +96,20 @@ METHODS = {
         "accelerate", _installed_accelerate_title(), "accelerate",
         {"gpu_memory": "1500MB", "cpu_memory": "8GB"},
         "reference_greedy", 30.0),
+    # cpu_offload=True is the usable default on this project's reference
+    # hardware: Qwen3-14B-DF11 compressed is DFloat11's own claimed ~70% of
+    # bf16 size, i.e. roughly 19-20 GB, which does not fit an 8 GB RTX 3080
+    # at all without CPU offload. dfloat11-gpu-resident (cpu_offload=False)
+    # is registered separately below for hosts with enough VRAM to hold the
+    # compressed model outright; on this reference card it is expected to
+    # fail loudly (CUDA OOM) rather than silently degrade, which is itself
+    # a real, reportable data point about DFloat11's applicability regime.
     "dfloat11": Method(
         "dfloat11", _installed_dfloat11_title(), "dfloat11",
+        {"model_id": DFLOAT11_MODEL, "cpu_offload": True},
+        "reference_greedy", 20.0),
+    "dfloat11-gpu-resident": Method(
+        "dfloat11-gpu-resident", _installed_dfloat11_title(), "dfloat11",
         {"model_id": DFLOAT11_MODEL, "cpu_offload": False},
         "reference_greedy", 20.0),
     "exact-min": Method(
@@ -814,8 +826,24 @@ def run_afterimage(method: Method, rendered: list[dict], n_tokens: int,
             cache = drop_caches()
             engine.stats.reset()
             t0 = time.perf_counter()
-            sequence = engine.generate_greedy(
-                ids, max_new_tokens=burn_in_tokens, use_cache=True)
+            # Warm the *measured* path, not just any path: burn-in exists to
+            # absorb first-call CUDA/Triton/allocator compilation before the
+            # timed loop, and for draft_mode="model" (spec-fixed and its
+            # variants) that compilation happens inside generate_adaptive's
+            # draft/verify machinery, not inside plain greedy decode. A
+            # burn-in that always called generate_greedy warmed the wrong
+            # kernels for every speculative method, leaving that
+            # compilation cost to land inside repeat/block 0's measured
+            # seconds/token instead of being absorbed here.
+            if cfg.draft_mode == "model":
+                warm_generator = torch.Generator(device="cuda").manual_seed(
+                    2_000_000 + burn_index)
+                sequence, _ = engine.generate_adaptive(
+                    ids, max_new_tokens=burn_in_tokens, draft_model=draft_model,
+                    temperature=0.0, generator=warm_generator)
+            else:
+                sequence = engine.generate_greedy(
+                    ids, max_new_tokens=burn_in_tokens, use_cache=True)
             torch.cuda.synchronize()
             burn_in.append({
                 "case_id": item["case"].id,
