@@ -25,3 +25,13 @@ results/cross_model_*/INTERIM_RESULTS.md
 # published repository.
 docs/archive/
 scripts/local/
+
+# DFloat11Model.from_pretrained() downloads its checkpoint to a local
+# directory named after the HF repo id (org/name -> org__name) in the
+# process's own working directory, not the shared ~/.cache/huggingface
+# snapshot cache the rest of this project's model acquisition uses -- if a
+# benchmark script is ever run with this repo as its cwd (as
+# scripts/run_bounded_suite.py's run_dfloat11 was during development),
+# that lands a ~19 GB checkpoint directly in the working tree. Never
+# commit it; the pattern is broad enough to catch any DFloat11 repo id.
+DFloat11__*/

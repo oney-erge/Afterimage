@@ -772,6 +772,22 @@ def run_dfloat11(method: Method, rendered: list[dict], n_tokens: int,
     DFloat11 ships fixed pre-compressed repos per model, it does not
     compress an arbitrary checkpoint at runtime.
     """
+    # dfloat11 0.5.0's own model-loading code does a lazy
+    # `from transformers.modeling_utils import no_init_weights` deep
+    # inside DFloat11Model.from_pretrained -- found by actually running
+    # this against transformers 5.12.1 (the import itself succeeds; only
+    # calling from_pretrained fails), where that symbol moved to
+    # transformers.initialization. This is dfloat11's own compatibility
+    # gap, not a project change to work around by pinning a different
+    # transformers version project-wide (which every other method here
+    # also depends on). Shimming the old location back is the minimal,
+    # contained fix; a no-op once dfloat11 itself picks up the new import
+    # path, since setattr on an already-present name is harmless.
+    import transformers.modeling_utils as _modeling_utils
+    if not hasattr(_modeling_utils, "no_init_weights"):
+        from transformers.initialization import no_init_weights as _no_init_weights
+        _modeling_utils.no_init_weights = _no_init_weights
+
     from dfloat11 import DFloat11Model
 
     model_id = method.overrides.get("model_id", DFLOAT11_MODEL)
