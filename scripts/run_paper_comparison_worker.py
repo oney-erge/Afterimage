@@ -86,6 +86,7 @@ from scripts.run_bounded_suite import (
     run_accelerate,
     run_afterimage,
     run_airllm,
+    run_deepspeed_zero_inference,
     run_dfloat11,
 )
 from scripts import run_bounded_suite as bounded
@@ -122,7 +123,7 @@ def is_capacity_failure(exc: BaseException) -> bool:
     return "out of memory" in str(exc).lower()
 
 
-def thermal_monitor_summary(samples: list[dict]) -> dict:
+def thermal_monitor_summary(samples: list[dict], interval_s: float = 1.0) -> dict:
     """Aggregates ~1 Hz gpu_thermal_snapshot() samples taken across a
     cell's entire timed portion, not just at cell start/end -- this
     project has directly measured an RTX 3080 clock collapse from ~1890
@@ -136,6 +137,7 @@ def thermal_monitor_summary(samples: list[dict]) -> dict:
     """
     clocks: list[float] = []
     temps: list[float] = []
+    powers: list[float] = []
     any_throttle = False
     any_known = False
     for sample in samples:
@@ -147,16 +149,33 @@ def thermal_monitor_summary(samples: list[dict]) -> dict:
             temps.append(float(sample.get("temperature_c")))
         except (TypeError, ValueError):
             pass
+        try:
+            powers.append(float(sample.get("power_draw_w")))
+        except (TypeError, ValueError):
+            pass
         throttled = sample.get("throttled")
         if throttled is not None:
             any_known = True
         if throttled is True:
             any_throttle = True
+    # Energy = mean sampled power x elapsed time. This is an estimate, not
+    # a true integral: samples are nominally 1 Hz but each sample also
+    # pays for its own nvidia-smi subprocess call, so real spacing jitters
+    # around interval_s rather than landing on it exactly, and a single
+    # power_draw_w reading between two samples is assumed constant across
+    # that gap rather than measured continuously. Reported as an estimate
+    # for exactly that reason -- see the docstring's own framing of every
+    # other number here as "what it measures", not a claim of instrument
+    # precision this sampling scheme does not have.
+    energy_j = (statistics.mean(powers) * (len(powers) - 1) * interval_s
+               if len(powers) >= 2 else None)
     return {
         "samples_collected": len(samples),
         "sm_clock_mhz_min": min(clocks) if clocks else None,
         "sm_clock_mhz_median": statistics.median(clocks) if clocks else None,
         "temperature_c_max": max(temps) if temps else None,
+        "mean_power_draw_w": statistics.mean(powers) if powers else None,
+        "energy_joules_estimate": energy_j,
         # None (not False) when no sample ever carried a known throttle
         # reading at all -- e.g. no nvidia-smi -- so "no throttle detected"
         # is never confused with "throttle status unknown for this cell".
@@ -195,7 +214,7 @@ class ThermalSampler:
         self._thread.join(timeout=5.0)
 
     def summary(self) -> dict:
-        return thermal_monitor_summary(self._samples)
+        return thermal_monitor_summary(self._samples, interval_s=self._interval_s)
 
 
 def run_cell(config: dict) -> dict:
@@ -272,6 +291,10 @@ def run_cell(config: dict) -> dict:
                     repeats=1, repeat_offset=block, warmup_tokens=warmup_tokens)
             elif method.kind == "dfloat11":
                 rows, metadata = run_dfloat11(
+                    method, rendered, n_tokens, deadline, None,
+                    repeats=1, repeat_offset=block, warmup_tokens=warmup_tokens)
+            elif method.kind == "deepspeed":
+                rows, metadata = run_deepspeed_zero_inference(
                     method, rendered, n_tokens, deadline, None,
                     repeats=1, repeat_offset=block, warmup_tokens=warmup_tokens)
             else:

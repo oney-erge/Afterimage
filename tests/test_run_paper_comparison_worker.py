@@ -399,6 +399,7 @@ class TestThermalMonitorSummary:
         assert summary == {
             "samples_collected": 0, "sm_clock_mhz_min": None,
             "sm_clock_mhz_median": None, "temperature_c_max": None,
+            "mean_power_draw_w": None, "energy_joules_estimate": None,
             "any_throttle_during_measurement": None,
         }
 

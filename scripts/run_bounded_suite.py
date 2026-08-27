@@ -90,6 +90,14 @@ def _installed_dfloat11_title() -> str:
         return "DFloat11 (version unknown -- not importable)"
 
 
+def _installed_deepspeed_title() -> str:
+    try:
+        from importlib.metadata import version
+        return "DeepSpeed ZeRO-Inference %s" % version("deepspeed")
+    except Exception:
+        return "DeepSpeed ZeRO-Inference (version unknown -- not importable)"
+
+
 METHODS = {
     "airllm": Method("airllm", _installed_airllm_title(), "airllm", {},
                      "reference_greedy", 30.0),
@@ -112,6 +120,21 @@ METHODS = {
     "dfloat11-gpu-resident": Method(
         "dfloat11-gpu-resident", _installed_dfloat11_title(), "dfloat11",
         {"model_id": DFLOAT11_MODEL, "cpu_offload": False},
+        "reference_greedy", 20.0),
+    # DeepSpeed ZeRO-Inference: the same GPU/CPU-RAM/(optionally NVMe)
+    # tiered-offload category AirLLM and Accelerate occupy (confirmed
+    # against DeepSpeed's own zero_inference reference implementation,
+    # not assumed from its training-focused ZeRO-Infinity sibling's
+    # marketing) -- a real, general-purpose, actively-maintained direct
+    # competitor, not an architecture-specific one like KTransformers/
+    # Fiddler (MoE-only) or FlexGen (OPT-family only, ruled out here for
+    # exactly that reason). cpu offload is the default for the same
+    # reason as dfloat11/accelerate above: this project's reference 8 GB
+    # card cannot hold a 14B bf16 model's ZeRO-3-partitioned live
+    # parameters without it.
+    "deepspeed-zero-inference": Method(
+        "deepspeed-zero-inference", _installed_deepspeed_title(), "deepspeed",
+        {"offload_device": "cpu", "pin_memory": True},
         "reference_greedy", 20.0),
     "exact-min": Method(
         "exact-min", "Afterimage exact streaming, minimum-memory control", "afterimage",
@@ -947,6 +970,150 @@ def run_dfloat11(method: Method, rendered: list[dict], n_tokens: int,
         torch.cuda.empty_cache()
     return rows, {"initialization_seconds": init_s, "dfloat11_model": model_id,
                   "cpu_offload": cpu_offload}
+
+
+def run_deepspeed_zero_inference(method: Method, rendered: list[dict], n_tokens: int,
+                 deadline: float,
+                 rows_checkpoint: Callable[[list[dict]], None] | None = None,
+                 repeats: int = 1, repeat_offset: int = 0,
+                 warmup_tokens: int = 0,
+                 ) -> tuple[list[dict], dict]:
+    """DeepSpeed ZeRO-Inference (https://www.deepspeed.ai/2022/09/09/
+    zero-inference.html): ZeRO-3 parameter partitioning applied at
+    inference time, tiering live parameters across GPU VRAM, CPU RAM, and
+    optionally NVMe -- the same GPU/RAM/(disk) memory-hierarchy category
+    AirLLM and Accelerate occupy, confirmed against DeepSpeedExamples'
+    own zero_inference reference implementation rather than assumed from
+    its training-oriented ZeRO-Infinity sibling's marketing.
+
+    deepspeed.initialize() conventionally runs under the `deepspeed` CLI
+    launcher, which sets up RANK/LOCAL_RANK/WORLD_SIZE/MASTER_ADDR/
+    MASTER_PORT for a torch.distributed process group automatically. This
+    project always launches a fresh plain-`python` subprocess per (block,
+    method) cell regardless of method (see run_paper_comparison_worker.
+    py's module docstring for why every method shares that isolation,
+    not just this one), so those variables are set here directly for the
+    single-process/single-GPU case the launcher would otherwise have
+    configured (WORLD_SIZE=1, RANK=LOCAL_RANK=0) rather than adding a
+    second, method-specific subprocess-launch path.
+    """
+    os.environ.setdefault("RANK", "0")
+    os.environ.setdefault("LOCAL_RANK", "0")
+    os.environ.setdefault("WORLD_SIZE", "1")
+    os.environ.setdefault("MASTER_ADDR", "127.0.0.1")
+    os.environ.setdefault("MASTER_PORT", "29500")
+
+    import deepspeed
+    from transformers import AutoConfig, AutoModelForCausalLM
+    from transformers.integrations.deepspeed import HfDeepSpeedConfig
+
+    offload_device = method.overrides.get("offload_device", "cpu")
+    pin_memory = method.overrides.get("pin_memory", True)
+
+    init_t0 = time.perf_counter()
+    hf_config = AutoConfig.from_pretrained(MODEL)
+    # stage3_*_bucket_size/threshold are sized off the model's own hidden
+    # dimension, matching DeepSpeedExamples' own zero_inference reference
+    # (2 * hidden_size**2 for the prefetch/live-parameter buckets,
+    # hidden_size for the persistence threshold) rather than a value
+    # copied from a different-sized model.
+    hidden_size = getattr(hf_config, "hidden_size", 4096)
+    ds_config = {
+        "bf16": {"enabled": True},
+        "train_micro_batch_size_per_gpu": 1,
+        "zero_optimization": {
+            "stage": 3,
+            "stage3_prefetch_bucket_size": 2 * hidden_size * hidden_size,
+            "stage3_param_persistence_threshold": hidden_size,
+            "stage3_max_live_parameters": 2 * hidden_size * hidden_size,
+            "offload_param": {"device": offload_device, "pin_memory": pin_memory},
+        },
+    }
+    # HfDeepSpeedConfig must be constructed BEFORE from_pretrained() is
+    # called, not just before deepspeed.initialize() -- it patches
+    # from_pretrained (via a weakref registry Transformers checks during
+    # model construction) so the model is built already partitioned per
+    # ds_config's ZeRO-3 settings. Skipping this and calling
+    # deepspeed.initialize() only after a normal from_pretrained() is a
+    # real bug this project hit by actually running it: from_pretrained
+    # materializes the complete bf16 model on GPU first in that case (the
+    # ~26 GB CUDA OOM this method raised on the reference 8 GB card came
+    # from exactly that -- the model, not a ZeRO-3 shard of it, still sat
+    # entirely in VRAM by the time deepspeed.initialize() ran).
+    dschf = HfDeepSpeedConfig(ds_config)  # noqa: F841 -- must stay alive (weakref-registered) through from_pretrained(), not merely constructed for a side effect at this line
+    with torch.no_grad():
+        model = AutoModelForCausalLM.from_pretrained(MODEL, torch_dtype=torch.bfloat16)
+    ds_engine = deepspeed.initialize(model=model, config_params=ds_config)[0]
+    ds_engine.module.eval()
+    model = ds_engine.module
+    tokenizer = rendered[0]["tokenizer"]
+    init_s = time.perf_counter() - init_t0
+    rows = []
+
+    def _pad_token_id() -> int:
+        pad = tokenizer.pad_token_id
+        if pad is None:
+            pad = tokenizer.eos_token_id
+        if isinstance(pad, (list, tuple)):
+            pad = pad[0] if pad else None
+        return int(pad) if pad is not None else 0
+
+    try:
+        if warmup_tokens > 0 and rendered:
+            # Untimed, see run_airllm's identical rationale.
+            enc = tokenizer(rendered[0]["prompt"], return_tensors="pt").to("cuda")
+            with torch.no_grad():
+                model.generate(**enc, max_new_tokens=warmup_tokens, eos_token_id=[],
+                               pad_token_id=_pad_token_id(), do_sample=False,
+                               use_cache=True)
+            torch.cuda.synchronize()
+            del enc
+        for repeat, item in [(r, it) for r in range(repeats) for it in rendered]:
+            if time.perf_counter() >= deadline:
+                break
+            enc = tokenizer(item["prompt"], return_tensors="pt").to("cuda")
+            cooldown = cool_down(COOLDOWN_SECONDS, COOLDOWN_MAX_TEMPERATURE_C)
+            cache = drop_caches()
+            reset_cuda_peak()
+            read0 = process_read_bytes()
+            with MemoryProbe() as probe:
+                t0 = time.perf_counter()
+                with torch.no_grad():
+                    output = model.generate(
+                        **enc, max_new_tokens=n_tokens, eos_token_id=[],
+                        pad_token_id=_pad_token_id(), do_sample=False, use_cache=True,
+                        return_dict_in_generate=True)
+                torch.cuda.synchronize()
+                wall = time.perf_counter() - t0
+            mem_report = probe.report()
+            peak_vram_gb, peak_vram_source = canonical_peak_vram(mem_report)
+            read_bytes = process_read_bytes() - read0
+            sequence = output.sequences if hasattr(output, "sequences") else output
+            generated = sequence[0, enc["input_ids"].shape[1]:].tolist()
+            answer = tokenizer.decode(generated, skip_special_tokens=True)
+            rows.append(result_row(
+                item["case"], method, item["prompt"], item["input_tokens"],
+                generated, answer, wall, peak_vram_gb,
+                cache, {"generation_mode": "greedy",
+                        "repeat": repeat_offset + repeat,
+                        "offload_device": offload_device,
+                        "peak_vram_source": peak_vram_source,
+                        **memory_probe_extra_fields(mem_report),
+                        "gpu_thermal": gpu_thermal_snapshot(),
+                        "process_read_bytes": read_bytes,
+                        "process_read_bytes_per_token": read_bytes / max(len(generated), 1),
+                        **cooldown}))
+            if rows_checkpoint is not None:
+                rows_checkpoint(rows)
+            log("  %-18s %.2f s/token  %r%s" %
+                (item["case"].id, rows[-1]["seconds_per_token"], answer,
+                 "" if repeats == 1 else "  [repeat %d/%d]" % (repeat + 1, repeats)))
+            del output, sequence, enc
+    finally:
+        del model, ds_engine
+        gc.collect()
+        torch.cuda.empty_cache()
+    return rows, {"initialization_seconds": init_s, "offload_device": offload_device}
 
 
 def engine_for(method: Method, *, critical_profile: str | None = None,

@@ -92,13 +92,21 @@ from scripts import run_bounded_suite as bounded
 WORKER_SCRIPT = pathlib.Path(__file__).resolve().parent / "run_paper_comparison_worker.py"
 
 # The core headline comparison: one representative from each execution
-# family (published disk-offload baseline, published GPU-resident
+# family (published disk-offload baselines, a published GPU-resident
 # compression baseline, and Afterimage's own exact-streaming controls).
 # dfloat11 (not dfloat11-gpu-resident) is the default because it is the
 # variant that actually fits this project's reference 8 GB RTX 3080 for a
 # 14B model -- see the comment on METHODS["dfloat11"] in run_bounded_suite.py.
-DEFAULT_METHODS = ("airllm", "accelerate", "dfloat11", "exact-min",
-                   "exact-resident", "spec-fixed")
+# On that same 8 GB card dfloat11 is expected to hit a predeclared capacity
+# failure (see run_paper_comparison_worker.is_capacity_failure /
+# capacity_failed_cells) rather than produce a speed number -- deepspeed-
+# zero-inference is a second, general-purpose disk/RAM-tiered competitor in
+# the same category as airllm/accelerate (not an architecture-specific one
+# like KTransformers/Fiddler, and unlike FlexGen it actually runs this
+# project's model family) so the comparison does not rest on airllm alone
+# whenever dfloat11 cannot initialize.
+DEFAULT_METHODS = ("airllm", "accelerate", "dfloat11", "deepspeed-zero-inference",
+                   "exact-min", "exact-resident", "spec-fixed")
 # 1 is a genuine TTFT probe (see workload_for()); 128 is long enough to
 # exercise a full k=8 fixed-speculation chain repeatedly, which 4 never
 # could (speculative_decoding's own k_request is capped at
@@ -662,6 +670,24 @@ def run_one_token_length(args, tokenizer, rendered: list[dict],
                      if t.get("temperature_c_max") is not None]
         throttle_flags = [t["any_throttle_during_measurement"] for t in thermal_summaries
                           if t.get("any_throttle_during_measurement") is not None]
+        energy_values = [t["energy_joules_estimate"] for t in thermal_summaries
+                         if t.get("energy_joules_estimate") is not None]
+        # Sum, not mean: each cell's energy_joules_estimate already covers
+        # that whole cell (every case in one block for this method), so
+        # summing across cells and dividing by every token this method
+        # produced gives joules/token over the full campaign, not just one
+        # cell. This total also includes each cell's untimed warm-up and
+        # the inter-case cooldown pauses inside it (ThermalSampler wraps
+        # the whole cell dispatch, not just the timed generate() calls),
+        # so it is deliberately a conservative, inclusive estimate rather
+        # than an idealized decode-only figure -- see run_paper_comparison
+        # _worker.thermal_monitor_summary's own energy_joules_estimate
+        # docstring for the sampling-precision caveat underneath it.
+        total_energy_j = sum(energy_values) if energy_values else None
+        total_tokens_for_energy = summary.get("total_output_tokens")
+        energy_j_per_token = (
+            total_energy_j / total_tokens_for_energy
+            if total_energy_j is not None and total_tokens_for_energy else None)
         capacity_failure_cells = [
             cell for cell in method_cells if cell.get("error") is not None
             and isinstance(cell.get("metadata"), dict)
@@ -695,6 +721,8 @@ def run_one_token_length(args, tokenizer, rendered: list[dict],
                 "temperature_c_max": max(temp_maxes) if temp_maxes else None,
                 "any_throttle_during_measurement": (
                     any(throttle_flags) if throttle_flags else None),
+                "total_energy_joules_estimate": total_energy_j,
+                "energy_joules_per_token_estimate": energy_j_per_token,
             },
         }
         if method_id != CONTROL_METHOD:
