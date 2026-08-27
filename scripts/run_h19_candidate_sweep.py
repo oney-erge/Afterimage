@@ -14,6 +14,14 @@ docs/SPECULATION_TREE_RESEARCH.md): building any of those before knowing
 this machine's actual candidate-parallelism knee means guessing a node
 budget instead of measuring one.
 
+Called a "Candidate Vectorization/Amortization Curve" deliberately, not a
+"Tree Amortization Curve": this measures cost as a function of KNOWN
+candidate positions in a normal linear sequence, not arbitrary tree nodes
+under real tree-attention masking. That distinction only collapses once
+H20 (a real verifier) exists -- see docs/SPECULATION_TREE_RESEARCH.md's
+own exactness-boundary section for why the two must not be conflated in
+either the code or the writeup.
+
 H19 is deliberately NOT registered in afterimage/experiments.py's live
 HYPOTHESES/PROTOCOLS registry: that registry's TestProtocol/EvidenceStage
 schema (afterimage/protocols.py) is built around paired candidate-vs-
@@ -35,6 +43,7 @@ from __future__ import annotations
 import argparse
 import json
 import pathlib
+import random
 import statistics
 import sys
 import time
@@ -57,38 +66,68 @@ DEFAULT_CANDIDATE_COUNTS = (1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024)
 
 
 def build_amortization_curve(rows: list[dict]) -> list[dict]:
-    """Reduces raw per-cell rows (one per (repeat, candidate_positions))
-    into the median/min/max latency curve H19 actually reports on, plus
-    each point's ratio to the N=1 baseline -- the number that answers the
-    hypothesis: values staying near 1.0 well past N=1 mean candidate
-    positions are cheap under this engine's streamed-target regime, the
-    SpecExec-motivating result this hypothesis exists to check for (or
-    refute) on THIS hardware rather than assume from a different paper's
-    GPUs.
+    """Reduces raw per-cell rows (one per (repeat, case_id, candidate_
+    positions)) into the median/min/max latency curve H19 actually
+    reports on, PER case_id -- see the module docstring on why absolute
+    latency does not compare across prompts, so the curve must not pool
+    rows from different-length prompts together. Also reports each
+    point's ratio to that same case's N=1 baseline, throughput (N /
+    T(N), candidates verified per second of sweep time), and marginal
+    cost (T(N) - T(N/2), the actual per-doubling cost the knee shows up
+    in more directly than the N=1 ratio alone).
     """
-    by_count: dict[int, list[float]] = {}
+    by_case: dict[str, dict[int, list[float]]] = {}
     for row in rows:
-        by_count.setdefault(row["candidate_positions"], []).append(
-            row["verification_sweep_seconds"])
-    curve = [
-        {"candidate_positions": n,
-         "median_seconds": statistics.median(by_count[n]),
-         "min_seconds": min(by_count[n]),
-         "max_seconds": max(by_count[n]),
-         "samples": len(by_count[n])}
-        for n in sorted(by_count)
-    ]
-    # Must be the point whose candidate_positions is literally 1, not just
-    # whichever point sorts first -- a sweep that never measured N=1 has no
-    # baseline to divide by, and using the smallest measured N instead
-    # would silently mislabel that ratio as "relative to N=1" when it is
-    # not.
-    baseline_point = next((p for p in curve if p["candidate_positions"] == 1), None)
-    if baseline_point is not None:
-        baseline = baseline_point["median_seconds"]
+        by_case.setdefault(row["case_id"], {}).setdefault(
+            row["candidate_positions"], []).append(row["verification_sweep_seconds"])
+
+    curves = {}
+    for case_id, by_count in by_case.items():
+        curve = [
+            {"candidate_positions": n,
+             "median_seconds": statistics.median(by_count[n]),
+             "min_seconds": min(by_count[n]),
+             "max_seconds": max(by_count[n]),
+             "samples": len(by_count[n])}
+            for n in sorted(by_count)
+        ]
+        # Must be the point whose candidate_positions is literally 1, not
+        # just whichever point sorts first -- a sweep that never measured
+        # N=1 has no baseline to divide by, and using the smallest
+        # measured N instead would silently mislabel that ratio as
+        # "relative to N=1" when it is not.
+        baseline_point = next((p for p in curve if p["candidate_positions"] == 1), None)
+        by_n = {p["candidate_positions"]: p for p in curve}
         for entry in curve:
-            entry["relative_to_n1"] = entry["median_seconds"] / baseline
-    return curve
+            n = entry["candidate_positions"]
+            entry["throughput_candidates_per_second"] = n / entry["median_seconds"]
+            if baseline_point is not None:
+                entry["relative_to_n1"] = entry["median_seconds"] / baseline_point["median_seconds"]
+            half = by_n.get(n // 2) if n % 2 == 0 else None
+            entry["marginal_cost_seconds_vs_half"] = (
+                entry["median_seconds"] - half["median_seconds"] if half else None)
+        curves[case_id] = curve
+    return curves
+
+
+def find_knee(curve: list[dict], overhead_threshold: float = 1.10) -> int | None:
+    """The largest candidate_positions whose relative_to_n1 is still
+    within overhead_threshold of the N=1 baseline -- G1's actual gate
+    quantity (see docs/SPECULATION_TREE_RESEARCH.md), not a threshold
+    that would pass trivially for a streaming-dominated engine (a naive
+    "T(64) <= 1.25 x T(1)" gate is nearly guaranteed to pass whenever
+    sweep cost is dominated by weight streaming rather than the marginal
+    compute of a few more sequence positions, which tells you nothing).
+    Returns None if even N=1 is missing (no baseline to compare against).
+    """
+    by_n = {p["candidate_positions"]: p for p in curve if "relative_to_n1" in p}
+    if 1 not in by_n:
+        return None
+    knee = 1
+    for n in sorted(by_n):
+        if by_n[n]["relative_to_n1"] <= overhead_threshold:
+            knee = n
+    return knee
 
 
 def main() -> int:
@@ -99,22 +138,56 @@ def main() -> int:
     parser.add_argument(
         "--candidate-counts",
         default=",".join(map(str, DEFAULT_CANDIDATE_COUNTS)),
-        help="comma-separated candidate position counts to sweep, ascending. "
-             "SpecExec's own ablations go to 2048/4096 for a strong drafter, "
-             "but this project's own methodology review is explicit: do not "
-             "start there -- this sweep is what tells you where to stop.")
+        help="comma-separated candidate position counts to sweep. SpecExec's own "
+             "ablations go to 2048/4096 for a strong drafter, but this project's "
+             "own methodology review is explicit: do not start there -- this "
+             "sweep is what tells you where to stop. Order here is irrelevant: "
+             "the actual dispatch order is randomized per repeat, see --seed.")
     parser.add_argument("--repeats", type=int, default=3,
                         help="repeated measurements per candidate count, so the "
                              "result reports a median/spread instead of one "
                              "unreplicated number (default 3, this project's "
                              "usual quick-screen repeat count).")
-    parser.add_argument("--case-id", default=None,
-                        help="a specific evaluation case id to use as the fixed "
-                             "prompt; default uses the first evaluation case. "
-                             "The SAME prompt is reused across every candidate "
-                             "count in one run -- see the module docstring on "
-                             "why absolute latency is not comparable across "
-                             "different prompts, only the shape vs. count is.")
+    parser.add_argument("--case-ids", default=None,
+                        help="comma-separated evaluation case ids to measure, so "
+                             "the knee can be checked across more than one prompt "
+                             "length (a single-prompt measurement risks fitting "
+                             "G1's threshold to that one prompt's own length). "
+                             "Default uses the first TWO evaluation cases; pass "
+                             "exactly one id to deliberately run single-prompt.")
+    parser.add_argument("--warmup-candidate-count", type=int, default=8,
+                        help="an UNTIMED warmup sweep at this candidate count, run "
+                             "once before the timed loop begins, so lazy CUDA/"
+                             "Triton kernel compilation lands here instead of "
+                             "uniquely inflating whichever candidate count "
+                             "happens to be measured first -- this is exactly "
+                             "the bias run_bounded_suite.py's own warmup-tokens "
+                             "mechanism exists to absorb elsewhere in this project.")
+    parser.add_argument("--seed", type=int, default=0,
+                        help="seed for randomizing candidate-count dispatch order "
+                             "within each repeat, saved to the result so a given "
+                             "run's exact order is reproducible. Randomizing (not "
+                             "always sweeping 1,2,4,...,1024 in the same order) "
+                             "breaks the correlation between candidate size and "
+                             "measurement position -- both thermal state (a GPU "
+                             "that has been running longer tends to be hotter) "
+                             "and cool_down()'s OWN duration (which depends on "
+                             "how much heat the PREVIOUS cell left behind) would "
+                             "otherwise confound candidate count with when in the "
+                             "campaign it happened to run.")
+    parser.add_argument("--vram-budget-gb", type=float, default=None,
+                        help="EngineConfig's vram_budget_gb, so the amortization "
+                             "curve is measured under the SAME residency regime "
+                             "this project would actually deploy, not an "
+                             "unconfigured default. Default (unset) uses "
+                             "EngineConfig's own default.")
+    parser.add_argument("--ram-budget-gb", type=float, default=None,
+                        help="EngineConfig's ram_budget_gb, paired with "
+                             "--vram-budget-gb. The candidate-amortization curve "
+                             "can differ meaningfully between a minimum-memory "
+                             "regime and a resident/fast regime, since the ratio "
+                             "of weight-movement cost to compute cost changes "
+                             "with how much is already resident.")
     parser.add_argument("--cooldown-seconds", type=float, default=15.0)
     parser.add_argument("--cooldown-max-temp-c", type=float, default=75.0)
     parser.add_argument("--out", required=True)
@@ -133,6 +206,9 @@ def main() -> int:
         parser.error("--candidate-counts values must be positive")
     if args.repeats < 1:
         parser.error("--repeats must be positive")
+    if 1 not in candidate_counts:
+        parser.error("--candidate-counts must include 1 (the N=1 baseline every "
+                     "other point is reported relative to)")
 
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA is required for this measurement")
@@ -157,67 +233,103 @@ def main() -> int:
 
     from transformers import AutoTokenizer
     tokenizer = AutoTokenizer.from_pretrained(args.model, fix_mistral_regex=True)
-    cases = prompt_cases("evaluation")
-    case = next((c for c in cases if c.id == args.case_id), cases[0]) if args.case_id else cases[0]
-    prompt = render_chat_prompt(tokenizer, case)
-    ids = tokenizer(prompt, return_tensors="pt").input_ids.cuda()
+    all_cases = prompt_cases("evaluation")
+    if args.case_ids:
+        requested = [part.strip() for part in args.case_ids.split(",") if part.strip()]
+        by_id = {case.id: case for case in all_cases}
+        unknown = sorted(set(requested) - set(by_id))
+        if unknown:
+            parser.error("unknown evaluation cases: %s" % ", ".join(unknown))
+        cases = [by_id[case_id] for case_id in requested]
+    else:
+        cases = list(all_cases[:2])
+
+    config_kwargs = {}
+    if args.vram_budget_gb is not None:
+        config_kwargs["vram_budget_gb"] = args.vram_budget_gb
+    if args.ram_budget_gb is not None:
+        config_kwargs["ram_budget_gb"] = args.ram_budget_gb
+    config = EngineConfig(**config_kwargs)
 
     log("model %s" % args.model)
-    log("case %s (%d input tokens)" % (case.id, ids.shape[1]))
     log("candidate counts: %s" % candidate_counts)
+    log("cases: %s" % [case.id for case in cases])
+    log("vram_budget_gb=%r ram_budget_gb=%r" %
+       (config.vram_budget_gb, config.ram_budget_gb))
 
-    engine = StreamingLosslessModel(args.model, args.store, device="cuda",
-                                    config=EngineConfig())
+    engine = StreamingLosslessModel(args.model, args.store, device="cuda", config=config)
     rows = []
+    prompt_input_tokens = {}
+    rng = random.Random(args.seed)
     try:
-        for repeat in range(args.repeats):
-            log("\nREPEAT %d/%d" % (repeat + 1, args.repeats))
-            for n in candidate_counts:
-                cooldown = cool_down(args.cooldown_seconds, args.cooldown_max_temp_c)
-                cache = drop_caches()
-                measured = engine.measure_candidate_sweep_latency(ids, [n])[0]
-                row = {
-                    "repeat": repeat, "case_id": case.id,
-                    "cache_drop_succeeded": cache[0], "cache_drop_error": cache[1],
-                    "gpu_thermal": gpu_thermal_snapshot(), **cooldown, **measured,
-                }
-                rows.append(row)
-                log("  positions=%-5d  sweep=%.3fs  io=%.3fs  decode=%.3fs  "
-                    "compute=%.3fs  bytes_read=%.3e" %
-                    (n, measured["verification_sweep_seconds"], measured["io_seconds"],
-                     measured["decode_seconds"], measured["compute_seconds"],
-                     measured["bytes_read"]))
+        for case in cases:
+            prompt = render_chat_prompt(tokenizer, case)
+            ids = tokenizer(prompt, return_tensors="pt").input_ids.cuda()
+            prompt_input_tokens[case.id] = int(ids.shape[1])
+            log("\ncase %s (%d input tokens)" % (case.id, ids.shape[1]))
+
+            log("  warmup sweep (candidates=%d, untimed)" % args.warmup_candidate_count)
+            engine.measure_candidate_sweep_latency(ids, [args.warmup_candidate_count])
+            torch.cuda.synchronize()
+
+            for repeat in range(args.repeats):
+                order = list(candidate_counts)
+                rng.shuffle(order)
+                log("  REPEAT %d/%d  order=%s" % (repeat + 1, args.repeats, order))
+                for n in order:
+                    cooldown = cool_down(args.cooldown_seconds, args.cooldown_max_temp_c)
+                    cache = drop_caches()
+                    measured = engine.measure_candidate_sweep_latency(ids, [n])[0]
+                    row = {
+                        "repeat": repeat, "case_id": case.id,
+                        "cache_drop_succeeded": cache[0], "cache_drop_error": cache[1],
+                        "gpu_thermal": gpu_thermal_snapshot(), **cooldown, **measured,
+                    }
+                    rows.append(row)
+                    log("    positions=%-5d  sweep=%.3fs  io=%.3fs  decode=%.3fs  "
+                        "compute=%.3fs  bytes_read=%.3e" %
+                        (n, measured["verification_sweep_seconds"], measured["io_seconds"],
+                         measured["decode_seconds"], measured["compute_seconds"],
+                         measured["bytes_read"]))
     finally:
         engine.close()
 
-    curve = build_amortization_curve(rows)
+    curves = build_amortization_curve(rows)
+    knees = {case_id: find_knee(curve) for case_id, curve in curves.items()}
 
     result = {
-        "schema_version": 1,
+        "schema_version": 2,
         "kind": "h19_candidate_amortization_sweep",
         "hypothesis": "h19-candidate-amortization",
         "exploratory": True,
         "evidence_level": "L1_mechanism_screen",
         "model": args.model,
         "store": args.store,
-        "case_id": case.id,
-        "input_tokens": int(ids.shape[1]),
+        "case_ids": [case.id for case in cases],
+        "prompt_input_tokens": prompt_input_tokens,
         "candidate_counts_requested": candidate_counts,
         "repeats": args.repeats,
+        "warmup_candidate_count": args.warmup_candidate_count,
+        "seed": args.seed,
+        "vram_budget_gb": config.vram_budget_gb,
+        "ram_budget_gb": config.ram_budget_gb,
         "cooldown_seconds": args.cooldown_seconds,
         "cooldown_max_temp_c": args.cooldown_max_temp_c,
         "environment": environment_manifest(repo_root, tokenizer,
                                             store=pathlib.Path(args.store)),
         "reproducible_from_commit": not bool(dirty),
         "rows": rows,
-        "candidate_amortization_curve": curve,
+        "candidate_amortization_curves_by_case": curves,
+        "candidate_parallelism_knee_by_case": knees,
+        "gate": "G1: N_free (the knee) must be >= 32 and stable within 2x across "
+               "every measured case -- see docs/SPECULATION_TREE_RESEARCH.md. A "
+               "knee fitted to a single prompt length is not yet trusted; run "
+               "with --case-ids covering at least two different prompt lengths.",
         "completed_at_unix": time.time(),
     }
     out.write_text(json.dumps(result, indent=2, sort_keys=True), encoding="utf-8")
     log("\nwrote %s" % out)
-    log("Read candidate_amortization_curve's relative_to_n1 column for the "
-        "H19 answer: values that stay near 1.0 well past N=1 mark this "
-        "hardware's candidate-parallelism knee.")
+    log("candidate_parallelism_knee_by_case: %s" % knees)
     return 0
 
 

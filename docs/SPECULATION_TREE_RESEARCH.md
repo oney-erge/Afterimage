@@ -23,17 +23,22 @@ in the order the reframing actually happened:
    belief-space planning (POMDP/DESPOT) and actor-critic/sensor-fusion
    ideas than of a classical GAN.
 
-**Status as of this document:**
+**Status as of this document.** "Implemented" below means the tooling
+that PRODUCES evidence exists and is tested; it does not mean the
+hypothesis itself has been confirmed. No GPU campaign has been run yet
+for any of these -- see [Novelty and evidence
+status](#novelty-and-evidence-status) for the full tooling-vs-evidence
+distinction this table used to compress away.
 
-| Hypothesis | Status |
-|---|---|
-| H19 Candidate Amortization | **Implemented.** `StreamingLosslessModel.measure_candidate_sweep_latency`, `scripts/run_h19_candidate_sweep.py` |
-| H20 Branching Rescue | Planned -- needs a real tree-attention verifier, GPU-correctness-sensitive, not written blind |
-| H21 Multi-Source Oracle Headroom | **Implemented.** `afterimage/runtime/speculation_oracle.py`'s coverage/rescue-recall stats, `scripts/run_h21_multi_source_oracle.py` |
-| H22 Persistent Disagreement State | **Implemented.** `afterimage/runtime/speculation_oracle.py`'s `DiscreteHMM`, `scripts/run_h22_disagreement_hmm.py` |
-| H23 Established Tree Baselines | Planned -- same GPU-correctness dependency as H20 |
-| H24 Actual SpecExec | Planned -- budgets set from H19's real measured knee, not guessed |
-| H25-H34 (BeliefSpec-Triad) | Planned, gated on H21/H22's real results (see [Hard research gates](#hard-research-gates)) |
+| Hypothesis | Tooling | Real evidence |
+|---|---|---|
+| H19 Candidate Amortization | **Implemented.** `StreamingLosslessModel.measure_candidate_sweep_latency`, `scripts/run_h19_candidate_sweep.py` (warmup, randomized dispatch order, VRAM/RAM-budget configuration, per-case knee detection) | Pending |
+| H20 Branching Rescue | Planned -- needs a real tree-attention verifier, GPU-correctness-sensitive, not written blind. CPU-only `SpecNode`/`SpecTree` structural representation is implemented ([SpecTree structure](#spectree-structure-implemented-ahead-of-h20)) | Pending (blocked on the verifier) |
+| H21 Multi-Source Oracle Headroom | **Implemented,** as a three-stage pipeline: `scripts/run_h21_collect_target_corpus.py` (target corpus, once), `scripts/run_h21_score_source.py` (any candidate source, reusable), `scripts/run_h21_combine_sources.py` (coverage, equal-total-budget comparison, sustained rescue depth) | Pending |
+| H22a Temporal Disagreement Persistence / H22b Online Disagreement Prediction | **Implemented** (split from the original single H22 -- see [H22 detail](#h22a-h22b-persistent-disagreement-state-implemented-split-into-two-claims)), `scripts/run_h22_disagreement_hmm.py`: baseline ladder B0-B5, validation-selected hidden-state count, grouped cross-validation, bootstrapped confidence intervals | Pending |
+| H23 Established Tree Baselines | Planned -- same GPU-correctness dependency as H20 | Pending |
+| H24 Actual SpecExec | Planned -- budgets set from H19's real measured knee, not guessed | Pending |
+| H25-H34 (BeliefSpec-Triad) | Planned, gated on H21/H22's real results (see [Hard research gates](#hard-research-gates)) | Pending |
 
 See [Why the implemented pieces are offline analysis, not live runtime
 code](#why-the-implemented-pieces-are-offline-analysis-not-live-runtime-code)
@@ -292,7 +297,22 @@ phases into one experiment.
 
 Run this before building any tree. See its own full writeup in this
 document's prior revision (preserved below under
-[H19 detail](#h19-detail)) -- unchanged by this update.
+[H19 detail](#h19-detail)) -- unchanged by this update, EXCEPT for the
+hardening below, applied after real-run pre-flight review found three
+gaps: `scripts/run_h19_candidate_sweep.py` now runs an untimed warmup
+sweep before the timed loop (so lazy CUDA/kernel compilation cannot land
+uniquely on whichever candidate count happens to be measured first,
+which the N=1 baseline is especially vulnerable to since every other
+point is reported relative to it); randomizes candidate-count dispatch
+order within each repeat with a saved `--seed` (breaking the correlation
+between candidate size and thermal state / `cool_down()` duration that a
+fixed ascending sweep would otherwise create); and accepts multiple
+`--case-ids` so the measured knee is checked across more than one prompt
+length rather than fitted to a single prompt. **Called a "Candidate
+Vectorization/Amortization Curve," never a "Tree Amortization Curve"** --
+this measures known candidate positions in a linear sequence, not
+arbitrary tree nodes under real tree-attention masking; that distinction
+only collapses once H20's verifier exists.
 
 ### H20 -- Branching Rescue Hypothesis (planned)
 
@@ -309,53 +329,202 @@ engine change to. **Control:** S1 (linear) at an equal node budget.
 **Gate (G2):** tree beats equal-budget chain end-to-end, or the case for
 every tree-based strategy in this document weakens substantially.
 
+#### SpecTree structure (implemented ahead of H20)
+
+`afterimage/runtime/spec_tree.py` is a CPU-only, pure-Python structural
+representation for a candidate tree -- built now so the STRUCTURE a real
+verifier will eventually consume can be validated and reasoned about
+before any GPU-side tree-attention masking code exists, without
+front-running the GPU-correctness work H20 itself requires. It
+implements none of tree-attention masking, `TargetTreeVerifier`, a
+draft-tree planner, or any CUDA path -- consistent with this document's
+own exactness-boundary rule and the "no scaffolding for a future
+feature" principle already used elsewhere in `EngineConfig`.
+
+`SpecNode` is a frozen dataclass: `node_id`, `parent_id`, `token_id`,
+`depth`, `source` (a plain string label, e.g. `"primary"`/`"scout"`),
+`source_prob` (the proposing source's own probability for this token
+given its parent path), `posterior_prob` (`None` until H25's
+PosteriorTree combines multiple sources' beliefs -- kept as a field now
+so that mechanism does not require restructuring the type later), and
+`probe` (a bool marking a node inserted purely to gather information for
+H29's ProbeSpec rather than to propose a real continuation).
+
+`SpecTree` wraps a list of `SpecNode`s and does NOT validate on
+construction -- a caller building a tree incrementally can hold a
+temporarily-invalid intermediate state, then call `validate()` once
+before handing the tree to anything that trusts its invariants.
+`validate()` checks: every non-root `parent_id` refers to a node present
+in the tree, every node's `depth` is consistent with its parent's
+(`depth == parent.depth + 1`, and `depth == 0` for roots), and no node
+is part of a cycle (checked via a bounded hop-count walk to a root,
+independent of the depth check, so a malformed input that happens to
+satisfy local depth consistency cannot slip a cycle past validation).
+`path_to(node_id)` returns the root-to-node path a verifier would need
+to reconstruct the actual token sequence a leaf represents, and detects
+cycles on its own during the walk rather than assuming `validate()` was
+already called. `budget()` returns total node count -- the quantity
+every node-budget constraint (H19's own measured `N_free`, or a future
+planner's configured cap) actually counts against.
+
+`merge_prefixes(other)` merges two trees that share a common
+token-sequence prefix (e.g. Primary and Scout proposing continuations
+from the same already-accepted context) into one tree with that prefix
+represented once -- the real cost saving a tree-based scheme is supposed
+to realize over independently verifying each source's full path. The
+shared prefix is identified purely structurally, by walking both trees'
+roots and matching consecutive `(token_id, source)` pairs -- node IDs
+are never assumed to agree between the two inputs, since they come from
+independent sources with no shared ID space. Node identity in the
+output tree is freshly assigned, contiguous from 0; both inputs must
+each have exactly one root, and the merge's own output is run through
+`validate()` before being returned, so a caller never receives a
+merged tree that has not been checked.
+
+Covered by `tests/test_spec_tree.py` (19 tests): construction,
+`children`/`path_to`, every `validate()` failure mode individually
+(missing parent, bad root depth, bad child depth, a genuine cycle
+distinguished from a depth-consistency failure on the same malformed
+input), and `merge_prefixes` (full dedup, fully disjoint paths, a
+partial-prefix-then-branch case, same-token-different-source correctly
+NOT shared, the single-root requirement, and contiguous output IDs).
+
 ### H21 -- Multi-Source Oracle Headroom (implemented)
 
 > Does a second model actually cover target paths the primary drafter
 > misses, before integrating it into any runtime mechanism?
 
-`afterimage/runtime/speculation_oracle.py`'s `compute_oracle_coverage_stats`
-answers this from collected traces -- no live speculative execution
-involved. `scripts/run_h21_multi_source_oracle.py` generates the target's
-own real greedy continuation per prompt (the reference trajectory), then
-at every position runs Primary and Scout on that same real prefix
-(teacher-forced on the target's actual path) and records where the
-target's real next token ranked under each. Reports primary/scout/union
-coverage at several k, and the number the hypothesis is actually about --
-conditional rescue recall -- as `None` (not a misleading `0.0`) whenever
-Primary never missed at that k, since there was nothing to rescue.
+A real, pre-flight-reviewed problem with the first version of this
+hypothesis: comparing P-top-8 coverage against P-top-8 UNION S-top-8
+coverage lets Scout add candidate slots for free -- an 8+8=16-candidate
+union covering more often than an 8-candidate source alone is not
+evidence a second model earns its keep, only that more candidates help,
+which was never in dispute. The corrected question holds the TOTAL
+candidate budget fixed and asks whether TRADING Primary slots for Scout
+slots is worth it.
+
+Answered by a three-stage, reusable pipeline (the collection/scoring
+split exists specifically so the expensive 14B target trajectory is
+generated exactly once, not re-generated for every new candidate source
+worth comparing):
+
+1. `scripts/run_h21_collect_target_corpus.py` -- loads ONLY the target,
+   generates the real greedy continuation per prompt (the reference
+   trajectory; `decoding_mode: greedy` is recorded explicitly in the
+   output, since every coverage number that follows is conditioned on
+   the argmax path, not a sampled one), writes a target corpus.
+2. `scripts/run_h21_score_source.py` -- loads exactly ONE candidate
+   model (Primary, Scout, or any future candidate; `--role` is a label,
+   not a code path), teacher-forces it against the target corpus, and
+   records rank, entropy, top-1/top-2 margin, and top-k IDs+probabilities
+   per position. Adding a new candidate to compare costs one run of this
+   script, not a full target re-collection.
+3. `scripts/run_h21_combine_sources.py` -- joins a target corpus with
+   two scored sources (Primary, Scout) and runs the actual analysis:
+   - `compute_oracle_coverage_stats` (`afterimage/runtime/
+     speculation_oracle.py`): primary/scout/union coverage at several
+     rank-based `k`, and conditional rescue recall (`None`, never a
+     misleading `0.0`, whenever Primary never missed at that k).
+   - `compute_equal_budget_metrics`: the CORRECTED question above. At a
+     fixed total candidate budget (default 16), sweeps how many slots go
+     to Scout (default 0/4/8/12) versus Primary, and reports
+     `equal_budget_union_gain` (coverage minus the Scout=0 baseline at
+     the SAME total budget), `marginal_scout_coverage_per_slot`,
+     `unique_scout_hit_rate`, and `primary_scout_overlap`.
+   - `compute_sustained_rescue_depth`: how FAR a rescue extends, not
+     just whether the position immediately after a Primary miss is
+     covered -- `P(rescue depth >= d | Primary missed)` for d in
+     {1,2,4,8}, teacher-forced on the real trajectory (free from the
+     already-collected data; free-running Scout-generates-its-own-
+     tokens agreement length is a different, harder-to-define quantity
+     that would need new generation, not implemented here).
+
 Default scout is `Qwen/Qwen3-1.7B` against the `Qwen/Qwen3-0.6B` primary
 (same tokenizer, different training depth -- lowest risk per this
-document's own scout ordering). **Gate (G3):** meaningful conditional
-rescue recall and estimated end-to-end headroom, or do not integrate a
-second model at all.
+document's own scout ordering). **Gate (G3):** see [Hard research
+gates](#hard-research-gates) for the exact pre-registered thresholds --
+"meaningful" is deliberately not a number a paper can move after seeing
+results.
 
-### H22 -- Persistent Disagreement State (implemented)
+### H22a H22b -- Persistent Disagreement State (implemented, split into two claims)
 
 > Is draft/target disagreement temporally predictable beyond the current
 > position's own confidence?
 
-`afterimage/runtime/speculation_oracle.py`'s `DiscreteHMM` is a from-
-scratch, log-space, numerically stable discrete Baum-Welch/forward-
-backward implementation (four hidden regimes: aligned / weak disagreement
-/ broad ambiguity / severe divergence, matching the observation stream
-from `disagreement_bucket`-discretized target rank). `scripts/
-run_h22_disagreement_hmm.py` consumes an H21-shaped trace file, splits by
-whole trace into train/held-out (never by position within a trace, which
-would leak temporal continuity across the split), fits the HMM, and
-reports the actual gate: does the fitted HMM's one-step-ahead predictive
-log-likelihood on held-out traces beat `memoryless_baseline_nll` -- the
-empirical next-observation distribution given only the CURRENT
-observation, "current draft confidence alone" in the hypothesis's own
-words? `tests/test_speculation_oracle.py` verifies this end to end against
-synthetic data with known hidden structure (the HMM must, and does, beat
-the baseline there) and was separately smoke-tested against synthetic
-data with NO structure at all, where it correctly reported no benefit --
-the dual-direction check this class of tool needs before trusting it on
-real traces. **Gate (G4):** history significantly predicts future target
-disagreement beyond current confidence, with a real margin, not a
-marginal one -- otherwise kill the POMDP/MPC branch (H25 onward) rather
-than force belief-space planning onto data that does not support it.
+A real wording problem in the original single H22: its own baseline
+(`memoryless_baseline_nll`) predicts the next observation from the
+CURRENT observation, which is `target_rank_under_primary` -- the
+target's OWN rank under Primary, known only after a target sweep has
+already happened. "Current draft confidence" (Primary's entropy or
+margin, known BEFORE that sweep) is a different, and for a live system
+much more useful, quantity. The hypothesis is therefore split into what
+it actually tests and what it would need to test to be online-usable:
+
+- **H22a (Temporal Disagreement Persistence):** does the SEQUENCE of past
+  target-rank observations contain temporal structure a memoryless
+  "current bucket alone" model cannot capture? Establishes that state
+  exists. Cannot be computed before the target sweep that produces the
+  observations it uses.
+- **H22b (Online Disagreement Prediction):** can CHEAP information
+  available BEFORE the next target sweep (Primary's entropy/margin,
+  Scout's entropy/margin, an approximate Primary/Scout Jensen-Shannon
+  divergence, recent observation history) predict the upcoming
+  disagreement bucket? This is the quantity the belief-space Critic line
+  (H25 onward) actually needs, since it cannot see the target's real
+  rank before running the sweep that produces it. **H22a passing does
+  NOT imply H22b passes** -- a real hidden state can exist in the target-
+  rank sequence while being invisible to any signal available before the
+  sweep, and the gates below are evaluated independently for exactly
+  that reason.
+
+Both are answered by ONE script (`scripts/run_h22_disagreement_hmm.py`)
+running a baseline ladder, since forcing every comparison onto the same
+folds and the same held-out data is what makes B0-B5 comparable on one
+axis:
+
+- **B0** constant unconditional bucket frequency (the floor every other
+  baseline must clear).
+- **B1** the original memoryless baseline (current bucket only) --
+  answers H22a's control.
+- **B2** cheap Primary-only features (entropy, margin) via a from-scratch
+  multinomial logistic regression (`MultinomialLogisticRegression`,
+  no new dependency, same "implement standard statistics locally"
+  precedent as `DiscreteHMM`).
+- **B3** B2 plus Scout features and the approximate P/S divergence.
+- **B4** B3 plus recent observation history (a one-hot of the current
+  bucket) -- H22b's actual answer.
+- **B5** the fitted `DiscreteHMM` -- H22a's actual answer.
+
+Hidden states are never pre-labeled ("aligned," "severe divergence," ...)
+anywhere in the code or its output: a `DiscreteHMM`'s state indices carry
+no identity across independent fits (state 0 in one run can be state 2 in
+the next), so interpretive labels belong only in a human's post-hoc
+reading of one specific fitted model's emission distributions, applied
+after the fact, never baked into a field name a reader might mistake for
+a stable category.
+
+Hidden-state count is chosen on a VALIDATION split reserved before any
+cross-validation happens (`select_n_states_by_held_out_nll`, candidates
+2-6 by default), never on the final test folds -- goalpost-moving after
+seeing results is exactly what pre-registering the gates below exists to
+prevent. `minimum_positions_for_hmm` derives a required minimum
+observation count from the actual state/symbol count (20 observations
+per free parameter, a conventional MLE stability floor) and the script
+refuses to proceed below it without an explicit `--allow-insufficient-
+data` override; `tests/test_speculation_oracle.py` demonstrates the
+failure mode this guards against empirically -- with only 10 held-out
+sequences, state selection on a KNOWN 2-state generator picked 6 states,
+because the validation NLL gap between candidates was smaller than
+sampling noise at that sample size.
+
+Final evaluation is grouped 5-fold cross-validation (`grouped_k_fold`,
+by whole trajectory, never splitting a trajectory's own positions across
+folds) with `bootstrap_nll_difference_ci` on the paired per-fold
+(baseline − model) NLL differences -- a single point estimate of "the
+HMM won by X" says nothing about whether that margin could plausibly be
+zero given fold-to-fold variance, which is exactly what the CI-excludes-
+zero requirement below checks. **Gates (G4a/G4b):** see [Hard research
+gates](#hard-research-gates) for the exact pre-registered thresholds.
 
 ### H23 -- Established Tree Baselines (planned)
 
@@ -526,18 +695,32 @@ interesting-but-useless mechanism -- the same discipline that already
 correctly killed hazard-cost stopping (H2) and the neural-utility policy
 (H11) in favor of measured fixed `k=8`.
 
+Numbers below are pre-registered NOW, before any GPU campaign for these
+hypotheses has run, specifically so they cannot be adjusted after seeing
+results -- a gate a paper claim later contradicts is a real, reportable
+finding; a gate quietly loosened to fit the result is not evidence of
+anything. Where a specific number is genuinely a judgment call (not
+derived from first principles), that is said explicitly rather than
+dressed up as more principled than it is.
+
 | Gate | Continue only if... |
 |---|---|
-| G1 Candidate capacity (H19) | a large increase in candidate count causes a modest target-sweep increase |
+| G1 Candidate capacity (H19) | `N_free` (the largest candidate count within 10% of the N=1 sweep cost, `scripts/run_h19_candidate_sweep.py`'s `find_knee`) is >= 32, AND stable within 2x across every measured prompt length. A looser overhead threshold (e.g. 25%) passes almost trivially for a streaming-dominated engine and is not used here for exactly that reason. |
 | G2 Branching (H20) | tree beats equal-budget chain end to end |
-| G3 Scout (H21/H27) | meaningful conditional rescue recall and real estimated end-to-end headroom |
-| G4 Belief (H22) | history significantly predicts future target disagreement beyond current confidence, with a real margin |
+| G3 Scout (H21/H27) | at the project's default equal-total-budget=16 sweep, `equal_budget_union_gain` >= +0.03 (3 percentage points) at some tested Scout-slot allocation, AND `conditional_rescue_recall` at k=8 >= 0.20, AND `P(sustained rescue depth >= 2 \| Primary missed)` >= 0.30 at k=8. All three, not any one alone -- a Scout that only wins on one of these has not shown real, usable headroom. |
+| G4a Temporal persistence (H22a) | grouped-CV paired NLL improvement of B5 (HMM) over B1 (memoryless) has a >= 5% relative improvement AND its bootstrap 95% CI excludes zero (`scripts/run_h22_disagreement_hmm.py`'s own `G4a_temporal_persistence` gate, both conditions required) |
+| G4b Online predictability (H22b) | grouped-CV paired NLL improvement of B4 (cheap online features) over B1 has a >= 3% relative improvement (a lower bar than G4a's, since B4 is working with strictly less information than B5) AND its bootstrap 95% CI excludes zero. **G4a passing does NOT authorize proceeding past this gate** -- H25 onward needs online-usable prediction specifically, not just proof that latent state exists. |
 | G5 Posterior tree (H25) | beats OPT-Tree/SpecExec at matched target cost |
 | G6 Critic (H28) | calibrated, and costs only a small fraction of the savings it produces |
 | G7 Probes (H29) | future benefit pays for the sacrificed candidate slots |
 | G8 MPC (H30) | horizon > 1 beats horizon 1 on held-out end-to-end time |
 | G9 MCTS (H31) | exceeds simple ScenarioSpec enough to justify the planner cost |
 | G10 Meta-controller (H34) | oracle gap across the full strategy set exceeds 10-15% |
+
+G1/G3/G4a/G4b's specific numbers (32, 3pp, 20%, 30%, 5%, 3%) are this
+project's own judgment calls, not derived from an external standard --
+recorded here so a future revision that changes them has to say so
+explicitly, in a diff, rather than silently.
 
 ## Measurement schema
 
@@ -567,7 +750,7 @@ target_cache_hits
 target_cache_misses
 cache_walk_length
 
-p_s_topk_overlap
+approx_js_divergence           # sparse top-k approximation, H21/H22
 conditional_rescue_recall     # H21
 target_path_coverage          # planner quality
 
@@ -586,15 +769,38 @@ tokens_per_second
 peak_vram
 ```
 
-H19 specifically also needs (implemented, see
-`measure_candidate_sweep_latency`'s return shape): `candidate_positions`,
+The fields above are the eventual, full end-to-end schema for a real
+speculative run once H20+ exist. What is actually implemented and
+producing real numbers today is narrower and lives in each script's own
+`SpeculationTrace v2` output (`schema_version: 2` on every result file):
+
+H19 (`scripts/run_h19_candidate_sweep.py`, `measure_candidate_sweep_latency`
++ `build_amortization_curve`): `candidate_positions`,
 `verification_sweep_seconds`, `io_seconds`/`decode_seconds`/
-`compute_seconds`. H21 needs (implemented, see `compute_oracle_coverage_stats`):
-per-`k` `primary_coverage`/`scout_coverage`/`union_coverage`/
-`conditional_rescue_recall`, and `jaccard_overlap_at_collection_k`. H22
-needs (implemented, see `run_h22_disagreement_hmm.py`'s output):
-`hmm_held_out_predictive_nll`, `memoryless_baseline_held_out_nll`,
-`hmm_beats_memoryless_baseline`, `relative_nll_improvement`.
+`compute_seconds` per cell; per-case curves keyed by `case_id`, each point
+carrying `median_seconds`/`min_seconds`/`max_seconds`/`samples`,
+`throughput_candidates_per_second`, `relative_to_n1` (absent when N=1
+was not measured), and `marginal_cost_seconds_vs_half` (`None` when N/2
+was not measured); `candidate_parallelism_knee_by_case` from `find_knee`.
+
+H21 (three-stage pipeline -- see the H21 section above -- final analysis
+from `scripts/run_h21_combine_sources.py`, calling
+`compute_oracle_coverage_stats`, `compute_equal_budget_metrics`,
+`compute_sustained_rescue_depth`): per-`k` `primary_coverage`/
+`scout_coverage`/`union_coverage`/`conditional_rescue_recall`,
+`jaccard_overlap_at_collection_k`; per-Scout-slot-count `points` with
+`equal_budget_union_gain`, `marginal_scout_coverage_per_slot`,
+`unique_scout_hit_rate`, `primary_scout_overlap`; `rescue_opportunities`,
+`mean_depth`, `median_depth`, `depth_probabilities` (per tested depth).
+
+H22a/H22b (`scripts/run_h22_disagreement_hmm.py`): per-fold
+`b0_constant_frequency_nll` .. `b5_hmm_nll`; `gates.G4a_temporal_persistence`
+and `gates.G4b_online_predictability`, each with a `paired_nll_improvement`
+block (`mean`/`ci_low`/`ci_high`/`excludes_zero` from
+`bootstrap_nll_difference_ci`), a `threshold_relative_improvement`, and a
+combined `passes` boolean; `hmm_vs_cheap_features` (B4 vs B5, interpretive
+only -- not a gate); `state_selection.underpowered` /
+`cross_validation.underpowered` flags from `minimum_positions_for_hmm`.
 
 **The metric this whole research line is really chasing:**
 
@@ -671,6 +877,10 @@ suit it.
 None of these should be stated as established novelty in a patent or
 paper yet -- this is where the literature search currently leaves the
 clearest unoccupied space, not a claim that the space is confirmed empty.
+See [SPECULATION_NOVELTY_LEDGER.md](SPECULATION_NOVELTY_LEDGER.md) for the
+closest-known-prior-art detail behind each row above, with search dates
+and corpus, so a future revision of this table has a paper trail rather
+than a re-derivation from memory.
 
 ## H19 detail
 

@@ -12,17 +12,32 @@ looked good once.
 """
 from __future__ import annotations
 
+import math
+
 import numpy as np
 import pytest
 
 from afterimage.runtime.speculation_oracle import (
     DiscreteHMM,
+    MultinomialLogisticRegression,
     _logsumexp,
+    approximate_js_divergence_from_topk,
+    bootstrap_nll_difference_ci,
+    compute_equal_budget_metrics,
     compute_oracle_coverage_stats,
+    compute_sustained_rescue_depth,
+    constant_frequency_baseline_nll,
     disagreement_bucket,
+    entropy_of_logits,
     evaluate_predictive_nll,
+    grouped_k_fold,
+    js_divergence,
+    logistic_regression_baseline_nll,
+    margin_of_logits,
     memoryless_baseline_nll,
+    minimum_positions_for_hmm,
     rank_of_token,
+    select_n_states_by_held_out_nll,
 )
 
 
@@ -256,3 +271,280 @@ def test_evaluate_predictive_nll_skips_sequences_too_short_to_predict_from():
     hmm.fit(train, max_iterations=5)
     nll = evaluate_predictive_nll(hmm, held_out_sequences=[np.array([0])])
     assert np.isnan(nll)  # no (t -> t+1) transitions to score at all
+
+
+# ---------------------------------------------------- entropy/margin/divergence
+
+def test_entropy_of_logits_is_lower_for_a_peaked_distribution():
+    uniform = np.zeros(10)
+    peaked = np.array([10.0] + [0.0] * 9)
+    assert entropy_of_logits(peaked) < entropy_of_logits(uniform)
+
+
+def test_margin_of_logits_is_the_top1_minus_top2_gap():
+    assert margin_of_logits(np.array([5.0, 1.0, 0.0])) == pytest.approx(4.0)
+    assert margin_of_logits(np.array([3.0, 3.0, 0.0])) == pytest.approx(0.0)
+
+
+def test_js_divergence_is_zero_for_identical_distributions():
+    logits = np.array([2.0, 1.0, 0.0, -1.0])
+    assert js_divergence(logits, logits) == pytest.approx(0.0, abs=1e-9)
+
+
+def test_js_divergence_is_positive_and_bounded_for_different_distributions():
+    peaked = np.array([10.0, 0.0, 0.0, 0.0])
+    uniform = np.zeros(4)
+    d = js_divergence(peaked, uniform)
+    assert 0.0 < d <= math.log(2)  # JS divergence in nats is bounded by ln(2)
+
+
+# ------------------------------------------------ approximate_js_divergence_from_topk
+
+def test_approximate_js_divergence_is_zero_for_identical_topk():
+    d = approximate_js_divergence_from_topk([1, 2, 3], [0.5, 0.3, 0.2],
+                                            [1, 2, 3], [0.5, 0.3, 0.2])
+    assert d == pytest.approx(0.0, abs=1e-9)
+
+
+def test_approximate_js_divergence_is_ln2_for_disjoint_supports():
+    """Two sources whose stored top-k share no token at all look
+    maximally divergent under this sparse approximation -- the honest
+    consequence of not knowing whether they actually agreed on
+    unrecorded tail mass."""
+    d = approximate_js_divergence_from_topk([1, 2], [0.6, 0.4], [9, 8], [0.6, 0.4])
+    assert d == pytest.approx(math.log(2), abs=1e-6)
+
+
+def test_approximate_js_divergence_is_between_bounds_for_partial_overlap():
+    d = approximate_js_divergence_from_topk([1, 2, 3], [0.7, 0.2, 0.1],
+                                            [1, 2, 3], [0.1, 0.2, 0.7])
+    assert 0.0 < d < math.log(2)
+
+
+def test_approximate_js_divergence_handles_zero_recorded_mass():
+    d = approximate_js_divergence_from_topk([], [], [], [])
+    assert d == 0.0
+
+
+# -------------------------------------------------------- compute_equal_budget_metrics
+
+def _budget_row(target, primary_topk, scout_topk):
+    return {"target_token": target, "primary_topk": primary_topk, "scout_topk": scout_topk}
+
+
+def test_equal_budget_baseline_matches_primary_only_at_full_budget():
+    """s=0 (no scout slots) must reproduce plain Primary-top-budget
+    coverage exactly -- it is the control every other point compares
+    against."""
+    rows = [
+        _budget_row(5, [5, 1, 2, 3], [9, 9, 9, 9]),
+        _budget_row(5, [1, 2, 3, 4], [5, 9, 9, 9]),
+    ]
+    m = compute_equal_budget_metrics(rows, total_budget=4, scout_slots=[0])
+    assert m["points"][0]["coverage"] == pytest.approx(m["baseline_coverage"])
+    assert m["points"][0]["equal_budget_union_gain"] == pytest.approx(0.0)
+
+
+def test_equal_budget_gain_reflects_traded_slots_not_free_extra_slots():
+    """The corrected H21 question: trading Primary slots for Scout slots
+    at a FIXED total budget. A row where the target is outside Primary's
+    kept slots but inside Scout's must show a real gain; a row where
+    Scout has nothing new must not."""
+    rows = [
+        _budget_row(5, [1, 2, 3, 4], [5, 9, 9, 9]),  # target drops out of primary's
+                                                       # kept 2 slots at s=2, but
+                                                       # scout's slot 0 has it
+        _budget_row(6, [6, 1, 2, 3], [9, 9, 9, 9]),  # primary already covers with
+                                                       # its kept slots; scout adds nothing
+    ]
+    m = compute_equal_budget_metrics(rows, total_budget=4, scout_slots=[2])
+    point = m["points"][2]
+    assert point["primary_slots"] == 2
+    # row 1: primary kept slots [1,2] -> misses target 5; scout slots [5,9] -> covers.
+    # row 2: primary kept slots [6,1] -> covers target 6 directly.
+    assert point["coverage"] == pytest.approx(1.0)
+    assert point["unique_scout_hit_rate"] == pytest.approx(0.5)
+
+
+def test_equal_budget_metrics_rejects_stored_lists_shorter_than_budget():
+    rows = [_budget_row(5, [1, 2], [1, 2])]
+    with pytest.raises(ValueError, match="fewer than total_budget"):
+        compute_equal_budget_metrics(rows, total_budget=4, scout_slots=[2])
+
+
+def test_equal_budget_metrics_empty_rows_does_not_crash():
+    m = compute_equal_budget_metrics([], total_budget=8, scout_slots=[4])
+    assert m["rows"] == 0
+
+
+# ------------------------------------------------------ compute_sustained_rescue_depth
+
+def _depth_trace(pairs):
+    return {"rows": [{"target_rank_under_primary": p, "target_rank_under_scout": s}
+                     for p, s in pairs]}
+
+
+def test_sustained_rescue_depth_counts_each_qualifying_position_independently():
+    """Two adjacent positions that both independently miss-then-rescue
+    produce two opportunities with their own (possibly different) depths
+    -- see the function's own docstring for why this is not
+    double-counting."""
+    trace = _depth_trace([(50, 1), (50, 1), (50, 50), (1, 1)])
+    d = compute_sustained_rescue_depth([trace], k=8)
+    assert d["rescue_opportunities"] == 2
+    assert d["mean_depth"] == pytest.approx(1.5)
+    assert d["depth_probabilities"][1] == pytest.approx(1.0)
+    assert d["depth_probabilities"][2] == pytest.approx(0.5)
+    assert d["depth_probabilities"][4] == pytest.approx(0.0)
+
+
+def test_sustained_rescue_depth_is_none_with_no_opportunities():
+    trace = _depth_trace([(1, 1), (1, 1)])  # primary always covers
+    d = compute_sustained_rescue_depth([trace], k=8)
+    assert d["rescue_opportunities"] == 0
+    assert d["mean_depth"] is None
+
+
+def test_sustained_rescue_depth_requires_scout_to_actually_cover_to_count():
+    trace = _depth_trace([(50, 50)])  # both miss -- not a rescue at all
+    d = compute_sustained_rescue_depth([trace], k=8)
+    assert d["rescue_opportunities"] == 0
+
+
+# ------------------------------------------------------------- baseline ladder (B0-B4)
+
+def test_constant_frequency_baseline_prefers_the_common_symbol():
+    train = [np.array([0, 0, 0, 0, 1])]
+    held = [np.array([0, 0])]
+    nll = constant_frequency_baseline_nll(train, held, n_symbols=2)
+    # symbol 0 is 4/5 of training mass, so predicting it should cost
+    # noticeably less than -log(0.5) (the uninformed-coin-flip cost).
+    assert nll < -math.log(0.5)
+
+
+def test_multinomial_logistic_regression_separates_a_linearly_separable_case():
+    rng = np.random.default_rng(0)
+    X = rng.normal(size=(300, 2))
+    y = (X[:, 0] > 0).astype(int)
+    model = MultinomialLogisticRegression.fit(X, y, n_classes=2, seed=0)
+    probs = model.predict_proba(X)
+    predicted = probs.argmax(axis=1)
+    accuracy = (predicted == y).mean()
+    assert accuracy > 0.95
+
+
+def test_logistic_regression_baseline_beats_chance_on_separable_data():
+    rng = np.random.default_rng(1)
+    X_train = rng.normal(size=(200, 3))
+    y_train = (X_train[:, 0] + X_train[:, 1] > 0).astype(int)
+    X_held = rng.normal(size=(100, 3))
+    y_held = (X_held[:, 0] + X_held[:, 1] > 0).astype(int)
+    nll = logistic_regression_baseline_nll(X_train, y_train, X_held, y_held, n_classes=2)
+    assert nll < -math.log(0.5)  # must beat an uninformed coin flip
+
+
+def test_logistic_regression_baseline_nll_handles_empty_split():
+    nll = logistic_regression_baseline_nll(
+        np.zeros((0, 2)), np.zeros(0, dtype=int), np.zeros((0, 2)), np.zeros(0, dtype=int), 2)
+    assert np.isnan(nll)
+
+
+# --------------------------------------------------------- select_n_states_by_held_out_nll
+
+def test_select_n_states_prefers_the_true_generator_state_count():
+    """On data actually generated by a 2-state HMM, validation NLL should
+    not favor an unnecessarily large state count -- 2 states should win
+    over needlessly fitting 6, PROVIDED the validation split itself is
+    large enough. This needs real data to demonstrate, not an assumption:
+    with only 10 held-out sequences the validation NLL gap between 2, 3,
+    and 6 states is smaller than sampling noise (differences of ~0.005
+    nats on ~0.67 nats, empirically measured during development) and
+    selection becomes unreliable -- see the companion test below, which
+    documents that failure mode deliberately rather than treating it as
+    a flake. 60 held-out sequences is what actually resolves it here."""
+    train, val = _sticky_two_state_hmm_sequences(seed=0, n_train=40, n_held_out=60, length=25)
+    result = select_n_states_by_held_out_nll(
+        train, val, n_symbols=2, candidate_n_states=(2, 3, 6), restarts=5,
+        max_iterations=50, seed=0)
+    assert result["selected_n_states"] == 2
+    assert len(result["candidates"]) == 3
+
+
+def test_select_n_states_is_unreliable_with_too_little_validation_data():
+    """Documents a real, measured failure mode rather than hiding it: with
+    only 10 held-out sequences, state selection on this same 2-state
+    generator picks 6 states, not the true 2 -- the validation NLLs are
+    within noise of each other. This is exactly why minimum_positions_
+    for_hmm exists, and why H22's own script must enforce a minimum
+    validation size before trusting a selected state count, not just a
+    minimum training size."""
+    train, val = _sticky_two_state_hmm_sequences(seed=0, n_train=20, n_held_out=10, length=25)
+    result = select_n_states_by_held_out_nll(
+        train, val, n_symbols=2, candidate_n_states=(2, 3, 6), restarts=2,
+        max_iterations=30, seed=0)
+    nlls = {c["n_states"]: c["validation_nll"] for c in result["candidates"]}
+    spread = max(nlls.values()) - min(nlls.values())
+    assert spread < 0.01, (
+        "if this spread grows large, the small-validation-set instability "
+        "this test documents may no longer hold and the test itself should "
+        "be revisited, not just its assertion loosened")
+
+
+def test_select_n_states_reports_every_candidate_even_when_not_selected():
+    train, val = _sticky_two_state_hmm_sequences(seed=0, n_train=10, n_held_out=5, length=15)
+    result = select_n_states_by_held_out_nll(
+        train, val, n_symbols=2, candidate_n_states=(2, 4), restarts=1,
+        max_iterations=10, seed=0)
+    reported = {c["n_states"] for c in result["candidates"]}
+    assert reported == {2, 4}
+
+
+# ---------------------------------------------------------------------- grouped_k_fold
+
+def test_grouped_k_fold_partitions_every_group_exactly_once():
+    splits = grouped_k_fold(n_groups=10, k=5, seed=0)
+    assert len(splits) == 5
+    all_test_indices = sorted(idx for _, test in splits for idx in test)
+    assert all_test_indices == list(range(10))
+
+
+def test_grouped_k_fold_train_and_test_never_overlap():
+    for train_idx, test_idx in grouped_k_fold(n_groups=12, k=4, seed=1):
+        assert set(train_idx).isdisjoint(test_idx)
+
+
+def test_grouped_k_fold_rejects_more_folds_than_groups():
+    with pytest.raises(ValueError):
+        grouped_k_fold(n_groups=3, k=5, seed=0)
+
+
+# --------------------------------------------------------------- bootstrap_nll_difference_ci
+
+def test_bootstrap_ci_excludes_zero_for_a_consistent_positive_effect():
+    ci = bootstrap_nll_difference_ci([0.5, 0.6, 0.55, 0.52, 0.58, 0.51], seed=0)
+    assert ci["excludes_zero"] is True
+    assert ci["ci_low"] > 0.0
+
+
+def test_bootstrap_ci_does_not_exclude_zero_for_a_noisy_null_effect():
+    ci = bootstrap_nll_difference_ci([0.1, -0.1, 0.05, -0.05, 0.02, -0.02], seed=0)
+    assert ci["excludes_zero"] is False
+
+
+def test_bootstrap_ci_handles_empty_input():
+    ci = bootstrap_nll_difference_ci([], seed=0)
+    assert ci["mean"] is None
+    assert ci["excludes_zero"] is None
+
+
+# ----------------------------------------------------------------- minimum_positions_for_hmm
+
+def test_minimum_positions_scales_with_state_and_symbol_count():
+    small = minimum_positions_for_hmm(2, 2)
+    large = minimum_positions_for_hmm(6, 9)
+    assert large > small
+
+
+def test_minimum_positions_matches_the_documented_free_parameter_formula():
+    # 4 states, 5 symbols: 4*(5-1) emission + 4*(4-1) transition + (4-1) initial = 16+12+3=31
+    assert minimum_positions_for_hmm(4, 5, observations_per_free_parameter=20) == 31 * 20
