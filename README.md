@@ -333,6 +333,11 @@ is the web UI's default profile.
 
 ## Documentation
 
+[**docs/README.md**](docs/README.md) is the index. It separates the four
+documents you need to *run* Afterimage from the research record that exists so
+you can *check* its claims, and says what is deliberately kept out of this
+repository.
+
 | Document | Purpose |
 |---|---|
 | [All hypotheses and baselines](docs/ALL_HYPOTHESES_AND_BASELINES.md) | **Controlling results table, rankings, AirLLM/Accelerate comparisons, novelty assessment** |

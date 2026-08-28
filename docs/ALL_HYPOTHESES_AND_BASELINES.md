@@ -245,8 +245,8 @@ format conversion.
 is also wired into the next clean paper matrix using the original BF16
 checkpoint and ZeRO-3 NVMe parameter offload. It has no result row here yet;
 the implementation and preflight exist, but the clean hardware campaign is
-still pending. See
-[PAPER_COMPARISON_FOLLOWUP.md](PAPER_COMPARISON_FOLLOWUP.md).
+still pending. When it runs, its results land here like every other row --
+this table stays the controlling record.
 
 ## Raw evidence
 

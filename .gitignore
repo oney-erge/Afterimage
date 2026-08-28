@@ -38,6 +38,14 @@ results/paper-comparison/
 docs/archive/
 scripts/local/
 
+# Manuscript workspace: drafts, outlines, campaign plans, and figure/table
+# production for the paper. Deliberately NOT published -- someone cloning
+# this repository wants the engine and the evidence behind its claims, not
+# an in-progress manuscript and its editorial to-do list. The evidence
+# itself stays public in docs/ (see docs/README.md for that boundary);
+# only the writing about it lives here.
+paper/
+
 # DFloat11Model.from_pretrained() downloads its checkpoint to a local
 # directory named after the HF repo id (org/name -> org__name) in the
 # process's own working directory, not the shared ~/.cache/huggingface

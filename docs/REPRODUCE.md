@@ -68,9 +68,15 @@ bash paper_benchmark.sh
 ```
 
 The wrapper refuses a dirty tree or missing benchmark dependency, resumes
-partial non-capacity cells, and withholds incomplete matrices. The exact
-follow-up protocol and the pre-fix artifacts that must not be cited are listed
-in [PAPER_COMPARISON_FOLLOWUP.md](PAPER_COMPARISON_FOLLOWUP.md).
+partial non-capacity cells, and withholds incomplete matrices.
+
+Its output goes to `results/paper-comparison/`, which is deliberately not
+published (see `.gitignore`): a live campaign directory accumulates partial
+and exploratory attempts, and only a completed, paper-eligible artifact
+should be curated into the date-stamped published result set. Check
+`paper_eligible` and `paper_eligibility_reason` in a result file before
+citing it -- a matrix with missing or failed cells reports `false` and
+says which cells are missing.
 
 ## Exact software versions used for the published numbers
 
