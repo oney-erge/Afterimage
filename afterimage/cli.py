@@ -284,7 +284,8 @@ def _estimate_download_bytes(model_id: str) -> int | None:
         return None
 
 
-def _disk_preflight(model_id: str, out_dir: pathlib.Path, *, assume_yes: bool) -> bool:
+def _disk_preflight(model_id: str, out_dir: pathlib.Path, *, assume_yes: bool,
+                    force_raw_storage: bool = False) -> bool:
     """Best-effort space check. A failed size lookup degrades to a warning
     and returns True -- this must never be the reason a real compress run
     refuses to start, only a way to catch the common case (a laptop with
@@ -297,11 +298,19 @@ def _disk_preflight(model_id: str, out_dir: pathlib.Path, *, assume_yes: bool) -
               % model_id, file=sys.stderr)
         return True
 
-    store_bytes = int(download_bytes / MEASURED_COMPRESSION_RATIO)
+    # force_raw_storage produces a roughly checkpoint-sized store, not a
+    # compressed one -- see cmd_compress's dry-run branch for the same
+    # reasoning. Using the compression-ratio estimate here would let a
+    # real (non-dry-run) raw-storage compress start on a host that does
+    # not actually have enough free space for it.
+    store_bytes = (download_bytes if force_raw_storage
+                   else int(download_bytes / MEASURED_COMPRESSION_RATIO))
     needed = download_bytes + store_bytes  # both live on disk at once mid-pass
-    print("[preflight] %s: ~%.1f GB to download, ~%.1f GB compressed store "
+    print("[preflight] %s: ~%.1f GB to download, ~%.1f GB %s store "
           "(~%.1f GB needed on disk at once, both present until the pass finishes)"
-          % (model_id, download_bytes / 1e9, store_bytes / 1e9, needed / 1e9),
+          % (model_id, download_bytes / 1e9, store_bytes / 1e9,
+             "raw (not compressed)" if force_raw_storage else "compressed",
+             needed / 1e9),
           file=sys.stderr)
 
     check_dir = out_dir.parent if out_dir.parent.exists() else pathlib.Path.home()
@@ -335,22 +344,37 @@ def cmd_compress(args: argparse.Namespace) -> int:
             print("Could not look up %s's size (offline, gated, or a network "
                   "error)." % args.model)
             return 1
-        store_bytes = int(download_bytes / MEASURED_COMPRESSION_RATIO)
+        # A --force-raw-storage store is NOT compressed -- it is roughly
+        # the same size as the original checkpoint (same bytes, just
+        # reorganized into this project's own blob layout), not the
+        # MEASURED_COMPRESSION_RATIO estimate that applies to a normal
+        # Huffman-coded store. Reporting the compressed-size estimate here
+        # would understate peak disk usage by roughly the compression
+        # ratio, which is exactly the number a raw-storage preflight most
+        # needs to get right.
+        store_bytes = (download_bytes if args.force_raw_storage
+                       else int(download_bytes / MEASURED_COMPRESSION_RATIO))
         print("%s (dry run)" % args.model)
         print("  download   : ~%.1f GB" % (download_bytes / 1e9))
-        print("  store      : ~%.1f GB (at the measured %.3fx ratio)"
-              % (store_bytes / 1e9, MEASURED_COMPRESSION_RATIO))
+        if args.force_raw_storage:
+            print("  store      : ~%.1f GB (--force-raw-storage: not compressed, "
+                  "roughly checkpoint-sized)" % (store_bytes / 1e9))
+        else:
+            print("  store      : ~%.1f GB (at the measured %.3fx ratio)"
+                  % (store_bytes / 1e9, MEASURED_COMPRESSION_RATIO))
         print("  peak disk  : ~%.1f GB (both present at once mid-pass)"
               % ((download_bytes + store_bytes) / 1e9))
         print("  store path : %s" % out_dir)
         return 0
 
-    if not _disk_preflight(args.model, out_dir, assume_yes=args.yes):
+    if not _disk_preflight(args.model, out_dir, assume_yes=args.yes,
+                           force_raw_storage=args.force_raw_storage):
         print("Aborted.", file=sys.stderr)
         return 1
 
     print("Compressing %s -> %s" % (args.model, out_dir))
-    cfg = EngineConfig(chunk_size=args.chunk_size, quantize=args.quantize)
+    cfg = EngineConfig(chunk_size=args.chunk_size, quantize=args.quantize,
+                       force_raw_storage=args.force_raw_storage)
     man = compress_model_to_disk(args.model, out_dir, config=cfg,
                                  progress_every=args.progress_every,
                                  max_workers=args.workers)
@@ -359,6 +383,10 @@ def cmd_compress(args: argparse.Namespace) -> int:
     print("COMPRESSED: %.3f GB" % (man["total_comp_bytes"] / 1e9))
     print("RATIO     : %.3fx" % man["ratio"])
     print("Store     : %s" % out_dir)
+    if args.force_raw_storage:
+        print("(--force-raw-storage: this store is a raw-BF16 comparison "
+              "control, not a real compressed store -- COMPRESSED/RATIO "
+              "above should read ~1.0x)")
     return 0
 
 
@@ -973,6 +1001,17 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--out", default=None, help="output store directory (default: ~/.afterimage/stores/<model>)")
     c.add_argument("--chunk-size", type=int, default=1024)
     c.add_argument("--quantize", default=None, choices=[None, "q8"])
+    c.add_argument(
+        "--force-raw-storage", action="store_true",
+        help="store every tensor's bit-exact raw BF16 bytes instead of "
+             "Huffman-coding the compressible ones -- the same store "
+             "format (manifest.json + weights.bin), loadable by the same "
+             "engine, with every tensor.compressed=False. Exists to "
+             "produce the raw-BF16-vs-compressed control this project's "
+             "own research plan calls for (hold placement/runtime fixed, "
+             "change only the physical representation): a store this way "
+             "is NOT smaller than the original checkpoint, it exists "
+             "purely as an apples-to-apples comparison baseline.")
     c.add_argument("--progress-every", type=int, default=50)
     c.add_argument("--workers", type=int, default=None)
     c.add_argument("--dry-run", action="store_true",

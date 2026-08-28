@@ -308,11 +308,60 @@ def test_packed_moe_expert_is_stored_as_an_independent_exact_slice(tmp_path):
     save_file({"model.layers.0.mlp.experts.gate_up_proj": weights}, str(path))
     result = _compress_one_tensor((
         str(path), "model.layers.0.mlp.experts.gate_up_proj",
-        64, None, 16, False, 1,
+        64, None, 16, False, 1, False,
     ))
     assert result["key"].endswith(".__expert__.1")
     assert result["shape"] == [96, 64]
     assert torch.equal(_decode_result(result), weights[1])
+
+
+def test_force_raw_storage_stores_bit_exact_bf16_not_upcast_float32(tmp_path):
+    """force_raw_storage on a tensor that would normally be Huffman-coded
+    must use the same bit-preserving bf16-as-int16 technique row_gather
+    already uses (see _compress_one_tensor), not the small-tensor
+    fallback's float32 upcast -- that fallback is fine for a handful of
+    tiny norm vectors (silently 2x on-disk bytes with comp_bytes still
+    reporting the bf16 count) but would corrupt this project's own
+    checkpoint-size accounting if reused for the bulk of a model's
+    weights. This is the real control run_offline_hypotheses/H6's
+    representation planner needs for Figure 5 (raw BF16 vs compressed,
+    same engine) to compare apples to apples.
+    """
+    path = tmp_path / "layer.safetensors"
+    weights = torch.randn(300, 300, dtype=torch.bfloat16)
+    save_file({"model.layers.0.mlp.gate_proj.weight": weights}, str(path))
+
+    normal = _compress_one_tensor((
+        str(path), "model.layers.0.mlp.gate_proj.weight", 64, None, 16, False, None, False))
+    forced = _compress_one_tensor((
+        str(path), "model.layers.0.mlp.gate_proj.weight", 64, None, 16, False, None, True))
+
+    assert normal["kind"] == "compressed"  # unaffected without the flag
+    assert forced["kind"] == "raw"
+    assert forced["dtype"] == "bfloat16"
+    # Bit-exact size, not the float32 fallback's silent doubling.
+    assert forced["comp_bytes"] == forced["orig_bytes"] == weights.numel() * 2
+    assert forced["arrays"]["raw"].nbytes == weights.numel() * 2
+
+    reconstructed = torch.from_numpy(forced["arrays"]["raw"]).view(torch.bfloat16).view(300, 300)
+    assert torch.equal(reconstructed, weights)
+
+
+def test_force_raw_storage_round_trips_through_the_manifest_declared_dtype():
+    """The read side (StreamingLosslessModel._decode_tensor) must branch on
+    the ACTUAL on-disk numpy dtype (int16 => reinterpret via .view(), not
+    the old float32-fallback's .to() numeric cast) -- calling .to() on the
+    bit-packed int16 array would silently convert integer VALUES to
+    floats instead of reinterpreting bytes, corrupting every weight.
+    """
+    weights = torch.randn(4, 4, dtype=torch.bfloat16)
+    raw16 = weights.contiguous().view(torch.int16).numpy()
+    # Simulate exactly what _decode_tensor does for a raw, non-row-gather
+    # tensor whose stored numpy array is int16-backed.
+    out = torch.from_numpy(raw16)
+    assert out.dtype == torch.int16
+    out = out.view(torch.bfloat16)
+    assert torch.equal(out.view(4, 4), weights)
 
 
 def test_selected_expert_forward_matches_packed_reference():

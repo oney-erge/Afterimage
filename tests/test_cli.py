@@ -301,3 +301,62 @@ def test_verify_missing_store_returns_1_without_touching_binstore(tmp_path, monk
     args = _pull_args(tmp_path)  # store dir was never created
     assert cmd_verify(args) == 1
     assert "No compressed store" in capsys.readouterr().err
+
+
+def _compress_args(tmp_path, *, force_raw_storage=False, dry_run=False, yes=True):
+    import types
+    return types.SimpleNamespace(
+        model="org/model", out=str(tmp_path / "store"), chunk_size=1024,
+        quantize=None, force_raw_storage=force_raw_storage,
+        progress_every=50, workers=None, dry_run=dry_run, yes=yes)
+
+
+def test_compress_dry_run_reports_full_size_for_force_raw_storage(
+        tmp_path, monkeypatch, capsys):
+    """A --force-raw-storage store is roughly checkpoint-sized, not
+    compressed -- the dry-run estimate must say so, or a real (non-dry)
+    run could start on a host without enough free space for it."""
+    from afterimage.cli import cmd_compress
+
+    monkeypatch.setattr("afterimage.cli._estimate_download_bytes", lambda model: 10_000_000_000)
+
+    args = _compress_args(tmp_path, force_raw_storage=True, dry_run=True)
+    assert cmd_compress(args) == 0
+    out = capsys.readouterr().out
+    assert "not compressed" in out
+    # 10 GB download -> ~10 GB raw store (not ~6.9 GB at the 1.453x ratio).
+    assert "store      : ~10.0 GB" in out
+
+
+def test_compress_dry_run_reports_compressed_estimate_by_default(
+        tmp_path, monkeypatch, capsys):
+    from afterimage.cli import cmd_compress
+
+    monkeypatch.setattr("afterimage.cli._estimate_download_bytes", lambda model: 10_000_000_000)
+
+    args = _compress_args(tmp_path, force_raw_storage=False, dry_run=True)
+    assert cmd_compress(args) == 0
+    out = capsys.readouterr().out
+    assert "at the measured" in out
+    assert "not compressed" not in out
+
+
+def test_compress_passes_force_raw_storage_into_the_engine_config(tmp_path, monkeypatch):
+    """cmd_compress must actually thread --force-raw-storage through to
+    compress_model_to_disk's EngineConfig, not just print about it."""
+    import afterimage.cli as cli_mod
+
+    seen = {}
+
+    def fake_compress_model_to_disk(model_id, out_dir, config=None, **kwargs):
+        seen["force_raw_storage"] = config.force_raw_storage
+        return {"total_orig_bytes": 1, "total_comp_bytes": 1, "ratio": 1.0}
+
+    monkeypatch.setattr(
+        "afterimage.runtime.streaming_engine.compress_model_to_disk",
+        fake_compress_model_to_disk)
+    monkeypatch.setattr(cli_mod, "_disk_preflight", lambda *a, **k: True)
+
+    args = _compress_args(tmp_path, force_raw_storage=True, dry_run=False)
+    assert cli_mod.cmd_compress(args) == 0
+    assert seen["force_raw_storage"] is True

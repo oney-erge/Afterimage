@@ -50,6 +50,35 @@ class EngineConfig:
                   notice -- but it is NOT lossless, so any run using it must
                   not be reported as such.
 
+    force_raw_storage
+        COMPRESSION-TIME ONLY (read by compress_model_to_disk, not by the
+        live streaming engine -- setting it on an EngineConfig used to open
+        an already-compressed store has no effect). When True, every
+        tensor that would normally get Huffman entropy coding
+        (compress_layer) is instead stored raw, same as the small/non-2D/
+        non-bf16 tensors that are always raw. The result is a same-format
+        store (manifest.json + weights.bin, loadable by the same engine,
+        same tier-assignment and representation-planner code paths) whose
+        every tensor.compressed is False -- the control this project's own
+        research plan calls "raw BF16 vs compressed, same engine": hold
+        placement and runtime fixed, change only the physical
+        representation, to isolate what compression itself is worth
+        (Figure 5 / P1-E4.1 in scripts/local/paper1/DATA_CONTRACT.md).
+        Default False (normal compressed store).
+
+    quantize
+        None   -- strictly lossless (DEFAULT). Output is bit-identical to the
+                  original bf16 model: verified on real models by comparing
+                  every weight, the forward-pass logits (max abs diff 0.0),
+                  and the generated token ids.
+        "q8"   -- OPT-IN LOSSY. Group-wise 8-bit quantization applied before
+                  entropy coding. Measured on real layers: ~2.0x compression
+                  at 0.55% mean relative output error, versus ~1.46x at 0.00%
+                  for lossless. It compresses better than lossless does, and
+                  0.55% is small enough that most deployments would not
+                  notice -- but it is NOT lossless, so any run using it must
+                  not be reported as such.
+
     chunk_size
         Symbols per independently-decodable chunk. Larger amortizes per-chunk
         overhead; smaller gives the GPU more parallel work. 1024 measured
@@ -324,6 +353,7 @@ class EngineConfig:
     chunk_size: int = 1024
     block_chunks: int = 32
     max_bits: int = 16
+    force_raw_storage: bool = False
 
     vram_budget_gb: float | None = None
     ram_budget_gb: float | None = None

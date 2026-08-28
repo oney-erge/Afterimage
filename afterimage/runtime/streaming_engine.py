@@ -164,8 +164,13 @@ def _compress_one_tensor(task: tuple) -> dict:
     if len(task) == 6:
         shard_path, key, chunk_size, quantize, max_bits, row_gather = task
         expert_index = None
-    else:
+        force_raw = False
+    elif len(task) == 7:
         shard_path, key, chunk_size, quantize, max_bits, row_gather, expert_index = task
+        force_raw = False
+    else:
+        (shard_path, key, chunk_size, quantize, max_bits, row_gather,
+         expert_index, force_raw) = task
     from safetensors import safe_open
 
     parent_key = key
@@ -194,7 +199,7 @@ def _compress_one_tensor(task: tuple) -> dict:
         }
 
     use_compression = (W.dtype == torch.bfloat16 and W.dim() == 2
-                       and W.numel() > 65536)
+                       and W.numel() > 65536 and not force_raw)
     if use_compression:
         if quantize == "q8":
             from ..probe.approximations import quantize_grouped
@@ -215,6 +220,26 @@ def _compress_one_tensor(task: tuple) -> dict:
                 "sym_lut": layer.encoded.sym_lut,
                 "len_lut": layer.encoded.len_lut,
             },
+        }
+
+    if force_raw and W.dtype == torch.bfloat16:
+        # force_raw_storage on a tensor that WOULD have been Huffman-coded:
+        # store its exact bit pattern via the same bf16-as-int16 technique
+        # row_gather already uses above, not the small-tensor fallback
+        # below. That fallback upcasts to float32 before writing -- lossless
+        # (bf16->fp32->bf16 round-trips exactly) but literally doubles
+        # on-disk bytes while comp_bytes still reports the bf16 count. That
+        # 2x under-reporting is harmless for the handful of tiny norm
+        # vectors the fallback normally handles, but would silently corrupt
+        # this project's own checkpoint-size accounting if applied to the
+        # bulk of a model's weights -- exactly the Table 1 numbers Figure 5
+        # (raw BF16 vs compressed, same engine) depends on being right.
+        raw16 = W.contiguous().view(torch.int16).numpy()
+        return {
+            "key": key, "kind": "raw", "shape": list(W.shape),
+            "parent_key": parent_key if expert_index is not None else None,
+            "dtype": "bfloat16", "orig_bytes": orig, "comp_bytes": orig,
+            "arrays": {"raw": raw16},
         }
 
     # small / non-2D / non-bf16 tensors: store raw. The LUT fixed cost would
@@ -307,12 +332,13 @@ def compress_model_to_disk(model_id: str, out_dir, config: EngineConfig | None =
                     ]
                     all_tasks.extend(
                         (str(shard), key, cfg.chunk_size, cfg.quantize,
-                         cfg.max_bits, False, index)
+                         cfg.max_bits, False, index, cfg.force_raw_storage)
                         for index in range(shape[0])
                     )
                 else:
                     all_tasks.append((str(shard), key, cfg.chunk_size, cfg.quantize,
-                                      cfg.max_bits, key == row_gather_key, None))
+                                      cfg.max_bits, key == row_gather_key, None,
+                                      cfg.force_raw_storage))
 
     big_tasks = [t for t in all_tasks if t[1].endswith(_BIG_TENSOR_SUFFIXES)]
     small_tasks = [t for t in all_tasks if not t[1].endswith(_BIG_TENSOR_SUFFIXES)]
@@ -326,6 +352,7 @@ def compress_model_to_disk(model_id: str, out_dir, config: EngineConfig | None =
     manifest = {"schema_version": CURRENT_SCHEMA_VERSION, "model_id": model_id,
                 "revision": revision,
                 "quantize": cfg.quantize, "chunk_size": cfg.chunk_size,
+                "force_raw_storage": cfg.force_raw_storage,
                 "tied": tied, "tensors": {}, "expert_slices": expert_slices}
     total_orig = 0
     total_comp = 0
@@ -964,7 +991,23 @@ class StreamingLosslessModel:
                     "that way" % key)
             out = torch.from_numpy(arrays["raw"])
             dt = meta.get("dtype", "bfloat16")
-            if "bfloat16" in dt:
+            if out.dtype == torch.int16 and "bfloat16" in dt:
+                # A bit-packed bf16-as-int16 blob (force_raw_storage's true
+                # raw-BF16 path, or any other exact-bit-pattern raw write)
+                # must be REINTERPRETED, not numerically cast: .to() on an
+                # int16 tensor converts the integer VALUES (e.g. 16256 ->
+                # 16256.0), which is not what the stored bytes mean. .view()
+                # reinterprets the same bytes as bf16, matching how
+                # _install_embed_row_gather already reads its own
+                # bf16-as-int16 blobs elsewhere in this file.
+                out = out.view(torch.bfloat16)
+            elif "bfloat16" in dt:
+                # The small-tensor raw fallback stores an UPCAST float32
+                # array (see _compress_one_tensor) -- a real numeric cast
+                # back down, which is exact only because bf16->fp32->bf16
+                # round-trips losslessly (fp32 can represent every bf16
+                # value exactly, and casting a value that IS exactly
+                # bf16-representable back to bf16 reproduces the same bits).
                 out = out.to(torch.bfloat16)
             elif "float16" in dt:
                 out = out.to(torch.float16)
