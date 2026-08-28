@@ -172,7 +172,7 @@ select { min-height: 34px; padding: 6px 31px 6px 9px; }
 .row-actions { display: flex; align-items: center; justify-content: flex-end; gap: 7px; }
 .badge { display: inline-flex; align-items: center; min-height: 21px; padding: 3px 7px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); background: #10161c; font: 600 10px/1 var(--mono); white-space: nowrap; }
 .badge.ready, .badge.verified, .badge.done { border-color: #285746; background: var(--accent-bg); color: var(--accent); }
-.badge.running, .badge.downloading, .badge.preparing, .badge.verifying { border-color: #294866; background: #102132; color: var(--blue); }
+.badge.running, .badge.downloading, .badge.preparing, .badge.verifying, .badge.loaded { border-color: #294866; background: #102132; color: var(--blue); }
 .badge.experimental, .badge.expected, .badge.paused, .badge.pause_requested, .badge.interrupted { border-color: #5b4929; background: #271f11; color: var(--amber); }
 .badge.failed, .badge.error, .badge.cancelled { border-color: #613236; background: #281416; color: var(--red); }
 /* Afterimage Fit: a separate vocabulary from confidence badges above --

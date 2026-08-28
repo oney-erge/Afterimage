@@ -37,11 +37,16 @@ function renderLibrary() {
     const actions = [];
     if (model.state === "ready") actions.push(`<button class="button primary" data-chat-model="${encodedModel(model.model_id)}">Chat</button>`);
     else if (!job) actions.push(`<button class="button primary" data-get-model="${encodedModel(model.model_id)}">${model.state === "downloaded" ? "Prepare" : "Continue"}</button>`);
+    if (model.loaded) actions.push(`<button class="button secondary" data-unload-model="${encodedModel(model.model_id)}">Unload</button>`);
     actions.push(`<button class="button secondary" data-model-detail="${encodedModel(model.model_id)}">Details</button>`);
     if (!job) actions.push(`<button class="text-button" data-remove-model="${encodedModel(model.model_id)}">Remove</button>`);
     const fit = model.comp_gb ? fitBadge(afterimageFit(model.comp_gb, vramTotalGb())) : "";
+    // "loaded" (this engine is resident in VRAM/RAM right now) is a
+    // separate fact from "ready" (a compressed store exists on disk) --
+    // both badges can be true at once, and only "loaded" is ever untrue
+    // for a model nobody has chatted with yet.
     return `<article class="model-row compact-model-row">
-      <div class="model-primary"><strong class="model-name" title="${esc(model.model_id)}">${esc(model.model_id)}</strong><div class="badge-row">${badge(stateValue)}${fit}${compatibility.modality === "vision-text" ? badge("vision", "Vision") : ""}${compatibility.mixture_of_experts ? badge("moe", "MoE") : ""}</div></div>
+      <div class="model-primary"><strong class="model-name" title="${esc(model.model_id)}">${esc(model.model_id)}</strong><div class="badge-row">${badge(stateValue)}${model.loaded ? badge("loaded", "Loaded") : ""}${fit}${compatibility.modality === "vision-text" ? badge("vision", "Vision") : ""}${compatibility.mixture_of_experts ? badge("moe", "MoE") : ""}</div></div>
       <div class="model-description">${esc(model.error || size)}</div><div class="row-actions">${actions.join("")}</div>
     </article>`;
   }).join("");
@@ -53,6 +58,7 @@ function bindModelActions(node) {
   node.querySelectorAll("[data-get-model]").forEach((button) => button.addEventListener("click", () => startGet(decodeURIComponent(button.dataset.getModel), button)));
   node.querySelectorAll("[data-model-detail]").forEach((button) => button.addEventListener("click", () => openModelDialog(decodeURIComponent(button.dataset.modelDetail))));
   node.querySelectorAll("[data-remove-model]").forEach((button) => button.addEventListener("click", () => removeModel(decodeURIComponent(button.dataset.removeModel), button)));
+  node.querySelectorAll("[data-unload-model]").forEach((button) => button.addEventListener("click", () => unloadModel(decodeURIComponent(button.dataset.unloadModel), button)));
 }
 
 // The segmented control's server-side counterpart: All/Text/Vision search
@@ -160,6 +166,14 @@ async function removeModel(modelId, button) {
   try {
     await api(`/api/models/${modelId.split("/").map(encodeURIComponent).join("/")}?confirm_model_id=${encodeURIComponent(modelId)}`, { method: "DELETE" });
     toast(`${modelId} removed from Afterimage.`); await loadLibrary();
+  } catch (error) { toast(error.message, "error"); button.disabled = false; }
+}
+
+async function unloadModel(modelId, button) {
+  button.disabled = true;
+  try {
+    await api(`/api/models/${modelId.split("/").map(encodeURIComponent).join("/")}/unload`, { method: "POST" });
+    toast(`${modelId} unloaded — VRAM and RAM freed.`); await loadLibrary();
   } catch (error) { toast(error.message, "error"); button.disabled = false; }
 }
 

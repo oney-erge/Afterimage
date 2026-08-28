@@ -76,8 +76,10 @@ def health() -> dict:
     genuinely hung process."""
     import torch
     model_loaded = _engine_cache._sm is not None
+    loading_key = _engine_cache._loading_key
     return {"status": "ok", "model_loaded": model_loaded,
             "loaded_model": _engine_cache._key[0] if _engine_cache._key else None,
+            "loading_model": loading_key[0] if loading_key else None,
             "cuda_available": torch.cuda.is_available()}
 
 
@@ -223,6 +225,7 @@ def list_models() -> dict:
     _scan_store_root(DEFAULT_STORE_ROOT, by_id, mtimes)
     for root in _extra_store_roots():
         _scan_store_root(root, by_id, mtimes)
+    loaded_id = _engine_cache._key[0] if _engine_cache._key else None
     out = []
     for model in by_id.values():
         manifest = model.get("metadata", {}).get("manifest", {})
@@ -232,6 +235,11 @@ def list_models() -> dict:
             "orig_gb": manifest.get("total_orig_bytes", 0) / 1e9,
             "comp_gb": manifest.get("total_comp_bytes", 0) / 1e9,
             "ratio": manifest.get("ratio"),
+            # Whether THIS model's engine is currently resident in VRAM/RAM
+            # -- distinct from "state": "ready", which only means a
+            # compressed store exists on disk. Lets the UI offer Unload
+            # only where there is actually something to unload.
+            "loaded": model["model_id"] == loaded_id,
         })
     return {"models": sorted(out, key=lambda row: row["updated_at"], reverse=True)}
 
@@ -398,6 +406,21 @@ def import_cached_model(req: ImportCachedRequest) -> dict:
     ))
 
 
+@app.post("/api/models/{model_id:path}/unload")
+def unload_model(model_id: str) -> dict:
+    """Free the currently loaded engine's VRAM/RAM without touching its
+    compressed store on disk -- the counterpart to the implicit load that
+    happens on a model's first chat request. Requires model_id to match
+    what is actually loaded (rather than silently unloading whatever
+    happens to be resident) so a stale UI can't unload a different
+    model's engine out from under a request that started in between.
+    """
+    if _engine_cache._key is None or _engine_cache._key[0] != model_id:
+        raise HTTPException(409, "%r is not currently loaded" % model_id)
+    unloaded = _engine_cache.unload()
+    return {"model_id": unloaded, "unloaded": unloaded is not None}
+
+
 @app.delete("/api/models/{model_id:path}")
 def remove_model(model_id: str, confirm_model_id: str) -> dict:
     """Remove one prepared store. The shared Hugging Face cache is retained."""
@@ -411,6 +434,14 @@ def remove_model(model_id: str, confirm_model_id: str) -> dict:
     ]
     if active:
         raise HTTPException(409, "cancel the active model job before removing this model")
+    # The live engine can be holding open file handles into the store
+    # about to be deleted (StreamingLosslessModel.close() exists
+    # specifically to release them). Without unloading first, rmtree
+    # races a live reader: PermissionError on Windows after a partial
+    # delete, or a silently-deleted-out-from-under-it live engine on
+    # Linux that then fails confusingly on its next read.
+    if _engine_cache._key is not None and _engine_cache._key[0] == model_id:
+        _engine_cache.unload()
     store = _store_dir_for(model_id).resolve()
     root = DEFAULT_STORE_ROOT.resolve()
     if store.parent != root:
@@ -1209,6 +1240,13 @@ class _EngineCache:
         self._draft_key = None
         self._draft = None
         self._last_completion_len: int | None = None
+        # Set only while a load is in progress, read (without the lock --
+        # a tuple-or-None reference read is atomic under the GIL, and this
+        # is a status hint, not something anything branches on for
+        # correctness) so /health can report "loading" during a load that
+        # can take minutes rather than looking merely idle because _lock
+        # is held.
+        self._loading_key: tuple | None = None
 
     def get(self, model_id: str, cfg: EngineConfig):
         # The full config fingerprint, not a hand-picked field subset -- an
@@ -1219,41 +1257,60 @@ class _EngineCache:
         key = (model_id, cfg.fingerprint())
         with self._lock:
             if self._key != key:
-                if self._sm is not None:
-                    logger.info("evicting engine for %s to load %s", self._key[0], model_id)
-                    self._sm.close()
-                    self._sm = None
-                from transformers import AutoConfig, AutoProcessor, AutoTokenizer
-                import torch
-                from afterimage.runtime.streaming_engine import StreamingLosslessModel
+                self._loading_key = key
+                try:
+                    if self._sm is not None:
+                        logger.info("evicting engine for %s to load %s", self._key[0], model_id)
+                        self._sm.close()
+                        self._sm = None
+                        # Nothing is loaded for the rest of this attempt.
+                        # Committing to the NEW key only after every
+                        # fallible step below succeeds (store-existence
+                        # check, tokenizer/config load, engine
+                        # construction) is what fixes the real bug this
+                        # replaced: the old code set self._key = key only
+                        # at the very end but had already cleared self._sm
+                        # to None above, so a failure in between left
+                        # _key pointing at the OLD model while _sm was
+                        # None -- the next request for that old model
+                        # matched _key, skipped reloading, and returned
+                        # None, 500ing every request until a THIRD model
+                        # was requested.
+                        self._key = None
+                    from transformers import AutoConfig, AutoProcessor, AutoTokenizer
+                    import torch
+                    from afterimage.runtime.streaming_engine import StreamingLosslessModel
 
-                store_dir = _store_dir_for(model_id)
-                if not (store_dir / "manifest.json").exists():
-                    raise HTTPException(
-                        404, "no compressed store for %r -- POST /api/compress first" % model_id)
-                logger.info("loading %s (config %s)", model_id, cfg.fingerprint())
-                local = model_registry.get_model(model_id) or {}
-                snapshot_value = local.get("local_snapshot")
-                source = (
-                    pathlib.Path(snapshot_value)
-                    if snapshot_value and pathlib.Path(snapshot_value).exists()
-                    else model_id
-                )
-                model_config = AutoConfig.from_pretrained(source, trust_remote_code=False)
-                vision = classify_config(model_config)["modality"] == "vision-text"
-                self._tok = (
-                    AutoProcessor.from_pretrained(source, trust_remote_code=False)
-                    if vision
-                    else AutoTokenizer.from_pretrained(source, trust_remote_code=False)
-                )
-                self._sm = StreamingLosslessModel(
-                    model_id, store_dir,
-                    device="cuda" if torch.cuda.is_available() else "cpu",
-                    config=cfg,
-                    source_dir=source,
-                )
-                self._key = key
-                logger.info("%s loaded", model_id)
+                    store_dir = _store_dir_for(model_id)
+                    if not (store_dir / "manifest.json").exists():
+                        raise HTTPException(
+                            404, "no compressed store for %r -- POST /api/compress first"
+                            % model_id)
+                    logger.info("loading %s (config %s)", model_id, cfg.fingerprint())
+                    local = model_registry.get_model(model_id) or {}
+                    snapshot_value = local.get("local_snapshot")
+                    source = (
+                        pathlib.Path(snapshot_value)
+                        if snapshot_value and pathlib.Path(snapshot_value).exists()
+                        else model_id
+                    )
+                    model_config = AutoConfig.from_pretrained(source, trust_remote_code=False)
+                    vision = classify_config(model_config)["modality"] == "vision-text"
+                    tok = (
+                        AutoProcessor.from_pretrained(source, trust_remote_code=False)
+                        if vision
+                        else AutoTokenizer.from_pretrained(source, trust_remote_code=False)
+                    )
+                    sm = StreamingLosslessModel(
+                        model_id, store_dir,
+                        device="cuda" if torch.cuda.is_available() else "cpu",
+                        config=cfg,
+                        source_dir=source,
+                    )
+                    self._sm, self._tok, self._key = sm, tok, key
+                    logger.info("%s loaded", model_id)
+                finally:
+                    self._loading_key = None
             return self._sm, self._tok
 
     def get_draft(self, draft_model_id: str, device: str):
@@ -1267,6 +1324,33 @@ class _EngineCache:
                 self._draft = load_draft_model(draft_model_id, device=device)
                 self._draft_key = key
             return self._draft
+
+    def unload(self) -> str | None:
+        """Explicitly evict the loaded engine and free its VRAM/RAM
+        without loading anything new -- the "undeploy" action that did
+        not previously exist: the only way to release a model's memory
+        was to load a DIFFERENT one, which evicted it as a side effect
+        rather than as something a user could ask for directly. Also
+        releases the draft model, since it has no purpose without a
+        target to speculate against, and it otherwise stayed resident
+        for the rest of the process even after the target it was drafting
+        for was gone. Returns the model_id that was unloaded, or None if
+        nothing was loaded.
+        """
+        with self._lock:
+            model_id = self._key[0] if self._key else None
+            if self._sm is not None:
+                self._sm.close()
+            self._sm = None
+            self._tok = None
+            self._key = None
+            self._last_completion_len = None
+            self._draft = None
+            self._draft_key = None
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            return model_id
 
 
 _engine_cache = _EngineCache()

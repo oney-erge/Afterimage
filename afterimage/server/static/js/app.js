@@ -28,7 +28,11 @@ async function checkRuntime() {
   try {
     const [health, version] = await Promise.all([api("/health"), api("/api/version")]);
     $("health-dot").className = "ok";
-    $("health-label").textContent = health.model_loaded ? "Runtime ready · model loaded" : "Runtime ready";
+    // A model load can take minutes (streaming a compressed store off
+    // disk) with nothing else in the UI showing progress during it --
+    // this poll is what fills that gap.
+    if (health.loading_model) $("health-label").textContent = `Loading ${health.loading_model}…`;
+    else $("health-label").textContent = health.model_loaded ? "Runtime ready · model loaded" : "Runtime ready";
     $("version-label").textContent = `Afterimage ${version.version}`;
   } catch (_) {
     $("health-dot").className = "bad";

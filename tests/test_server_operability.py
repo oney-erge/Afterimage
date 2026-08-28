@@ -12,6 +12,7 @@ def test_health_reports_no_model_loaded_when_cache_is_empty():
     assert payload["status"] == "ok"
     assert payload["model_loaded"] is False
     assert payload["loaded_model"] is None
+    assert payload["loading_model"] is None
     assert "cuda_available" in payload
 
 
