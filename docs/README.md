@@ -15,7 +15,7 @@ here in full, including the things that did not work.
 |---|---|
 | [USAGE.md](USAGE.md) | How do I install it and generate text? |
 | [CONFIGURATION.md](CONFIGURATION.md) | What knobs exist, and which models are supported? |
-| [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | It broke — now what? |
+| [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | It broke. Now what? |
 | [FAQ.md](FAQ.md) | Short answers to the common questions. |
 
 ## Understanding it
@@ -54,10 +54,10 @@ Some material stays on the author's disk rather than in the published
 repository, because a clone should carry the engine and the evidence for its
 claims, not someone's in-progress writing:
 
-- `docs/archive/` — superseded planning documents, kept for traceability.
-- `paper/` — manuscript drafts, outlines, and campaign planning.
-- `scripts/local/` — personal session scripts and local experiment harnesses.
-- `results/paper-comparison/` — live campaign output, including partial and
+- `docs/archive/`: superseded planning documents, kept for traceability.
+- `paper/`: manuscript drafts, outlines, and campaign planning.
+- `scripts/local/`: personal session scripts and local experiment harnesses.
+- `results/paper-comparison/`: live campaign output, including partial and
   exploratory attempts. Completed, paper-eligible artifacts are curated into
   the date-stamped published result set instead.
 
