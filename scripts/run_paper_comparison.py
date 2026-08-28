@@ -510,6 +510,32 @@ def run_one_token_length(args, tokenizer, rendered: list[dict],
                 "invocation: %s" % (partial, mismatched))
         result.setdefault("cells", [])
         result.setdefault("rows_by_method", {method_id: [] for method_id in selected})
+        # A .partial file normally still has rows_by_method (checkpoint()
+        # saves the in-progress result as-is, before finalize_result()'s
+        # own del rows_by_method ever runs). But this project's own
+        # established way to retry a failed method in an already-FINISHED
+        # run is to rename <name>.json -> <name>.json.partial and rerun
+        # with --resume (see docs/REPRODUCE.md) -- and a finished file has
+        # already been through finalize_result(), which moves each
+        # method's real per-row measurements into methods[i]["rows"] and
+        # deletes rows_by_method entirely. Without this backfill, resuming
+        # from a renamed-finished file silently starts every method's
+        # rows_by_method empty; only methods actually re-executed in this
+        # invocation get real rows back, and finalize_result() then
+        # rebuilds "methods" from that mostly-empty rows_by_method,
+        # overwriting the previously-real rows/summary/paired_vs_control
+        # for every method that was correctly skipped as already-done.
+        # Caught by hand tonight (Qwen3-14B TTFT table: 5 of 6 methods
+        # showed outcome="error" with 0 rows in the final artifact after a
+        # DeepSpeed-only retry, despite every one of their cells recording
+        # error=None) -- recovered that run's real numbers from its stdout
+        # log rather than trusting the corrupted artifact. This backfill
+        # is the actual fix so future retries do not depend on the log
+        # surviving to recover from the same loss.
+        for method_entry in result.get("methods", []):
+            method_id = method_entry.get("method_id")
+            if method_id in result["rows_by_method"] and not result["rows_by_method"][method_id]:
+                result["rows_by_method"][method_id] = list(method_entry.get("rows") or [])
         for method_id in selected:
             result["rows_by_method"].setdefault(method_id, [])
         resuming = True
