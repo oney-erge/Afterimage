@@ -3,6 +3,7 @@ import pytest
 from scripts.run_bounded_suite import (
     _installed_accelerate_title,
     _installed_airllm_title,
+    _installed_deepspeed_title,
     aggregate,
 )
 
@@ -66,6 +67,15 @@ def test_accelerate_method_title_degrades_gracefully_when_not_installed(monkeypa
     monkeypatch.setattr("importlib.metadata.version", raising_version)
     title = _installed_accelerate_title()
     assert "unknown" in title.lower()
+
+
+def test_deepspeed_method_title_reflects_the_actually_installed_version(monkeypatch):
+    def fake_version(name):
+        assert name == "deepspeed"
+        return "0.18.0"
+
+    monkeypatch.setattr("importlib.metadata.version", fake_version)
+    assert _installed_deepspeed_title() == "DeepSpeed ZeRO-Inference 0.18.0"
 
 
 def test_aggregate_reports_no_dispersion_for_a_single_repeat():

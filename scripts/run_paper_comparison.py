@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""One-click, randomized-block comparison for the paper's headline claim:
-Afterimage vs AirLLM vs Hugging Face Accelerate vs DFloat11, on identical
-prompts and hardware, at multiple output-token lengths, with real inter-
-method randomization instead of a fixed method order.
+"""Randomized-block comparison for the paper's headline claim:
+Afterimage vs AirLLM vs Hugging Face Accelerate vs DeepSpeed ZeRO-Inference,
+on identical prompts and hardware, at multiple output-token lengths, with
+real inter-method randomization instead of a fixed method order.
 
 Why this exists instead of just raising --repeats on run_bounded_suite.py's
 canonical driver
@@ -44,10 +44,9 @@ for that once a pilot run's block-to-block variance is known.
 
 Requires (WSL2/Linux only, matching run_bounded_suite.py and benchmark.sh):
 CUDA, a prepared Afterimage store for --model, and the optional-dependency
-group `bench` installed (`pip install -e .[bench]`, or by hand:
-`pip install airllm "accelerate>=1.0" "dfloat11[cuda12]"`). Any method whose
-package is missing is skipped with a recorded reason, not a hard failure,
-so a partial dependency set still produces a usable result.
+group `bench` installed (`pip install -e .[bench]`). Missing packages fail
+preflight before the first multi-hour cell rather than creating a partial
+comparison that cannot satisfy --require-complete.
 
 Usage:
     python scripts/run_paper_comparison.py \\
@@ -91,21 +90,13 @@ from scripts import run_bounded_suite as bounded
 
 WORKER_SCRIPT = pathlib.Path(__file__).resolve().parent / "run_paper_comparison_worker.py"
 
-# The core headline comparison: one representative from each execution
-# family (published disk-offload baselines, a published GPU-resident
-# compression baseline, and Afterimage's own exact-streaming controls).
-# dfloat11 (not dfloat11-gpu-resident) is the default because it is the
-# variant that actually fits this project's reference 8 GB RTX 3080 for a
-# 14B model -- see the comment on METHODS["dfloat11"] in run_bounded_suite.py.
-# On that same 8 GB card dfloat11 is expected to hit a predeclared capacity
-# failure (see run_paper_comparison_worker.is_capacity_failure /
-# capacity_failed_cells) rather than produce a speed number -- deepspeed-
-# zero-inference is a second, general-purpose disk/RAM-tiered competitor in
-# the same category as airllm/accelerate (not an architecture-specific one
-# like KTransformers/Fiddler, and unlike FlexGen it actually runs this
-# project's model family) so the comparison does not rest on airllm alone
-# whenever dfloat11 cannot initialize.
-DEFAULT_METHODS = ("airllm", "accelerate", "dfloat11", "deepspeed-zero-inference",
+# Headline methods must produce timings on the reference host. DFloat11 is
+# retained as an opt-in capacity appendix because its Qwen3-14B checkpoint
+# cannot initialize on the 8 GB reference GPU. A predictable OOM is useful
+# applicability evidence, but it is not a performance baseline and must not
+# occupy an empty row in the headline table. Accelerate and DeepSpeed are the
+# two runnable external offload baselines in addition to AirLLM.
+DEFAULT_METHODS = ("airllm", "accelerate", "deepspeed-zero-inference",
                    "exact-min", "exact-resident", "spec-fixed")
 # 1 is a genuine TTFT probe (see workload_for()); 128 is long enough to
 # exercise a full k=8 fixed-speculation chain repeatedly, which 4 never
@@ -113,7 +104,14 @@ DEFAULT_METHODS = ("airllm", "accelerate", "dfloat11", "deepspeed-zero-inference
 # max_new_tokens - n_generated -- see streaming_engine.py). Do not report
 # the 4-token pass as TTFT: it measures short cold-start latency, a
 # different and still-useful thing, but not literal time-to-first-token.
-DEFAULT_TOKEN_LENGTHS = (1, 4, 32, 128)
+DEFAULT_TOKEN_LENGTHS_BY_SUITE = {
+    "evaluation": (1, 4),
+    "paper_generation": (1, 32, 128),
+}
+# Backwards-compatible public constant used by tests and external scripts.
+# The CLI selects the suite-specific value above when --token-lengths is not
+# supplied, so it never forces a factual one-word prompt to 128 tokens.
+DEFAULT_TOKEN_LENGTHS = DEFAULT_TOKEN_LENGTHS_BY_SUITE["evaluation"]
 
 
 def workload_for(n_tokens: int) -> str:
@@ -179,7 +177,8 @@ def budget_method_variants(budget_gb: float) -> dict[str, object]:
 CONTROL_METHOD = "exact-min"
 
 DEPENDENCY_PACKAGE = {"airllm": "airllm", "accelerate": "accelerate",
-                      "dfloat11": "dfloat11", "dfloat11-gpu-resident": "dfloat11"}
+                      "dfloat11": "dfloat11", "dfloat11-gpu-resident": "dfloat11",
+                      "deepspeed-zero-inference": "deepspeed"}
 
 # Boundaries for vram_regime() sit at the midpoints between this repo's own
 # configured Afterimage budgets: exact-min 1.80 GB, spec-fixed 2.70 GB,
@@ -440,9 +439,9 @@ def capacity_failed_cells(result: dict) -> set[tuple[int, str]]:
     worker.is_capacity_failure) -- a real, reportable OUTCOME, not missing
     data. A method that deterministically cannot fit a VRAM budget will
     fail every block the same way; treating that as "still needed" would
-    make --resume retry a doomed OOM forever and would make
-    paper_eligible=False forever too, for a result the campaign was never
-    going to be able to complete regardless of how many times it reran.
+    make --resume retry a doomed OOM forever. It still does not make the
+    performance matrix paper-eligible; run capacity studies without
+    --require-complete and keep them outside the headline table.
     """
     return {(cell["block"], cell["method"]) for cell in result.get("cells", [])
            if cell.get("error") is not None
@@ -452,8 +451,10 @@ def capacity_failed_cells(result: dict) -> set[tuple[int, str]]:
 
 def paper_eligibility(result: dict, blocks: int, selected: list[str]) -> tuple[bool, str]:
     """Whether every requested (block, method) cell for this token length
-    either produced rows or was accounted for by a predeclared capacity
-    failure -- a paper claim built on a matrix with silent gaps (a method
+    produced rows. Capacity failures remain explicit outcomes in ``methods``
+    but do not make a performance matrix paper-eligible: the headline table
+    must use runnable alternatives instead of presenting an empty "failed"
+    competitor row. A paper claim built on a matrix with silent gaps (a method
     that failed every block for an unexplained reason, a block cut short
     by the time budget) is not a claim about what the flags requested, it
     is a claim about whatever happened to finish. required is exactly
@@ -463,10 +464,10 @@ def paper_eligibility(result: dict, blocks: int, selected: list[str]) -> tuple[b
     started and then failed.
     """
     required = {(block, method_id) for block in range(blocks) for method_id in selected}
-    have = completed_cells(result) | capacity_failed_cells(result)
+    have = completed_cells(result)
     missing = sorted(required - have)
     if not missing:
-        return True, "complete: every requested (block, method) cell succeeded or hit a predeclared capacity failure"
+        return True, "complete: every requested (block, method) cell succeeded"
     preview = ", ".join("block %d/%s" % pair for pair in missing[:5])
     more = " (+%d more)" % (len(missing) - 5) if len(missing) > 5 else ""
     return False, "missing %d of %d required cells: %s%s" % (
@@ -693,7 +694,7 @@ def run_one_token_length(args, tokenizer, rendered: list[dict],
             and isinstance(cell.get("metadata"), dict)
             and cell["metadata"].get("capacity_failure")]
         # A capacity failure is a finding ("this method cannot fit the
-        # available VRAM"), never a table row that just says "failed" --
+        # available hardware"), never a table row that just says "failed" --
         # this is the field a paper's methods table should key its
         # capacity-failure vs. measured-result rows on, instead of
         # inferring it from an empty rows list, which also covers "not
@@ -721,8 +722,13 @@ def run_one_token_length(args, tokenizer, rendered: list[dict],
                 "temperature_c_max": max(temp_maxes) if temp_maxes else None,
                 "any_throttle_during_measurement": (
                     any(throttle_flags) if throttle_flags else None),
-                "total_energy_joules_estimate": total_energy_j,
-                "energy_joules_per_token_estimate": energy_j_per_token,
+                # The worker-level sampler starts before method setup and ends
+                # after cleanup. These are deliberately named inclusive so a
+                # paper cannot mistake setup+warmup+generation energy for a
+                # decode-only hardware counter.
+                "energy_scope": "cell setup, warmup, generation, cooldown, and cleanup",
+                "inclusive_total_energy_joules_estimate": total_energy_j,
+                "inclusive_energy_joules_per_output_token_estimate": energy_j_per_token,
             },
         }
         if method_id != CONTROL_METHOD:
@@ -793,12 +799,14 @@ def main() -> int:
              "cases to keep generating past their one-token answer produces a "
              "strange speculative-decoding workload. Run the script twice, once "
              "per suite, rather than mixing both into one --token-lengths sweep.")
-    parser.add_argument("--token-lengths", default=",".join(map(str, DEFAULT_TOKEN_LENGTHS)),
+    parser.add_argument("--token-lengths", default=None,
                         help="comma-separated --max-new-tokens values run back to "
                              "back, one immutable result file each. Short lengths "
                              "measure cold-start latency; only a length at least as "
                              "large as any spec_k in --methods actually exercises a "
-                             "full speculative chain (spec-fixed uses spec_k=8).")
+                             "full speculative chain (spec-fixed uses spec_k=8). "
+                             "Default: 1,4 for evaluation; 1,32,128 for "
+                             "paper_generation.")
     parser.add_argument("--blocks", type=int, default=3,
                         help="randomized-order full sweeps per token length (default "
                              "3, i.e. 'each pass 3 times'). Each block reloads every "
@@ -873,8 +881,10 @@ def main() -> int:
                     selected.append(method_id)
                 if method_id.startswith("accelerate-"):
                     DEPENDENCY_PACKAGE[method_id] = "accelerate"
+    token_lengths_arg = args.token_lengths or ",".join(
+        map(str, DEFAULT_TOKEN_LENGTHS_BY_SUITE[args.prompt_suite]))
     try:
-        token_lengths = [int(part.strip()) for part in args.token_lengths.split(",")
+        token_lengths = [int(part.strip()) for part in token_lengths_arg.split(",")
                          if part.strip()]
     except ValueError:
         parser.error("--token-lengths must be a comma-separated list of integers")
@@ -910,9 +920,10 @@ def main() -> int:
               if method_id in DEPENDENCY_PACKAGE
               and bounded.package_version(DEPENDENCY_PACKAGE[method_id]) is None]
     if missing:
-        log("WARNING: missing packages for %s -- those methods will fail per-block "
-            "rather than block the rest of the run. Install with "
-            "`pip install -e .[bench]`." % ", ".join(missing))
+        raise RuntimeError(
+            "missing packages for selected methods %s; install with "
+            "`pip install -e .[bench]` before starting the campaign" %
+            ", ".join(missing))
 
     tokenizer = load_tokenizer(args.model)
     evaluation_cases = prompt_cases(args.prompt_suite)

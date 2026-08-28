@@ -360,6 +360,7 @@ class EngineConfig:
     execution_policy: str = "static"
     execution_policy_state: str | None = None
     representation_policy: str = "uniform"
+    representation_plan_state: str | None = None
     lm_head_policy: str = "full"
     mips_index_ram_limit_gb: float = 16.0
     expert_codec: str = "independent"
@@ -482,6 +483,22 @@ class EngineConfig:
             raise ValueError("unknown execution_policy %r" % self.execution_policy)
         if self.representation_policy not in ("uniform", "per_tensor", "multi_state"):
             raise ValueError("unknown representation_policy %r" % self.representation_policy)
+        if (self.representation_policy != "uniform"
+                and not self.representation_plan_state):
+            raise ValueError(
+                "representation_policy=%r requires representation_plan_state "
+                "with one exact, materialized choice per stored tensor"
+                % self.representation_policy)
+        if (self.representation_policy == "uniform"
+                and self.representation_plan_state):
+            raise ValueError(
+                "representation_plan_state requires a non-uniform "
+                "representation_policy")
+        if (self.representation_policy != "uniform"
+                and self.vram_budget_gb is None):
+            raise ValueError(
+                "non-uniform representation planning requires vram_budget_gb "
+                "so the materialized plan can be checked against its live budget")
         if self.lm_head_policy not in ("full", "certified_mips", "ram_overlay"):
             raise ValueError(
                 "lm_head_policy must be 'full', 'certified_mips' or "

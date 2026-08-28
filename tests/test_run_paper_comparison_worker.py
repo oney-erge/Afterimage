@@ -94,6 +94,19 @@ def test_dispatches_dfloat11(monkeypatch):
     assert len(calls) == 1
 
 
+def test_dispatches_deepspeed_zero_inference(monkeypatch):
+    calls = []
+
+    def fake_run_deepspeed(*args, **kwargs):
+        calls.append((args, kwargs))
+        return [], {}
+
+    monkeypatch.setattr(worker, "run_deepspeed_zero_inference", fake_run_deepspeed)
+    result = worker.run_cell(_base_config(method_id="deepspeed-zero-inference"))
+    assert result["error"] is None
+    assert len(calls) == 1
+
+
 def test_dfloat11_model_override_actually_rewrites_the_registered_method(monkeypatch):
     """Regression test for a real bug: run_dfloat11's own
     `method.overrides.get("model_id", DFLOAT11_MODEL)` fallback is dead
@@ -400,8 +413,19 @@ class TestThermalMonitorSummary:
             "samples_collected": 0, "sm_clock_mhz_min": None,
             "sm_clock_mhz_median": None, "temperature_c_max": None,
             "mean_power_draw_w": None, "energy_joules_estimate": None,
+            "energy_sampling_seconds": None, "energy_estimation_method": None,
             "any_throttle_during_measurement": None,
         }
+
+    def test_energy_uses_actual_monotonic_sample_spacing(self):
+        samples = [
+            {"power_draw_w": "100", "sampled_at_monotonic_s": 10.0},
+            {"power_draw_w": "200", "sampled_at_monotonic_s": 12.0},
+        ]
+        summary = worker.thermal_monitor_summary(samples)
+        assert summary["energy_joules_estimate"] == pytest.approx(300.0)
+        assert summary["energy_sampling_seconds"] == pytest.approx(2.0)
+        assert summary["energy_estimation_method"] == "trapezoidal_monotonic_samples"
 
 
 class TestThermalSampler:

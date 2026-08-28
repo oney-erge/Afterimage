@@ -229,9 +229,6 @@ and gated results instead of hiding them.
 - [FlexGen](https://github.com/Relaxed-System-Lab/FlexGen) is designed for
   throughput-oriented large batches and OPT-family experiments; its published
   numbers are not interactive BF16 Qwen3-14B latency.
-- [DeepSpeed ZeRO-Inference](https://github.com/deepspeedai/DeepSpeedExamples/tree/master/inference/huggingface/zero_inference)
-  is likewise throughput/batch focused and often changes quantization or
-  hardware assumptions.
 - [llama.cpp](https://github.com/ggml-org/llama.cpp) would require a GGUF
   conversion and is normally compared with integer quantization and substantial
   CPU execution. That is useful in practice but not the same weight/runtime
@@ -243,6 +240,13 @@ Hugging Face Accelerate is included because its official
 [big-model inference](https://huggingface.co/docs/accelerate/en/usage_guides/big_modeling)
 supports the original checkpoint, BF16, and GPU/CPU/disk placement without a
 format conversion.
+
+[DeepSpeed ZeRO-Inference](https://www.deepspeed.ai/2022/09/09/zero-inference.html)
+is also wired into the next clean paper matrix using the original BF16
+checkpoint and ZeRO-3 NVMe parameter offload. It has no result row here yet;
+the implementation and preflight exist, but the clean hardware campaign is
+still pending. See
+[PAPER_COMPARISON_FOLLOWUP.md](PAPER_COMPARISON_FOLLOWUP.md).
 
 ## Raw evidence
 

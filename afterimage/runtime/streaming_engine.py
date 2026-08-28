@@ -71,6 +71,10 @@ class StreamStats:
     decode_seconds: float = 0.0
     io_seconds: float = 0.0
     compute_seconds: float = 0.0
+    h2d_seconds: float = 0.0
+    h2d_bytes: int = 0
+    draft_seconds: float = 0.0
+    target_seconds: float = 0.0
     spec_sweeps: int = 0
     spec_accepted_tokens: int = 0
     spec_cache_crops: int = 0
@@ -93,6 +97,10 @@ class StreamStats:
         self.decode_seconds = 0.0
         self.io_seconds = 0.0
         self.compute_seconds = 0.0
+        self.h2d_seconds = 0.0
+        self.h2d_bytes = 0
+        self.draft_seconds = 0.0
+        self.target_seconds = 0.0
         self.spec_sweeps = 0
         self.spec_accepted_tokens = 0
         self.spec_cache_crops = 0
@@ -432,11 +440,6 @@ class StreamingLosslessModel:
                 "execution_policy=%r is a request-boundary controller, not an "
                 "in-engine switch; resolve it to a concrete MethodProfile before "
                 "constructing StreamingLosslessModel" % self.config.execution_policy)
-        if self.config.representation_policy != "uniform":
-            raise RuntimeError(
-                "representation_policy=%r requires a materialized and validated "
-                "RepresentationPlan; this v2 compressed store contains only the "
-                "uniform representation" % self.config.representation_policy)
         if self.config.expert_codec != "independent":
             raise RuntimeError(
                 "expert_codec=%r requires an XOR-reference-aware expert store; "
@@ -459,6 +462,10 @@ class StreamingLosslessModel:
         self.store = pathlib.Path(store_dir)
         self.manifest = json.loads((self.store / "manifest.json").read_text())
         self._check_store_integrity()
+        self._representation_plan = None
+        self._representation_names: dict[str, str] = {}
+        if self.config.representation_policy != "uniform":
+            self._load_representation_plan()
 
         self.device = device
         self.stats = StreamStats()
@@ -594,6 +601,98 @@ class StreamingLosslessModel:
         self._layer_prepare_events.clear()
         self._layer_compute_start.clear()
 
+    def _load_representation_plan(self) -> None:
+        """Load and fail-closed validate one exact physical choice per tensor."""
+        from .representations import RepresentationPlan, validate_artifacts
+
+        plan = RepresentationPlan.load(self.config.representation_plan_state)
+        if not plan.feasible:
+            raise RuntimeError("representation plan is infeasible: " + plan.reason)
+        missing_artifacts = validate_artifacts(plan, self.store)
+        if missing_artifacts:
+            raise RuntimeError(
+                "representation plan references missing artifacts: %s"
+                % ", ".join(missing_artifacts[:8]))
+        manifest_keys = set(self.manifest["tensors"])
+        plan_keys = set(plan.choices)
+        missing = sorted(manifest_keys - plan_keys)
+        extra = sorted(plan_keys - manifest_keys)
+        if missing or extra:
+            raise RuntimeError(
+                "representation plan must cover every stored tensor exactly; "
+                "missing=%s extra=%s" % (missing[:8], extra[:8]))
+        allowed = {
+            "compressed_disk", "compressed_ram", "decoded_ram",
+            "decoded_vram", "raw_disk", "row_gather",
+        }
+        for key, option in plan.choices.items():
+            if option.tensor_key != key:
+                raise RuntimeError(
+                    "representation choice key mismatch for %s: %s"
+                    % (key, option.tensor_key))
+            if not option.exact:
+                raise RuntimeError("representation choice is not exact: %s" % key)
+            if option.name not in allowed:
+                raise RuntimeError(
+                    "unsupported live representation %r for %s"
+                    % (option.name, key))
+            meta = self.manifest["tensors"][key]
+            if option.name.startswith("compressed_") and not meta.get("compressed"):
+                raise RuntimeError(
+                    "%s requests %s but its store tensor is not compressed"
+                    % (key, option.name))
+            if option.name == "raw_disk" and meta.get("compressed"):
+                raise RuntimeError(
+                    "%s requests raw_disk but its store tensor is compressed" % key)
+            if option.name == "row_gather" and not meta.get("row_gather"):
+                raise RuntimeError(
+                    "%s requests row_gather without a row-addressable store blob" % key)
+        vram_limit = int(self.config.vram_budget_gb * 1e9)
+        ram_limit = int((self.config.ram_budget_gb or 0.0) * 1e9)
+        if plan.vram_bytes > vram_limit or plan.ram_bytes > ram_limit:
+            raise RuntimeError(
+                "representation plan exceeds live budgets: plan VRAM/RAM "
+                "%.3f/%.3f GB, limits %.3f/%.3f GB"
+                % (plan.vram_bytes / 1e9, plan.ram_bytes / 1e9,
+                   vram_limit / 1e9, ram_limit / 1e9))
+        self._representation_plan = plan
+        self._representation_names = {
+            key: option.name for key, option in plan.choices.items()
+        }
+
+    def _ram_format_for(self, key: str) -> str:
+        name = self._representation_names.get(key)
+        if name == "compressed_ram":
+            return "compressed"
+        if name == "decoded_ram":
+            return "decoded"
+        return self.ram_tier_format
+
+    def representation_summary(self) -> dict | None:
+        """Byte-weighted physical mix used by a materialized live plan."""
+        if self._representation_plan is None:
+            return None
+        by_name: dict[str, dict[str, int]] = {}
+        for key, option in self._representation_plan.choices.items():
+            entry = by_name.setdefault(option.name, {
+                "tensor_count": 0, "logical_bytes": 0, "storage_bytes": 0,
+                "ram_bytes": 0, "vram_bytes": 0,
+            })
+            entry["tensor_count"] += 1
+            entry["logical_bytes"] += int(self.manifest["tensors"][key]["orig_bytes"])
+            entry["storage_bytes"] += int(option.storage_bytes)
+            entry["ram_bytes"] += int(option.ram_bytes)
+            entry["vram_bytes"] += int(option.vram_bytes)
+        total = sum(item["logical_bytes"] for item in by_name.values())
+        for item in by_name.values():
+            item["logical_byte_fraction"] = item["logical_bytes"] / max(total, 1)
+        return {
+            "policy": self.config.representation_policy,
+            "plan_state": self.config.representation_plan_state,
+            "plan": self._representation_plan.to_dict(),
+            "by_representation": by_name,
+        }
+
     def close(self) -> None:
         """Join any still-in-flight background prefetch threads before
         closing the file handles they read through.
@@ -703,6 +802,20 @@ class StreamingLosslessModel:
         never considered for residency at all -- by bus-traffic-avoided per
         byte, and fills VRAM then RAM greedily.
         """
+        if self._representation_plan is not None:
+            mapping = {
+                "compressed_disk": "disk",
+                "compressed_ram": "ram",
+                "decoded_ram": "ram",
+                "decoded_vram": "vram",
+                "raw_disk": "disk",
+                "row_gather": "row_gather",
+            }
+            return {
+                key: mapping[option.name]
+                for key, option in self._representation_plan.choices.items()
+            }
+
         tiers: dict[str, str] = {}
         for key, meta in self.manifest["tensors"].items():
             if meta.get("row_gather"):
@@ -860,6 +973,8 @@ class StreamingLosslessModel:
             out = out.to(self.device)
             if self.trace.enabled and torch.cuda.is_available():
                 torch.cuda.synchronize()
+                self.stats.h2d_seconds += time.perf_counter() - t1
+                self.stats.h2d_bytes += out.numel() * out.element_size()
             event_id = self.trace.record(
                 "transfer", "cuda-default", t1, time.perf_counter(),
                 tensor_key=key, dependencies=([dependency] if dependency else ()))
@@ -1057,7 +1172,7 @@ class StreamingLosslessModel:
                 if tier == "vram":
                     self._set_param(self.model, key, self._load_tensor(key))
                 elif tier == "ram":
-                    if self.ram_tier_format == "compressed":
+                    if self._ram_format_for(key) == "compressed":
                         # the archived streaming proposal's own H1 (unrelated to the
                         # current H1 critical-path-residency hypothesis):
                         # cache the COMPRESSED bytes (fits ~1.45x more
@@ -1450,7 +1565,7 @@ class StreamingLosslessModel:
             if tier == "vram":
                 continue  # materialized once in _materialize_resident, permanent
             elif tier == "ram":
-                if self.ram_tier_format == "compressed":
+                if self._ram_format_for(key) == "compressed":
                     out = self._decode_tensor(key, self._ram_cache[key])
                 else:
                     t0 = time.perf_counter()
@@ -1459,6 +1574,8 @@ class StreamingLosslessModel:
                         non_blocking=(key not in self._ram_cache_pageable_keys))
                     if self.trace.enabled and torch.cuda.is_available():
                         torch.cuda.synchronize()
+                        self.stats.h2d_seconds += time.perf_counter() - t0
+                        self.stats.h2d_bytes += out.numel() * out.element_size()
                     event_id = self.trace.record(
                         "transfer", "cuda-default", t0, time.perf_counter(),
                         tensor_key=key)
@@ -1595,7 +1712,7 @@ class StreamingLosslessModel:
             if self._tier.get(key) == "ram":
                 cached = self._ram_cache[key]
                 return (self._decode_tensor(key, cached)
-                        if self.ram_tier_format == "compressed"
+                        if self._ram_format_for(key) == "compressed"
                         else cached.to(
                             self.device,
                             non_blocking=(key not in self._ram_cache_pageable_keys)))
@@ -1754,7 +1871,9 @@ class StreamingLosslessModel:
         is just calling this once on [seq, draft_tokens] and slicing the
         result -- no separate batched-verification path is needed.
         """
-        io0, decode0 = self.stats.io_seconds, self.stats.decode_seconds
+        io0 = self.stats.io_seconds
+        decode0 = self.stats.decode_seconds
+        h2d0 = self.stats.h2d_seconds
         t0 = time.perf_counter()
         extra = self._initial_forward_kwargs if self._kv_cache is None else {}
         if use_cache:
@@ -1767,7 +1886,10 @@ class StreamingLosslessModel:
         wall = time.perf_counter() - t0
         io_delta = self.stats.io_seconds - io0
         decode_delta = self.stats.decode_seconds - decode0
-        self.stats.compute_seconds += max(0.0, wall - io_delta - decode_delta)
+        h2d_delta = self.stats.h2d_seconds - h2d0
+        self.stats.compute_seconds += max(
+            0.0, wall - io_delta - decode_delta - h2d_delta)
+        self.stats.target_seconds += wall
         return out.logits
 
     @torch.no_grad()
@@ -1780,7 +1902,9 @@ class StreamingLosslessModel:
             raise ValueError("certified_mips currently supports batch size 1")
         from .certified_mips import MIPSIndex, certified_argmax
 
-        io0, decode0 = self.stats.io_seconds, self.stats.decode_seconds
+        io0 = self.stats.io_seconds
+        decode0 = self.stats.decode_seconds
+        h2d0 = self.stats.h2d_seconds
         t0 = time.perf_counter()
         if use_cache:
             out = self.adapter.language_model(input_ids=input_ids, use_cache=True,
@@ -1801,7 +1925,10 @@ class StreamingLosslessModel:
         self._synchronize_device()
         wall = time.perf_counter() - t0
         self.stats.compute_seconds += max(
-            0.0, wall - (self.stats.io_seconds - io0) - (self.stats.decode_seconds - decode0))
+            0.0, wall - (self.stats.io_seconds - io0)
+            - (self.stats.decode_seconds - decode0)
+            - (self.stats.h2d_seconds - h2d0))
+        self.stats.target_seconds += wall
         self.stats.mips_rows_evaluated += result.rows_evaluated
         if result.certified:
             self.stats.mips_certified += 1
@@ -2064,6 +2191,7 @@ class StreamingLosslessModel:
             draft_seq = seq
             draft_tokens: list[int] = []
             draft_probs: list[torch.Tensor] = []
+            draft_t0 = time.perf_counter()
             for _ in range(step_k):
                 dlogits = draft_model(input_ids=draft_seq).logits[:, -1, :]
                 probs = torch.softmax(dlogits[0] / temperature, dim=-1)
@@ -2072,6 +2200,9 @@ class StreamingLosslessModel:
                 draft_probs.append(probs)
                 draft_seq = torch.cat(
                     [draft_seq, torch.tensor([[tok]], device=draft_seq.device)], dim=1)
+            if self.trace.enabled:
+                self._synchronize_device()
+            self.stats.draft_seconds += time.perf_counter() - draft_t0
 
             target_input, base = self._spec_target_input(seq, draft_tokens)
             target_logits = self.forward_logits(
@@ -2186,6 +2317,10 @@ class StreamingLosslessModel:
                 draft_seq = torch.cat(
                     [draft_seq, torch.tensor([[tok]], device=draft_seq.device)], dim=1)
             draft_seconds = time.perf_counter() - draft_t0
+            if self.trace.enabled:
+                self._synchronize_device()
+                draft_seconds = time.perf_counter() - draft_t0
+            self.stats.draft_seconds += draft_seconds
 
             step_k = len(draft_tokens)
             target_input, base = self._spec_target_input(seq, draft_tokens)

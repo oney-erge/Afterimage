@@ -139,15 +139,28 @@ def _representation_options(manifest: dict, profile: dict,
                          original / (h2d_gbps * 1e9))
         uniform_disk_s += disk_s
         common = {"tensor_key": key, "storage_bytes": compressed, "exact": True}
-        options.extend([
-            {**common, "name": "compressed_disk", "prepare_s": disk_s},
-            {**common, "name": "compressed_ram", "ram_bytes": compressed,
-             "prepare_s": decode_s + transfer_s},
-            {**common, "name": "decoded_ram", "ram_bytes": original,
-             "prepare_s": transfer_s},
-            {**common, "name": "decoded_vram", "vram_bytes": original,
-             "prepare_s": 0.0},
-        ])
+        if tensor.get("compressed"):
+            options.extend([
+                {**common, "name": "compressed_disk", "prepare_s": disk_s},
+                {**common, "name": "compressed_ram", "ram_bytes": compressed,
+                 "prepare_s": decode_s + transfer_s},
+                {**common, "name": "decoded_ram", "ram_bytes": original,
+                 "prepare_s": transfer_s},
+                {**common, "name": "decoded_vram", "vram_bytes": original,
+                 "prepare_s": 0.0},
+            ])
+        else:
+            # Small/non-BF16 tensors are deliberately stored raw by the v2
+            # store. Calling that physical choice "compressed_disk" made the
+            # offline H6 plan impossible to materialize faithfully. Raw disk,
+            # decoded RAM, and decoded VRAM are the three real exact choices.
+            options.extend([
+                {**common, "name": "raw_disk", "prepare_s": disk_s},
+                {**common, "name": "decoded_ram", "ram_bytes": original,
+                 "prepare_s": transfer_s},
+                {**common, "name": "decoded_vram", "vram_bytes": original,
+                 "prepare_s": 0.0},
+            ])
     return options, uniform_disk_s
 
 
@@ -171,7 +184,9 @@ def _run_h6(manifest_path: pathlib.Path, h1_path: pathlib.Path,
         source_manifest=str(manifest_path), source_profile=str(h1_path),
         source_h2d_benchmark=str(h2d_path), h2d_gbps=h2d_gbps,
         evidence_level="L1_offline_prediction_gate",
-        tensors=len(options) // 4, representations_per_tensor=4,
+        tensors=len({item["tensor_key"] for item in options}),
+        representation_options=len(options),
+        representation_names=sorted({item["name"] for item in options}),
         planner_quantum_bytes=64 << 20,
         warning="The exact mixed plan is predicted, not a held-out live execution.")
     return run.to_dict()

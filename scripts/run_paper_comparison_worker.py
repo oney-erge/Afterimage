@@ -137,7 +137,7 @@ def thermal_monitor_summary(samples: list[dict], interval_s: float = 1.0) -> dic
     """
     clocks: list[float] = []
     temps: list[float] = []
-    powers: list[float] = []
+    power_samples: list[tuple[float | None, float]] = []
     any_throttle = False
     any_known = False
     for sample in samples:
@@ -150,7 +150,12 @@ def thermal_monitor_summary(samples: list[dict], interval_s: float = 1.0) -> dic
         except (TypeError, ValueError):
             pass
         try:
-            powers.append(float(sample.get("power_draw_w")))
+            power = float(sample.get("power_draw_w"))
+            try:
+                sampled_at = float(sample.get("sampled_at_monotonic_s"))
+            except (TypeError, ValueError):
+                sampled_at = None
+            power_samples.append((sampled_at, power))
         except (TypeError, ValueError):
             pass
         throttled = sample.get("throttled")
@@ -158,24 +163,39 @@ def thermal_monitor_summary(samples: list[dict], interval_s: float = 1.0) -> dic
             any_known = True
         if throttled is True:
             any_throttle = True
-    # Energy = mean sampled power x elapsed time. This is an estimate, not
-    # a true integral: samples are nominally 1 Hz but each sample also
-    # pays for its own nvidia-smi subprocess call, so real spacing jitters
-    # around interval_s rather than landing on it exactly, and a single
-    # power_draw_w reading between two samples is assumed constant across
-    # that gap rather than measured continuously. Reported as an estimate
-    # for exactly that reason -- see the docstring's own framing of every
-    # other number here as "what it measures", not a claim of instrument
-    # precision this sampling scheme does not have.
-    energy_j = (statistics.mean(powers) * (len(powers) - 1) * interval_s
-               if len(powers) >= 2 else None)
+    # Integrate the actual monotonic sample spacing. nvidia-smi itself takes
+    # nonzero and variable time, so assuming exactly interval_s between calls
+    # biases long runs. Legacy/synthetic samples without timestamps retain the
+    # previous nominal-spacing estimate for backwards compatibility.
+    energy_j = None
+    energy_seconds = None
+    energy_method = None
+    if len(power_samples) >= 2:
+        timestamps = [sampled_at for sampled_at, _power in power_samples]
+        if all(value is not None for value in timestamps) and all(
+                timestamps[index] > timestamps[index - 1]
+                for index in range(1, len(timestamps))):
+            energy_j = sum(
+                0.5 * (power_samples[index - 1][1] + power_samples[index][1])
+                * (timestamps[index] - timestamps[index - 1])
+                for index in range(1, len(power_samples)))
+            energy_seconds = timestamps[-1] - timestamps[0]
+            energy_method = "trapezoidal_monotonic_samples"
+        else:
+            powers = [power for _sampled_at, power in power_samples]
+            energy_seconds = (len(powers) - 1) * interval_s
+            energy_j = statistics.mean(powers) * energy_seconds
+            energy_method = "nominal_interval_fallback"
     return {
         "samples_collected": len(samples),
         "sm_clock_mhz_min": min(clocks) if clocks else None,
         "sm_clock_mhz_median": statistics.median(clocks) if clocks else None,
         "temperature_c_max": max(temps) if temps else None,
-        "mean_power_draw_w": statistics.mean(powers) if powers else None,
+        "mean_power_draw_w": (statistics.mean(
+            power for _sampled_at, power in power_samples) if power_samples else None),
         "energy_joules_estimate": energy_j,
+        "energy_sampling_seconds": energy_seconds,
+        "energy_estimation_method": energy_method,
         # None (not False) when no sample ever carried a known throttle
         # reading at all -- e.g. no nvidia-smi -- so "no throttle detected"
         # is never confused with "throttle status unknown for this cell".
@@ -200,7 +220,9 @@ class ThermalSampler:
     def _run(self) -> None:
         while not self._stop.is_set():
             try:
-                self._samples.append(bounded.gpu_thermal_snapshot())
+                sample = bounded.gpu_thermal_snapshot()
+                sample["sampled_at_monotonic_s"] = time.perf_counter()
+                self._samples.append(sample)
             except Exception:  # a monitoring thread must never take the cell down
                 pass
             self._stop.wait(self._interval_s)
@@ -279,6 +301,7 @@ def run_cell(config: dict) -> dict:
         item["tokenizer"] = tokenizer
 
     draft_model = None
+    result: dict
     with ThermalSampler() as sampler:
         try:
             if method.kind == "airllm":
@@ -314,21 +337,22 @@ def run_cell(config: dict) -> dict:
                     burn_in_rendered=rendered[:1] if warmup_tokens > 0 else None,
                     burn_in_tokens=warmup_tokens,
                     rows_checkpoint=None, repeats=1, repeat_offset=block)
-            return {"rows": rows, "metadata": metadata,
-                   "peak_host_rss_bytes": _peak_rss_bytes(),
-                   "thermal_monitoring": sampler.summary(), "error": None,
-                   "traceback": None}
+            result = {"rows": rows, "metadata": metadata,
+                      "peak_host_rss_bytes": _peak_rss_bytes(),
+                      "error": None, "traceback": None}
         except Exception as exc:
             metadata = {"capacity_failure": True} if is_capacity_failure(exc) else {}
-            return {"rows": [], "metadata": metadata, "peak_host_rss_bytes": _peak_rss_bytes(),
-                   "thermal_monitoring": sampler.summary(), "error": repr(exc),
-                   "traceback": traceback.format_exc()}
+            result = {"rows": [], "metadata": metadata,
+                      "peak_host_rss_bytes": _peak_rss_bytes(),
+                      "error": repr(exc), "traceback": traceback.format_exc()}
         finally:
             if draft_model is not None:
                 del draft_model
             gc.collect()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
+    result["thermal_monitoring"] = sampler.summary()
+    return result
 
 
 def main() -> int:

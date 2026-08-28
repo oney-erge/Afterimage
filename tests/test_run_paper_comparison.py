@@ -16,6 +16,7 @@ from scripts.run_paper_comparison import (
     CONTROL_METHOD,
     DEFAULT_METHODS,
     DEFAULT_TOKEN_LENGTHS,
+    DEFAULT_TOKEN_LENGTHS_BY_SUITE,
     _shuffled_order,
     budget_label,
     budget_method_variants,
@@ -40,6 +41,12 @@ def test_control_is_one_of_the_default_methods():
     CONTROL_METHOD; the default method set must actually include it or the
     comparison silently produces nothing."""
     assert CONTROL_METHOD in DEFAULT_METHODS
+
+
+def test_headline_defaults_use_two_runnable_external_offload_baselines():
+    assert "accelerate" in DEFAULT_METHODS
+    assert "deepspeed-zero-inference" in DEFAULT_METHODS
+    assert "dfloat11" not in DEFAULT_METHODS
 
 
 def test_candidate_exactly_twice_as_fast_gives_log_two_and_speedup_two():
@@ -330,6 +337,11 @@ def test_default_token_lengths_include_a_literal_ttft_probe():
     assert 1 in DEFAULT_TOKEN_LENGTHS
 
 
+def test_suite_defaults_do_not_force_short_factual_answers_to_decode_length():
+    assert DEFAULT_TOKEN_LENGTHS_BY_SUITE["evaluation"] == (1, 4)
+    assert DEFAULT_TOKEN_LENGTHS_BY_SUITE["paper_generation"] == (1, 32, 128)
+
+
 def test_workload_for_labels_one_token_as_ttft_not_short_cold_start():
     """The exact correction this closes: a 4-token result must never be
     mistaken for TTFT. Only n_tokens=1 is a literal time-to-first-token
@@ -474,6 +486,16 @@ def test_paper_eligibility_catches_a_block_that_never_started_at_all():
     result = {"cells": []}
     eligible, _reason = paper_eligibility(result, blocks=3, selected=["airllm"])
     assert eligible is False
+
+
+def test_capacity_failure_is_accounted_but_not_headline_paper_eligible():
+    result = {"cells": [{
+        "block": 0, "method": "dfloat11", "error": "CUDA out of memory",
+        "metadata": {"capacity_failure": True},
+    }]}
+    eligible, reason = paper_eligibility(result, blocks=1, selected=["dfloat11"])
+    assert eligible is False
+    assert "missing 1 of 1" in reason
 
 
 # ------------------------------------------------- run_one_token_length (integration)

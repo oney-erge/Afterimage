@@ -47,6 +47,12 @@ STORE = "/root/afterimage/store_14b"
 # runtime; this is the real DFloat11/Qwen3-14B-DF11 repo, verified to exist
 # and to match the canonical MODEL parameter-for-parameter, not guessed.
 DFLOAT11_MODEL = "DFloat11/Qwen3-14B-DF11"
+DEEPSPEED_OFFLOAD_DIR = os.environ.get(
+    "AFTERIMAGE_DEEPSPEED_OFFLOAD_DIR", "/root/afterimage/deepspeed_offload_14b")
+H6_PLAN_STATE = os.environ.get(
+    "AFTERIMAGE_H6_PLAN_STATE", "/root/afterimage/plans/qwen3-14b-h6-v4-r8.json")
+DISK_PLAN_STATE = os.environ.get(
+    "AFTERIMAGE_DISK_PLAN_STATE", "/root/afterimage/plans/qwen3-14b-disk-v4-r8.json")
 
 # Inter-cell cooldown, set once from --cooldown-seconds / --cooldown-max-temp-c.
 # Module-level because every timed cell in every runner must observe the same
@@ -134,7 +140,14 @@ METHODS = {
     # parameters without it.
     "deepspeed-zero-inference": Method(
         "deepspeed-zero-inference", _installed_deepspeed_title(), "deepspeed",
-        {"offload_device": "cpu", "pin_memory": True},
+        # The reference host has 19 GiB of RAM, less than the 29.5 GB BF16
+        # checkpoint. CPU-only offload therefore cannot be the reproducible
+        # default for this comparison. ZeRO-3's documented NVMe parameter
+        # offload keeps the baseline applicable on the same machine. Pinned
+        # memory is disabled because WSL2's default memlock limit is commonly
+        # only 64 MiB; the result records the choice explicitly.
+        {"offload_device": "nvme", "offload_path": DEEPSPEED_OFFLOAD_DIR,
+         "pin_memory": False},
         "reference_greedy", 20.0),
     "exact-min": Method(
         "exact-min", "Afterimage exact streaming, minimum-memory control", "afterimage",
@@ -269,6 +282,48 @@ METHODS = {
         {"vram_budget_gb": 2.70, "decode_slice_elems": 1 << 22,
          "io_prefetch_depth": 2, "draft_mode": "model", "spec_k": 8,
          "spec_k_policy": "fixed", "spec_target_cache": True},
+        "greedy_token_exact_at_temperature_zero", 8.0),
+    "breakdown-exact": Method(
+        "breakdown-exact", "Afterimage traced exact runtime breakdown", "afterimage",
+        {"vram_budget_gb": 4.00, "decode_slice_elems": 1 << 22,
+         "io_prefetch_depth": 2, "trace_events": True},
+        "reference_execution_equivalent", 20.0),
+    "simple-v4-r8": Method(
+        "simple-v4-r8", "Afterimage simple tier placement at 4 GB VRAM / 8 GB RAM",
+        "afterimage",
+        {"vram_budget_gb": 4.00, "ram_budget_gb": 8.00,
+         "decode_slice_elems": 1 << 22, "io_prefetch_depth": 2,
+         "placement_policy": "traffic_density", "ram_tier_format": "decoded"},
+        "reference_execution_equivalent", 20.0),
+    "h1-v4-r8": Method(
+        "h1-v4-r8", "Afterimage H1 placement at 4 GB VRAM / 8 GB RAM",
+        "afterimage",
+        {"vram_budget_gb": 4.00, "ram_budget_gb": 8.00,
+         "decode_slice_elems": 1 << 22, "io_prefetch_depth": 2,
+         "placement_policy": "critical_path", "ram_tier_format": "decoded"},
+        "reference_execution_equivalent", 20.0),
+    "h6-disk-v4-r8": Method(
+        "h6-disk-v4-r8", "Afterimage compressed SSD streaming control",
+        "afterimage",
+        {"vram_budget_gb": 4.00, "ram_budget_gb": 8.00,
+         "decode_slice_elems": 1 << 22, "io_prefetch_depth": 2,
+         "representation_policy": "per_tensor",
+         "representation_plan_state": DISK_PLAN_STATE},
+        "reference_execution_equivalent", 31.0),
+    "h6-live-v4-r8": Method(
+        "h6-live-v4-r8", "Afterimage live H6 representation plan",
+        "afterimage",
+        {"vram_budget_gb": 4.00, "ram_budget_gb": 8.00,
+         "decode_slice_elems": 1 << 22, "io_prefetch_depth": 2,
+         "representation_policy": "per_tensor",
+         "representation_plan_state": H6_PLAN_STATE},
+        "reference_execution_equivalent", 16.0),
+    "breakdown-spec": Method(
+        "breakdown-spec", "Afterimage traced speculative runtime breakdown",
+        "afterimage",
+        {"vram_budget_gb": 2.70, "decode_slice_elems": 1 << 22,
+         "io_prefetch_depth": 2, "draft_mode": "model", "spec_k": 8,
+         "spec_k_policy": "fixed", "trace_events": True},
         "greedy_token_exact_at_temperature_zero", 8.0),
     "spec-hazard": Method(
         "spec-hazard", "Afterimage frozen rejection-hazard stopping", "afterimage",
@@ -639,8 +694,8 @@ def environment_manifest(repo_root: pathlib.Path, tokenizer,
         "host_memory": command_output(["free", "-b"]),
         "storage": storage_device_info(store or pathlib.Path.home()),
         "packages": {name: package_version(name) for name in (
-            "airllm", "transformers", "accelerate", "dfloat11", "safetensors",
-            "numpy")},
+            "airllm", "transformers", "accelerate", "dfloat11", "deepspeed",
+            "safetensors", "numpy")},
         "git_commit": command_output(["git", "-C", str(repo_root), "rev-parse", "HEAD"]),
         "git_status": command_output(["git", "-C", str(repo_root), "status", "--short"]),
         "tokenizer_commit": getattr(tokenizer, "init_kwargs", {}).get("_commit_hash"),
@@ -1008,7 +1063,10 @@ def run_deepspeed_zero_inference(method: Method, rendered: list[dict], n_tokens:
     from transformers.integrations.deepspeed import HfDeepSpeedConfig
 
     offload_device = method.overrides.get("offload_device", "cpu")
+    if offload_device not in {"cpu", "nvme"}:
+        raise ValueError("DeepSpeed offload_device must be 'cpu' or 'nvme'")
     pin_memory = method.overrides.get("pin_memory", True)
+    offload_path = method.overrides.get("offload_path", DEEPSPEED_OFFLOAD_DIR)
 
     init_t0 = time.perf_counter()
     hf_config = AutoConfig.from_pretrained(MODEL)
@@ -1018,6 +1076,10 @@ def run_deepspeed_zero_inference(method: Method, rendered: list[dict], n_tokens:
     # hidden_size for the persistence threshold) rather than a value
     # copied from a different-sized model.
     hidden_size = getattr(hf_config, "hidden_size", 4096)
+    offload_param = {"device": offload_device, "pin_memory": pin_memory}
+    if offload_device == "nvme":
+        pathlib.Path(offload_path).mkdir(parents=True, exist_ok=True)
+        offload_param["nvme_path"] = str(offload_path)
     ds_config = {
         "bf16": {"enabled": True},
         "train_micro_batch_size_per_gpu": 1,
@@ -1026,7 +1088,7 @@ def run_deepspeed_zero_inference(method: Method, rendered: list[dict], n_tokens:
             "stage3_prefetch_bucket_size": 2 * hidden_size * hidden_size,
             "stage3_param_persistence_threshold": hidden_size,
             "stage3_max_live_parameters": 2 * hidden_size * hidden_size,
-            "offload_param": {"device": offload_device, "pin_memory": pin_memory},
+            "offload_param": offload_param,
         },
     }
     # HfDeepSpeedConfig must be constructed BEFORE from_pretrained() is
@@ -1113,7 +1175,9 @@ def run_deepspeed_zero_inference(method: Method, rendered: list[dict], n_tokens:
         del model, ds_engine
         gc.collect()
         torch.cuda.empty_cache()
-    return rows, {"initialization_seconds": init_s, "offload_device": offload_device}
+    return rows, {"initialization_seconds": init_s, "offload_device": offload_device,
+                  "offload_path": str(offload_path) if offload_device == "nvme" else None,
+                  "pin_memory": pin_memory}
 
 
 def engine_for(method: Method, *, critical_profile: str | None = None,
@@ -1223,6 +1287,17 @@ def run_afterimage(method: Method, rendered: list[dict], n_tokens: int,
             generated = sequence[0, ids.shape[1]:].tolist()
             answer = tokenizer.decode(generated, skip_special_tokens=True)
             stats = engine.stats
+            # A normal greedy decode performs one target sweep per committed
+            # token. Speculative execution records its verification sweeps
+            # directly. Keep the raw spec_sweeps counter for diagnostics, but
+            # expose a common target-sweep metric so k=0 is not incorrectly
+            # reported as zero sweeps (or N tokens per sweep via max(0, 1)).
+            target_sweeps = (
+                stats.spec_sweeps
+                if cfg.draft_mode == "model" else len(generated)
+            )
+            output_tokens = max(len(generated), 1)
+            safe_target_sweeps = max(target_sweeps, 1)
             extra = {
                 "generation_mode": "speculative_greedy" if cfg.draft_mode != "none" else "greedy",
                 "repeat": repeat_offset + repeat,
@@ -1236,12 +1311,29 @@ def run_afterimage(method: Method, rendered: list[dict], n_tokens: int,
                 # every method, Afterimage included, unlike the logical
                 # count which only Afterimage's own engine can report.
                 "bytes_read": stats.bytes_read,
-                "gb_read_per_token": stats.bytes_read / 1e9 / max(len(generated), 1),
+                "gb_read_per_token": stats.bytes_read / 1e9 / output_tokens,
+                # These three fields make the Paper 1 mechanism identity
+                # directly checkable from every row:
+                # bytes/output-token = bytes/target-sweep *
+                # target-sweeps/output-token.
+                "target_sweeps": target_sweeps,
+                "target_sweeps_per_output_token": target_sweeps / output_tokens,
+                "target_storage_bytes_per_sweep": (
+                    stats.bytes_read / safe_target_sweeps),
+                "target_storage_bytes_per_output_token": (
+                    stats.bytes_read / output_tokens),
                 "process_read_bytes": read_bytes,
                 "process_read_bytes_per_token": read_bytes / max(len(generated), 1),
                 "io_seconds": stats.io_seconds,
                 "decode_seconds": stats.decode_seconds,
                 "compute_seconds": stats.compute_seconds,
+                "h2d_seconds": stats.h2d_seconds,
+                "h2d_bytes": stats.h2d_bytes,
+                "draft_seconds": stats.draft_seconds,
+                "target_seconds": stats.target_seconds,
+                "breakdown_timing_mode": (
+                    "trace_synchronized" if cfg.trace_events
+                    else "aggregate_unsynchronized"),
                 "prefetch_hits": stats.prefetch_hits,
                 "prefetch_misses": stats.prefetch_misses,
                 "prefetch_wait_seconds": stats.prefetch_wait_seconds,
@@ -1257,6 +1349,7 @@ def run_afterimage(method: Method, rendered: list[dict], n_tokens: int,
                     tier: sum(value == tier for value in engine._tier.values())
                     for tier in ("vram", "ram", "disk", "row_gather")
                 },
+                "representation_summary": engine.representation_summary(),
                 "final_prefetch_depth": engine._prefetch_controller.choose_depth(),
                 "prefetch_controller_state": (
                     engine._prefetch_controller.state_dict()
@@ -1265,7 +1358,7 @@ def run_afterimage(method: Method, rendered: list[dict], n_tokens: int,
                 "spec_accepted_tokens": stats.spec_accepted_tokens,
                 "spec_cache_crops": stats.spec_cache_crops,
                 "spec_cached_prefix_tokens": stats.spec_cached_prefix_tokens,
-                "tokens_per_target_sweep": len(generated) / max(stats.spec_sweeps, 1),
+                "tokens_per_target_sweep": len(generated) / safe_target_sweeps,
                 "policy_state": policy.state_dict() if policy is not None else None,
                 "mips_certified": stats.mips_certified,
                 "mips_fallbacks": stats.mips_fallbacks,
@@ -1510,7 +1603,40 @@ def aggregate(rows: list[dict]) -> dict:
     summary.update(_repeat_dispersion(rows))
     summary.update(_thermal_integrity(rows))
     summary.update(_io_traffic(rows))
+    summary.update(_target_traffic(rows))
     return summary
+
+
+def _target_traffic(rows: list[dict]) -> dict:
+    """Aggregate the two factors in Paper 1's target-traffic identity.
+
+    External baselines do not expose Afterimage's logical target-engine byte
+    counter, so their summaries omit these fields instead of fabricating zero.
+    For Afterimage, totals are combined before division so rows with different
+    output lengths are weighted by their actual tokens and sweeps.
+    """
+    observed = [row for row in rows if all(key in row for key in (
+        "target_sweeps", "target_storage_bytes_per_output_token",
+        "output_tokens"))]
+    if not observed:
+        return {}
+    total_tokens = sum(int(row["output_tokens"]) for row in observed)
+    total_sweeps = sum(int(row["target_sweeps"]) for row in observed)
+    total_bytes = sum(
+        float(row["target_storage_bytes_per_output_token"])
+        * int(row["output_tokens"])
+        for row in observed
+    )
+    safe_tokens = max(total_tokens, 1)
+    safe_sweeps = max(total_sweeps, 1)
+    return {
+        "target_storage_bytes": total_bytes,
+        "target_sweeps": total_sweeps,
+        "target_storage_bytes_per_output_token": total_bytes / safe_tokens,
+        "target_storage_bytes_per_sweep": total_bytes / safe_sweeps,
+        "target_sweeps_per_output_token": total_sweeps / safe_tokens,
+        "tokens_per_target_sweep": total_tokens / safe_sweeps,
+    }
 
 
 def _io_traffic(rows: list[dict]) -> dict:
@@ -1789,6 +1915,20 @@ def main() -> int:
             "token_agreement_vs_exact_min": (
                 "fraction of shared cases with an identical complete output "
                 "token-id sequence to the exact-min Afterimage control"),
+            "target_sweeps": (
+                "full target-model weight sweeps: one per committed token for "
+                "greedy execution, or measured verification sweeps for "
+                "speculative execution"),
+            "target_storage_bytes_per_output_token": (
+                "Afterimage logical target-engine storage bytes divided by "
+                "committed output tokens"),
+            "target_storage_bytes_per_sweep": (
+                "Afterimage logical target-engine storage bytes divided by "
+                "target sweeps"),
+            "target_sweeps_per_output_token": (
+                "target sweeps divided by committed output tokens; multiplying "
+                "this by target_storage_bytes_per_sweep reconstructs "
+                "target_storage_bytes_per_output_token"),
         },
         "model": MODEL,
         "draft_model": DRAFT_MODEL,
@@ -1822,9 +1962,10 @@ def main() -> int:
     spec_states = {}
     with tempfile.TemporaryDirectory(prefix="afterimage-bounded-") as temp_name:
         temp_dir = pathlib.Path(temp_name)
-        if any(name in selected for name in (
-                "critical-path", "profiled-knapsack", "replay-cem",
-                "replay-qubo", "replay-extent-qubo", "spec-critical")):
+        if any(METHODS[name].overrides.get("placement_policy") in {
+                "critical_path", "profiled_knapsack", "replay_cem",
+                "replay_qubo", "replay_extent_qubo"}
+                for name in selected):
             log("\nCALIBRATION: critical-path profile")
             try:
                 critical = prepare_critical_profile(tokenizer, temp_dir, deadline)
@@ -1902,9 +2043,9 @@ def main() -> int:
                                        if pin_preflight is not None else None),
                 })
                 continue
-            if method_id in {
-                    "critical-path", "profiled-knapsack", "spec-critical"
-                    } and critical is None:
+            if (method.overrides.get("placement_policy") in {
+                    "critical_path", "profiled_knapsack"}
+                    and critical is None):
                 result["failures"].append({"method": method_id,
                                            "error": "not started: calibration failed"})
                 continue
@@ -1928,9 +2069,13 @@ def main() -> int:
                         },
                     })
                     continue
-            if method_id in {
-                    "spec-fixed", "spec-critical", "spec-cached", "spec-hazard",
-                    "spec-neural", "chunked-spec"} and draft_model is None:
+            # Route this from the method's actual execution contract rather
+            # than a hand-maintained ID allowlist. The fixed-k ablation IDs
+            # (spec-k2/spec-k4/spec-k16) also use draft_mode="model" and were
+            # previously passed draft_model=None by this runner even though
+            # the isolated paper worker handled them correctly.
+            if (method.overrides.get("draft_mode") == "model"
+                    and draft_model is None):
                 from afterimage.runtime.streaming_engine import load_draft_model
                 log("\nLoading resident draft model %s" % DRAFT_MODEL)
                 draft_model = load_draft_model(DRAFT_MODEL, device="cuda")

@@ -59,6 +59,19 @@ exact-resident, and fixed speculation for five cold-cache repeats. Override
 `AFTERIMAGE_BENCHMARK_REPEATS`, `AFTERIMAGE_BENCHMARK_TIME_MINUTES`, or
 `AFTERIMAGE_BENCHMARK_OUT` to use another prepared model or campaign budget.
 
+For the restartable paper matrix, including AirLLM, Accelerate, DeepSpeed
+ZeRO-Inference, and the separate short-answer and long-generation workloads,
+run:
+
+```bash
+bash paper_benchmark.sh
+```
+
+The wrapper refuses a dirty tree or missing benchmark dependency, resumes
+partial non-capacity cells, and withholds incomplete matrices. The exact
+follow-up protocol and the pre-fix artifacts that must not be cited are listed
+in [PAPER_COMPARISON_FOLLOWUP.md](PAPER_COMPARISON_FOLLOWUP.md).
+
 ## Exact software versions used for the published numbers
 
 Every result JSON's `environment` block is authoritative and per-run (Python,
