@@ -1080,6 +1080,26 @@ def run_deepspeed_zero_inference(method: Method, rendered: list[dict], n_tokens:
     if offload_device == "nvme":
         pathlib.Path(offload_path).mkdir(parents=True, exist_ok=True)
         offload_param["nvme_path"] = str(offload_path)
+        # AsyncPartitionedParameterSwapper's own buffer_size (default
+        # 1e8 elements -- DeepSpeedZeroOffloadParamConfig) is a flat
+        # constant, not sized to the model. At world_size=1 (this
+        # project always runs a single process, see the RANK/
+        # WORLD_SIZE note above) ZeRO-3 has no other rank to shard a
+        # parameter across, so the embedding/lm_head weight (vocab_size
+        # * hidden_size elements) swaps to NVMe as one whole chunk --
+        # confirmed live: Qwen3-14B's 151936 * 5120 = 777,912,320
+        # tripped the swapper's own "numel <= elements_per_buffer"
+        # assertion against the 1e8 default. Size the buffer off the
+        # model's own largest tensor instead, same principle as the
+        # stage3_* buckets above, rather than DeepSpeedExamples'
+        # reference fixed multi-GB buffers (tuned for bigger-memory
+        # hosts than this project's 8 GB GPU / ~19 GiB WSL2 budget).
+        # buffer_count is trimmed from DeepSpeed's own default of 5 to
+        # 2: enough to double-buffer this single-stream generate loop
+        # without paying for 5x this element count in pinned CPU RAM.
+        vocab_size = getattr(hf_config, "vocab_size", 32000)
+        offload_param["buffer_size"] = max(int(1e8), vocab_size * hidden_size)
+        offload_param["buffer_count"] = 2
     ds_config = {
         "bf16": {"enabled": True},
         "train_micro_batch_size_per_gpu": 1,
