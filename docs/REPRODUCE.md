@@ -78,6 +78,33 @@ should be curated into the date-stamped published result set. Check
 citing it -- a matrix with missing or failed cells reports `false` and
 says which cells are missing.
 
+## Reproducing Paper 1's figures on a different GPU
+
+`paper_benchmark.sh` above reproduces only the headline TTFT/Pareto
+comparison. To reproduce Paper 1's full figure and table set (H6
+representation-and-tier planning: Figures 2, 3, 4, 5, 7, 9 and Table 2) on
+a second machine with different hardware, run:
+
+```bash
+AFTERIMAGE_MODEL=Qwen/Qwen3-14B \
+AFTERIMAGE_DRAFT_MODEL=Qwen/Qwen3-0.6B \
+  bash scripts/paper1_5090_guidance.sh
+```
+
+This is self-contained: it builds the compressed and raw stores, measures
+the machine's own pinned-H2D bandwidth, generates the model's own H1
+critical-path profile, runs a real single-token smoke gate before
+committing to hours of GPU time, then runs all six experiments with the
+same budgets/repeats/case-IDs used for the published Qwen3-14B and
+Gemma-2-27B (RTX 3080) result sets, tagging every output file by GPU so
+results from different machines never collide. See the script's own header
+for the full parameter list, including `AFTERIMAGE_EXACT_MIN_VRAM_GB`,
+which must be raised above its Qwen-tuned default for large-vocabulary
+models such as Gemma. This does not cover H0-H18
+([ALL_HYPOTHESES_AND_BASELINES.md](ALL_HYPOTHESES_AND_BASELINES.md)) or the
+H19-H34 speculation-tree line
+([SPECULATION_TREE_RESEARCH.md](SPECULATION_TREE_RESEARCH.md)).
+
 ## Exact software versions used for the published numbers
 
 Every result JSON's `environment` block is authoritative and per-run (Python,
