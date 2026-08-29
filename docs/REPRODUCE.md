@@ -105,6 +105,14 @@ models such as Gemma. This does not cover H0-H18
 H19-H34 speculation-tree line
 ([SPECULATION_TREE_RESEARCH.md](SPECULATION_TREE_RESEARCH.md)).
 
+All of its output stays local and gitignored under
+`scripts/local/paper1/output/campaign/`, same as every other Paper 1
+result -- it does not sync back to this repository automatically.
+Combining a second machine's numbers with this one's means copying the
+relevant JSON files over by hand and reviewing them before citing
+anything; only curated evidence gets committed into the tracked `results/`
+tree, and that step is deliberate, not automatic.
+
 ## Exact software versions used for the published numbers
 
 Every result JSON's `environment` block is authoritative and per-run (Python,

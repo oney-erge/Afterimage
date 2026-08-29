@@ -12,15 +12,25 @@
 # Paper 1's numbers on a second GPU," not as a stand-in for either of those.
 #
 # Runs every Paper 1 figure/table experiment on a second machine (a
-# different GPU, e.g. an RTX 5090) against its own hardware, tags its own
-# output by GPU, and the two result sets combine into one cross-hardware
-# paper without anyone hand-copying files between machines. Every
+# different GPU, e.g. an RTX 5090) against its own hardware and tags its own
+# output by GPU, so the two result sets combine into one cross-hardware
+# paper without the two machines confusing each other's numbers. Every
 # prerequisite this script needs is either code already tracked in this
 # repository or something it generates itself on first run (the
 # compressed/raw stores, the model-specific H1 critical-path profile, and
 # the hardware-specific pinned-H2D benchmark) -- nothing under
 # scripts/local/paper1/output/ on the original machine is required, and
 # none of it is copied here on purpose.
+#
+# All of this script's own output stays local and gitignored (under
+# scripts/local/paper1/output/campaign/ by default), same as every other
+# Paper 1 result -- it does NOT sync back to the repo automatically.
+# Combining a second machine's numbers with this one's means copying the
+# relevant JSON files over by hand (scp, a shared drive, whatever) and
+# reviewing them before citing anything, the same as this project treats
+# every other raw campaign artifact. Only curated, reviewed evidence gets
+# committed into the tracked results/ tree, and that step is a deliberate
+# decision this script does not make for you.
 #
 # Usage (two independent invocations -- run one, both, or repeat with
 # --resume after an interruption; see the resume note near the bottom):
@@ -86,9 +96,18 @@ fi
 STORE_ROOT="${AFTERIMAGE_STORE_ROOT:-/root/afterimage/paper1_campaign}"
 STORE="${AFTERIMAGE_STORE:-$STORE_ROOT/${MODEL_TAG}/store}"
 RAW_STORE="${AFTERIMAGE_RAW_STORE:-$STORE_ROOT/${MODEL_TAG}/store_raw}"
-H1_FILE="${AFTERIMAGE_H1_FILE:-results/h1_critical_path_${MODEL_TAG}_${HW_TAG}.json}"
-H2D_FILE="${AFTERIMAGE_H2D_FILE:-results/pinned_h2d_${HW_TAG}.json}"
-OUT="${AFTERIMAGE_PAPER1_OUT_DIR:-results/paper1_campaign}"
+# Everything this script produces is raw campaign output, not curated
+# published evidence -- it stays under scripts/local/paper1/, which is
+# entirely gitignored, same as every other Paper 1 result on this project
+# (see docs/README.md's "What is deliberately not here"). This is a
+# deliberate choice, not an oversight: publishing a result means curating
+# it into the date-stamped results/ set by hand after review, not letting a
+# campaign script write there directly.
+CAMPAIGN_ROOT="${AFTERIMAGE_PAPER1_CAMPAIGN_ROOT:-scripts/local/paper1/output/campaign}"
+H1_FILE="${AFTERIMAGE_H1_FILE:-$CAMPAIGN_ROOT/h1_critical_path_${MODEL_TAG}_${HW_TAG}.json}"
+H2D_FILE="${AFTERIMAGE_H2D_FILE:-$CAMPAIGN_ROOT/pinned_h2d_${HW_TAG}.json}"
+OUT="${AFTERIMAGE_PAPER1_OUT_DIR:-$CAMPAIGN_ROOT}"
+mkdir -p "$(dirname "$H1_FILE")" "$(dirname "$H2D_FILE")"
 mkdir -p "$OUT"
 
 VRAM_BUDGETS="${AFTERIMAGE_VRAM_BUDGETS:-3:6,4:8}"
