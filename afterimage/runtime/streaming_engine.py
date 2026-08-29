@@ -1290,6 +1290,30 @@ class StreamingLosslessModel:
                 dim=rotary.dim, theta=rotary.theta
             ).to(self.device)
 
+        # Gemma 2/3's embed_tokens multiplies every lookup by embed_scale
+        # (sqrt(hidden_size)), a non-persistent scalar buffer computed from
+        # config -- same category as rotary_emb above (never stored in the
+        # checkpoint, so correctly absent from self.manifest and skipped by
+        # the materialization loop), just registered on the embedding module
+        # rather than a rotary module, so the rebuild above never reached it.
+        # Left on the meta device, the first embed_tokens() forward raised
+        # "Tensor on device meta is not on the expected device cuda:0!" --
+        # found by actually running Gemma 2 27B, not anticipated from its
+        # architecture. scalar_embed_scale is duck-typed rather than
+        # class-checked so this also covers Gemma 3, which defines the
+        # identical attribute on its own embedding class.
+        embedding = self.adapter.embedding
+        embed_scale = getattr(embedding, "embed_scale", None)
+        if isinstance(embed_scale, torch.Tensor) and embed_scale.device.type == "meta":
+            # scalar_embed_scale is the plain-float constructor argument
+            # Gemma's own __init__ stashed before wrapping it in the meta
+            # buffer, so it survives regardless of the buffer's device --
+            # unlike embed_scale itself, whose value cannot be read back off
+            # a meta tensor (.item() has no data to return).
+            scalar = getattr(embedding, "scalar_embed_scale")
+            embedding.embed_scale = torch.tensor(
+                scalar, dtype=embed_scale.dtype, device=self.device)
+
         tied = getattr(self.model.config, "tie_word_embeddings", False)
         if tied and "lm_head.weight" in missing:
             self.adapter.output_head.weight = self.adapter.embedding.weight
