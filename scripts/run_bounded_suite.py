@@ -1425,12 +1425,31 @@ def prepare_critical_profile(tokenizer, temp_dir: pathlib.Path, deadline: float)
     traces = []
     calibration = []
     cases = prompt_cases("calibration")
+    # "minimum-memory-tiering" needs enough VRAM headroom to materialize
+    # this model's own largest tensor (the embedding/lm_head, vocab_size *
+    # hidden_size) plus decode scratch -- not a flat constant tuned for one
+    # model's vocabulary. 1.80 GB was fine for Qwen3-14B (vocab 151936,
+    # hidden 5120 -> ~1.56 GB largest tensor) but genuinely infeasible for
+    # Gemma-2-27B (vocab 256000, hidden 4608 -> ~2.36 GB): "VRAM budget is
+    # infeasible: vram_budget 1.80 GB is below the 2.50 GB needed", found by
+    # actually running this calibration step against Gemma, the same
+    # category of gap as run_deepspeed_zero_inference's buffer_size fix
+    # just above in this file, sized the same way -- off the model's own
+    # config rather than a literal copied from a different-sized model.
+    # +0.4 GB covers the decode-scratch term this control's own
+    # decode_slice_elems=1<<20 adds (observed ~0.14 GB on Gemma; not
+    # assumed universal, so kept as headroom rather than the exact figure).
+    from transformers import AutoConfig
+    hf_config = AutoConfig.from_pretrained(MODEL)
+    largest_tensor_gb = (getattr(hf_config, "vocab_size", 32000)
+                        * getattr(hf_config, "hidden_size", 4096) * 2) / 1e9
+    min_memory_vram_gb = max(1.80, largest_tensor_gb + 0.4)
     controls = [
         ("legacy-layer-streaming", EngineConfig(
             io_prefetch_depth=2, trace_events=True,
             trace_output=str(temp_dir / "critical_legacy_trace.json"))),
         ("minimum-memory-tiering", EngineConfig(
-            vram_budget_gb=1.80, decode_slice_elems=1 << 20,
+            vram_budget_gb=min_memory_vram_gb, decode_slice_elems=1 << 20,
             io_prefetch_depth=2, trace_events=True,
             trace_output=str(temp_dir / "critical_min_trace.json"))),
     ]
