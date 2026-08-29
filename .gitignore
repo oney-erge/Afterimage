@@ -55,3 +55,10 @@ paper/
 # that lands a ~19 GB checkpoint directly in the working tree. Never
 # commit it; the pattern is broad enough to catch any DFloat11 repo id.
 DFloat11__*/
+
+# Ad hoc archive/backup artifacts at the repo root: not part of the
+# tracked project, and an untracked file here still shows up in
+# `git status --short`, which several campaign scripts (run_paper_
+# comparison.py, run_h6_budget_sweep.py, run_compression_ablation.py)
+# treat as a dirty-tree signal and refuse to run against.
+/*.zip
