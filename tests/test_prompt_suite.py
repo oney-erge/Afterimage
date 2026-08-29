@@ -77,3 +77,35 @@ def test_render_disables_thinking_and_supports_legacy_templates():
     case = prompt_cases("evaluation")[0]
     assert "chemical symbol" in render_chat_prompt(ThinkingTokenizer(), case)
     assert "chemical symbol" in render_chat_prompt(LegacyTokenizer(), case)
+
+
+class GemmaStyleTokenizer:
+    """Reproduces Gemma 2/3's actual chat-template behavior: it raises on a
+    system-role message (jinja2.exceptions.TemplateError: System role not
+    supported) and only accepts user/model turns, found by running Gemma
+    2 27B through render_chat_prompt, not assumed from its docs."""
+
+    def apply_chat_template(self, messages, *, tokenize, add_generation_prompt, **_):
+        assert tokenize is False
+        assert add_generation_prompt is True
+        if any(m["role"] == "system" for m in messages):
+            raise Exception("jinja2.exceptions.TemplateError: System role not supported")
+        assert len(messages) == 1 and messages[0]["role"] == "user"
+        return messages[0]["content"]
+
+
+def test_render_folds_system_instruction_into_user_turn_for_gemma():
+    case = prompt_cases("evaluation")[0]
+    rendered = render_chat_prompt(GemmaStyleTokenizer(), case)
+    assert "Follow the requested output format exactly." in rendered
+    assert "chemical symbol" in rendered
+
+
+def test_render_reraises_unrelated_template_errors():
+    class BrokenTokenizer:
+        def apply_chat_template(self, messages, **kwargs):
+            raise Exception("unrelated template failure")
+
+    case = prompt_cases("evaluation")[0]
+    with pytest.raises(Exception, match="unrelated template failure"):
+        render_chat_prompt(BrokenTokenizer(), case)

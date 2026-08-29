@@ -185,19 +185,40 @@ def prompt_cases(split: str = "evaluation") -> tuple[PromptCase, ...]:
     return tuple(case for case in PROMPT_CASES if case.split == split)
 
 
-def render_chat_prompt(tokenizer, case: PromptCase) -> str:
-    """Render one prompt consistently across Afterimage and AirLLM.
+_SYSTEM_TEXT = "Follow the requested output format exactly."
 
-    Qwen3 accepts ``enable_thinking=False``.  Older compatible tokenizers do
-    not, so the fallback preserves the same messages while omitting only that
-    optional template switch.
-    """
-    messages = [
-        {"role": "system", "content": "Follow the requested output format exactly."},
-        {"role": "user", "content": case.user_text},
-    ]
+
+def _apply_template(tokenizer, messages: list[dict]) -> str:
+    """``enable_thinking=False`` is a Qwen3 extension; older or non-Qwen
+    tokenizers reject it as an unexpected keyword, so the fallback replays
+    the same messages without that optional switch."""
     kwargs = dict(tokenize=False, add_generation_prompt=True)
     try:
         return tokenizer.apply_chat_template(messages, enable_thinking=False, **kwargs)
     except TypeError:
         return tokenizer.apply_chat_template(messages, **kwargs)
+
+
+def render_chat_prompt(tokenizer, case: PromptCase) -> str:
+    """Render one prompt consistently across Afterimage and AirLLM.
+
+    Gemma's official chat template rejects a system-role message outright
+    (``jinja2.exceptions.TemplateError: System role not supported``, found by
+    actually running Gemma 2 27B through this function, not assumed from its
+    documentation). Every other model tested here -- Qwen3, Phi-4, Mistral --
+    accepts the system role, so the two-message form stays the default; only
+    on that specific rejection is the system instruction folded into the user
+    turn instead of being silently dropped, so Gemma still receives the same
+    instruction content, just not as a separate role.
+    """
+    messages = [
+        {"role": "system", "content": _SYSTEM_TEXT},
+        {"role": "user", "content": case.user_text},
+    ]
+    try:
+        return _apply_template(tokenizer, messages)
+    except Exception as exc:
+        if "system role" not in str(exc).lower():
+            raise
+        merged = [{"role": "user", "content": f"{_SYSTEM_TEXT}\n\n{case.user_text}"}]
+        return _apply_template(tokenizer, merged)
