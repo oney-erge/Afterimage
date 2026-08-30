@@ -693,6 +693,10 @@ def environment_manifest(repo_root: pathlib.Path, tokenizer,
         "cuda": torch.version.cuda,
         "gpu": gpu.name,
         "gpu_total_bytes": gpu.total_memory,
+        "benchmark_power_profile": os.environ.get(
+            "AFTERIMAGE_BENCHMARK_POWER_PROFILE"),
+        "gpu_power_control": os.environ.get(
+            "AFTERIMAGE_GPU_POWER_CONTROL"),
         "driver": command_output([
             "nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader"
         ]),
