@@ -353,6 +353,7 @@ log "step 2/6 exit=$? (log: $LOG_DIR/2_e8.2_breakdown.log)"
 log "--- step 3/6: Figure 5 -- compression ablation ---"
 if [[ -f "$RAW_STORE/manifest.json" ]]; then
   $PY -u scripts/local/paper1/run_compression_ablation.py \
+    --model "$MODEL" \
     --compressed-store "$STORE" --raw-store "$RAW_STORE" \
     --budgets "$E6_VRAM_BUDGET" --case-ids fact-gold,retrieval-7319 \
     --max-new-tokens "$MAX_NEW_TOKENS" --repeats "$REPEATS" \
@@ -386,7 +387,7 @@ $PY -u scripts/run_paper_comparison.py \
   --warmup-tokens 8 --cooldown-seconds "$COOLDOWN_SECONDS" --cooldown-max-temp-c "$COOLDOWN_MAX_TEMP_C" \
   --time-budget-minutes-per-length 150 \
   --out-dir "$OUT/e6.3-${tag}" --run-label "overnight-ttft" \
-  --resume \
+  --resume --require-complete \
   > "$LOG_DIR/5_e6.3_ttft.log" 2>&1 || step_status=1
 log "step 5/6 exit=$? (log: $LOG_DIR/5_e6.3_ttft.log)"
 
