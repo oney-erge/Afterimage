@@ -125,7 +125,9 @@ def is_capacity_failure(exc: BaseException) -> bool:
 
 def thermal_monitor_summary(samples: list[dict], interval_s: float = 1.0) -> dict:
     """Aggregates ~1 Hz gpu_thermal_snapshot() samples taken across a
-    cell's entire timed portion, not just at cell start/end -- this
+    cell's entire method call, including setup, burn-in, cooldown, and timed
+    inference. This diagnostic scope is intentionally broader than paper
+    eligibility, which uses measurement_window_summary(). This
     project has directly measured an RTX 3080 clock collapse from ~1890
     MHz to ~780 MHz *during* a run (see cool_down()'s docstring in
     run_bounded_suite.py). A cell running a 100-128-token decode workload
@@ -266,12 +268,132 @@ def thermal_monitor_summary(samples: list[dict], interval_s: float = 1.0) -> dic
     }
 
 
+def measurement_window_summary(rows: list[dict]) -> dict:
+    """Classify throttling only inside each row's timed inference window.
+
+    The cell-wide sampler intentionally spans model initialization, untimed
+    burn-in, inter-row cooldown, and measured inference. It is useful for
+    diagnosing the machine, but rejecting a completed row because the GPU
+    slowed during burn-in is a category error. Paired NVIDIA snapshots taken
+    immediately before and after each timed call make cumulative counter
+    deltas the authoritative transient-event detector for paper eligibility.
+    """
+
+    def counter_delta_seconds(before: dict, after: dict, key: str) -> float | None:
+        try:
+            first = float(before[key])
+            last = float(after[key])
+        except (KeyError, TypeError, ValueError):
+            return None
+        if last < first:
+            return None
+        return (last - first) / 1_000_000.0
+
+    windows = []
+    thermal_states: list[bool | None] = []
+    power_states: list[bool | None] = []
+    thermal_counter_total = 0.0
+    thermal_counter_known = True
+    power_counter_total = 0.0
+    power_counter_known = True
+    reason_masks: set[str] = set()
+
+    for row in rows:
+        before = row.get("gpu_thermal_before")
+        after = row.get("gpu_thermal")
+        if not isinstance(before, dict) or not isinstance(after, dict):
+            thermal_state = None
+            power_state = None
+            thermal_delta = None
+            power_delta = None
+        else:
+            for snapshot in (before, after):
+                mask = snapshot.get("throttle_reasons_active")
+                if mask not in (None, "", "N/A", "[N/A]"):
+                    reason_masks.add(str(mask))
+
+            thermal_parts = [
+                counter_delta_seconds(before, after, "sw_thermal_slowdown_counter_us"),
+                counter_delta_seconds(before, after, "hw_thermal_slowdown_counter_us"),
+            ]
+            power_parts = [
+                counter_delta_seconds(before, after, "sw_power_cap_counter_us"),
+                counter_delta_seconds(before, after, "hw_power_brake_counter_us"),
+            ]
+            thermal_delta = (
+                sum(part for part in thermal_parts if part is not None)
+                if all(part is not None for part in thermal_parts) else None)
+            power_delta = (
+                sum(part for part in power_parts if part is not None)
+                if all(part is not None for part in power_parts) else None)
+
+            thermal_flags = [
+                snapshot.get("thermal_throttled") for snapshot in (before, after)]
+            power_flags = [
+                snapshot.get("power_limited") for snapshot in (before, after)]
+            thermal_state = (
+                True if (any(flag is True for flag in thermal_flags)
+                         or (thermal_delta is not None and thermal_delta > 0))
+                else False if thermal_delta is not None and all(
+                    flag is not None for flag in thermal_flags)
+                else None)
+            power_state = (
+                True if (any(flag is True for flag in power_flags)
+                         or (power_delta is not None and power_delta > 0))
+                else False if power_delta is not None and all(
+                    flag is not None for flag in power_flags)
+                else None)
+
+        thermal_states.append(thermal_state)
+        power_states.append(power_state)
+        if thermal_delta is None:
+            thermal_counter_known = False
+        else:
+            thermal_counter_total += thermal_delta
+        if power_delta is None:
+            power_counter_known = False
+        else:
+            power_counter_total += power_delta
+        windows.append({
+            "case_id": row.get("case_id"),
+            "repeat": row.get("repeat"),
+            "wall_seconds": row.get("wall_seconds"),
+            "thermal_throttled": thermal_state,
+            "thermal_counter_delta_seconds": thermal_delta,
+            "power_limited": power_state,
+            "power_counter_delta_seconds": power_delta,
+        })
+
+    def aggregate(states: list[bool | None]) -> bool | None:
+        if any(state is True for state in states):
+            return True
+        if states and all(state is False for state in states):
+            return False
+        return None
+
+    return {
+        "scope": "paired snapshots bracketing timed inference only",
+        "windows": windows,
+        "windows_observed": len(windows),
+        "any_thermal_throttle_during_measurement": aggregate(thermal_states),
+        "thermal_throttle_windows": sum(state is True for state in thermal_states),
+        "thermal_throttle_counter_delta_seconds": (
+            thermal_counter_total if thermal_counter_known and windows else None),
+        "any_power_limit_during_measurement": aggregate(power_states),
+        "power_limit_windows": sum(state is True for state in power_states),
+        "power_limit_counter_delta_seconds": (
+            power_counter_total if power_counter_known and windows else None),
+        "clock_event_reason_masks_seen": sorted(reason_masks),
+    }
+
+
 class ThermalSampler:
     """Samples gpu_thermal_snapshot() on a background thread at roughly
     1 Hz for the lifetime of a ``with`` block, wrapping one cell's entire
-    timed portion. A start/end snapshot pair (what cool_down() and each
-    row's own gpu_thermal field already capture) cannot see a throttle
-    that both starts and clears somewhere in between; this can.
+    method call. It supplies inclusive energy and diagnostic telemetry.
+    Timed-row eligibility uses paired cumulative-counter snapshots instead,
+    so a throttle during untimed burn-in is not mislabeled as measurement
+    contamination.
     """
 
     def __init__(self, interval_s: float = 1.0):
@@ -415,9 +537,12 @@ def run_cell(config: dict) -> dict:
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
     monitoring = sampler.summary()
+    measurement_monitoring = measurement_window_summary(result.get("rows") or [])
     result["thermal_monitoring"] = monitoring
+    result["thermal_measurement_monitoring"] = measurement_monitoring
     if config.get("require_thermally_clean") and result["error"] is None:
-        thermal_state = monitoring.get("any_thermal_throttle_during_measurement")
+        thermal_state = measurement_monitoring.get(
+            "any_thermal_throttle_during_measurement")
         if thermal_state is not False:
             metadata = dict(result.get("metadata") or {})
             discarded_rows = result.get("rows") or []
@@ -425,7 +550,8 @@ def run_cell(config: dict) -> dict:
                 "reason": ("thermal throttle observed" if thermal_state is True
                            else "thermal status was not observable"),
                 "discarded_row_count": len(discarded_rows),
-                "monitoring": monitoring,
+                "measurement_monitoring": measurement_monitoring,
+                "whole_cell_monitoring": monitoring,
                 "discarded_rows": discarded_rows,
             }
             result["metadata"] = metadata

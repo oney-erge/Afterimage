@@ -804,6 +804,7 @@ def run_airllm(method: Method, rendered: list[dict], n_tokens: int,
             cache = drop_caches()
             reset_cuda_peak()
             read0 = process_read_bytes()
+            gpu_thermal_before = gpu_thermal_snapshot()
             with MemoryProbe() as probe:
                 t0 = time.perf_counter()
                 # An empty EOS list forces a fixed token count. Transformers
@@ -823,6 +824,7 @@ def run_airllm(method: Method, rendered: list[dict], n_tokens: int,
                     do_sample=False, use_cache=True, return_dict_in_generate=True, **kwargs)
                 torch.cuda.synchronize()
                 wall = time.perf_counter() - t0
+            gpu_thermal_after = gpu_thermal_snapshot()
             mem_report = probe.report()
             peak_vram_gb, peak_vram_source = canonical_peak_vram(mem_report)
             read_bytes = process_read_bytes() - read0
@@ -835,7 +837,8 @@ def run_airllm(method: Method, rendered: list[dict], n_tokens: int,
                 cache, {"generation_mode": "greedy", "repeat": repeat_offset + repeat,
                         "peak_vram_source": peak_vram_source,
                         **memory_probe_extra_fields(mem_report),
-                        "gpu_thermal": gpu_thermal_snapshot(),
+                        "gpu_thermal_before": gpu_thermal_before,
+                        "gpu_thermal": gpu_thermal_after,
                         "process_read_bytes": read_bytes,
                         "process_read_bytes_per_token": read_bytes / max(len(generated), 1),
                         **cooldown}))
@@ -878,7 +881,9 @@ def run_accelerate(method: Method, rendered: list[dict], n_tokens: int,
             cooldown = cool_down(COOLDOWN_SECONDS, COOLDOWN_MAX_TEMPERATURE_C)
             cache = drop_caches()
             read0 = process_read_bytes()
+            gpu_thermal_before = gpu_thermal_snapshot()
             result = baseline.generate(item["prompt"], n_tokens)
+            gpu_thermal_after = gpu_thermal_snapshot()
             read_bytes = process_read_bytes() - read0
             generated = result["output_token_ids"]
             mem_report = result["memory_report"]
@@ -894,7 +899,8 @@ def run_accelerate(method: Method, rendered: list[dict], n_tokens: int,
                  "cpu_memory_limit": method.overrides["cpu_memory"],
                  "peak_vram_source": peak_vram_source,
                  **memory_probe_extra_fields(mem_report),
-                 "gpu_thermal": gpu_thermal_snapshot(),
+                 "gpu_thermal_before": gpu_thermal_before,
+                 "gpu_thermal": gpu_thermal_after,
                  "process_read_bytes": read_bytes,
                  "process_read_bytes_per_token": read_bytes / max(len(generated), 1),
                  **cooldown}))
@@ -992,6 +998,7 @@ def run_dfloat11(method: Method, rendered: list[dict], n_tokens: int,
             cache = drop_caches()
             reset_cuda_peak()
             read0 = process_read_bytes()
+            gpu_thermal_before = gpu_thermal_snapshot()
             with MemoryProbe() as probe:
                 t0 = time.perf_counter()
                 with torch.no_grad():
@@ -1001,6 +1008,7 @@ def run_dfloat11(method: Method, rendered: list[dict], n_tokens: int,
                         return_dict_in_generate=True)
                 torch.cuda.synchronize()
                 wall = time.perf_counter() - t0
+            gpu_thermal_after = gpu_thermal_snapshot()
             mem_report = probe.report()
             peak_vram_gb, peak_vram_source = canonical_peak_vram(mem_report)
             read_bytes = process_read_bytes() - read0
@@ -1015,7 +1023,8 @@ def run_dfloat11(method: Method, rendered: list[dict], n_tokens: int,
                         "dfloat11_model": model_id, "cpu_offload": cpu_offload,
                         "peak_vram_source": peak_vram_source,
                         **memory_probe_extra_fields(mem_report),
-                        "gpu_thermal": gpu_thermal_snapshot(),
+                        "gpu_thermal_before": gpu_thermal_before,
+                        "gpu_thermal": gpu_thermal_after,
                         "process_read_bytes": read_bytes,
                         "process_read_bytes_per_token": read_bytes / max(len(generated), 1),
                         **cooldown}))
@@ -1164,6 +1173,7 @@ def run_deepspeed_zero_inference(method: Method, rendered: list[dict], n_tokens:
             cache = drop_caches()
             reset_cuda_peak()
             read0 = process_read_bytes()
+            gpu_thermal_before = gpu_thermal_snapshot()
             with MemoryProbe() as probe:
                 t0 = time.perf_counter()
                 with torch.no_grad():
@@ -1173,6 +1183,7 @@ def run_deepspeed_zero_inference(method: Method, rendered: list[dict], n_tokens:
                         return_dict_in_generate=True)
                 torch.cuda.synchronize()
                 wall = time.perf_counter() - t0
+            gpu_thermal_after = gpu_thermal_snapshot()
             mem_report = probe.report()
             peak_vram_gb, peak_vram_source = canonical_peak_vram(mem_report)
             read_bytes = process_read_bytes() - read0
@@ -1187,7 +1198,8 @@ def run_deepspeed_zero_inference(method: Method, rendered: list[dict], n_tokens:
                         "offload_device": offload_device,
                         "peak_vram_source": peak_vram_source,
                         **memory_probe_extra_fields(mem_report),
-                        "gpu_thermal": gpu_thermal_snapshot(),
+                        "gpu_thermal_before": gpu_thermal_before,
+                        "gpu_thermal": gpu_thermal_after,
                         "process_read_bytes": read_bytes,
                         "process_read_bytes_per_token": read_bytes / max(len(generated), 1),
                         **cooldown}))
@@ -1295,6 +1307,7 @@ def run_afterimage(method: Method, rendered: list[dict], n_tokens: int,
             engine.stats.reset()
             reset_cuda_peak()
             read0 = process_read_bytes()
+            gpu_thermal_before = gpu_thermal_snapshot()
             with MemoryProbe() as probe:
                 t0 = time.perf_counter()
                 policy = None
@@ -1307,6 +1320,7 @@ def run_afterimage(method: Method, rendered: list[dict], n_tokens: int,
                     sequence = engine.generate_greedy(ids, max_new_tokens=n_tokens, use_cache=True)
                 torch.cuda.synchronize()
                 wall = time.perf_counter() - t0
+            gpu_thermal_after = gpu_thermal_snapshot()
             mem_report = probe.report()
             peak_vram_gb, peak_vram_source = canonical_peak_vram(mem_report)
             read_bytes = process_read_bytes() - read0
@@ -1366,7 +1380,8 @@ def run_afterimage(method: Method, rendered: list[dict], n_tokens: int,
                 "prefetch_peak_inflight_bytes": stats.prefetch_peak_inflight_bytes,
                 "storage_read_calls": stats.storage_read_calls,
                 "storage_extent_bytes": stats.storage_extent_bytes,
-                "gpu_thermal": gpu_thermal_snapshot(),
+                "gpu_thermal_before": gpu_thermal_before,
+                "gpu_thermal": gpu_thermal_after,
                 **cooldown,
                 "pageable_ram_fallback_keys": sorted(
                     engine._ram_cache_pageable_keys),

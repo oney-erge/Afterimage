@@ -662,6 +662,8 @@ def run_one_token_length(args, tokenizer, rendered: list[dict],
                 "metadata": cell_result.get("metadata") or {},
                 "peak_host_rss_bytes": cell_result.get("peak_host_rss_bytes"),
                 "thermal_monitoring": cell_result.get("thermal_monitoring"),
+                "thermal_measurement_monitoring": cell_result.get(
+                    "thermal_measurement_monitoring"),
                 "error": cell_result.get("error")})
             if cell_result.get("error"):
                 result["failures"].append({
@@ -688,26 +690,45 @@ def run_one_token_length(args, tokenizer, rendered: list[dict],
         if result.get("workload") == "ttft" and summary.get("seconds_per_token") is not None:
             summary["ttft_seconds"] = summary["seconds_per_token"]
         method_cells = [cell for cell in result["cells"] if cell["method"] == method_id]
-        peak_rss_values = [cell["peak_host_rss_bytes"] for cell in method_cells
+        successful_method_cells = [
+            cell for cell in method_cells if cell.get("error") is None]
+        # Failed attempts stay in cells/failures as audit evidence, but their
+        # RSS, initialization, and thermal state must not contaminate the
+        # summary of the successful retry that supplied the reported rows.
+        peak_rss_values = [cell["peak_host_rss_bytes"] for cell in successful_method_cells
                            if cell["peak_host_rss_bytes"] is not None]
         init_seconds_values = [
-            cell["metadata"]["initialization_seconds"] for cell in method_cells
+            cell["metadata"]["initialization_seconds"] for cell in successful_method_cells
             if isinstance(cell.get("metadata"), dict)
             and cell["metadata"].get("initialization_seconds") is not None]
-        thermal_summaries = [cell["thermal_monitoring"] for cell in method_cells
+        thermal_summaries = [cell["thermal_monitoring"] for cell in successful_method_cells
                              if cell.get("thermal_monitoring")]
+        # New artifacts classify thermal/power events from paired counter
+        # snapshots that bracket timed inference only. Fall back to the older
+        # whole-cell summary solely for resumability of pre-change partials.
+        measurement_summaries = [
+            cell.get("thermal_measurement_monitoring") or cell.get("thermal_monitoring")
+            for cell in successful_method_cells
+            if cell.get("thermal_measurement_monitoring") or cell.get("thermal_monitoring")]
         sm_clock_mins = [t["sm_clock_mhz_min"] for t in thermal_summaries
                          if t.get("sm_clock_mhz_min") is not None]
         temp_maxes = [t["temperature_c_max"] for t in thermal_summaries
                      if t.get("temperature_c_max") is not None]
-        throttle_flags = [t["any_throttle_during_measurement"] for t in thermal_summaries
-                          if t.get("any_throttle_during_measurement") is not None]
         thermal_throttle_flags = [
-            t["any_thermal_throttle_during_measurement"] for t in thermal_summaries
+            t["any_thermal_throttle_during_measurement"] for t in measurement_summaries
             if t.get("any_thermal_throttle_during_measurement") is not None]
         power_limit_flags = [
-            t["any_power_limit_during_measurement"] for t in thermal_summaries
+            t["any_power_limit_during_measurement"] for t in measurement_summaries
             if t.get("any_power_limit_during_measurement") is not None]
+        throttle_flags = [
+            (t["any_throttle_during_measurement"]
+             if t.get("any_throttle_during_measurement") is not None
+             else bool(t.get("any_thermal_throttle_during_measurement") or
+                       t.get("any_power_limit_during_measurement")))
+            for t in measurement_summaries
+            if (t.get("any_throttle_during_measurement") is not None or
+                t.get("any_thermal_throttle_during_measurement") is not None or
+                t.get("any_power_limit_during_measurement") is not None)]
         energy_values = [t["energy_joules_estimate"] for t in thermal_summaries
                          if t.get("energy_joules_estimate") is not None]
         # Sum, not mean: each cell's energy_joules_estimate already covers

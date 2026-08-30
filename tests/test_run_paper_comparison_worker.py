@@ -475,14 +475,72 @@ class TestThermalMonitorSummary:
         monkeypatch.setattr(worker, "ThermalSampler", FakeSampler)
         monkeypatch.setattr(
             worker, "run_airllm",
-            lambda *a, **k: ([{"case_id": "a"}], {"initialization_seconds": 1.0}))
+            lambda *a, **k: ([{
+                "case_id": "a", "repeat": 0, "wall_seconds": 5.0,
+                "gpu_thermal_before": {
+                    "thermal_throttled": False, "power_limited": False,
+                    "sw_thermal_slowdown_counter_us": "1000000",
+                    "hw_thermal_slowdown_counter_us": "0",
+                    "sw_power_cap_counter_us": "2000000",
+                    "hw_power_brake_counter_us": "0",
+                    "throttle_reasons_active": "0x0000000000000000",
+                },
+                "gpu_thermal": {
+                    "thermal_throttled": False, "power_limited": True,
+                    "sw_thermal_slowdown_counter_us": "3000000",
+                    "hw_thermal_slowdown_counter_us": "0",
+                    "sw_power_cap_counter_us": "4000000",
+                    "hw_power_brake_counter_us": "0",
+                    "throttle_reasons_active": "0x0000000000000004",
+                },
+            }], {"initialization_seconds": 1.0}))
         result = worker.run_cell(_base_config(
             method_id="airllm", require_thermally_clean=True))
         assert result["rows"] == []
         assert result["error"] == "ThermalIntegrityError('thermal throttle observed')"
         rejection = result["metadata"]["thermal_integrity_rejection"]
         assert rejection["discarded_row_count"] == 1
-        assert rejection["discarded_rows"] == [{"case_id": "a"}]
+        assert rejection["measurement_monitoring"][
+            "thermal_throttle_counter_delta_seconds"] == pytest.approx(2.0)
+        assert rejection["discarded_rows"][0]["case_id"] == "a"
+
+    def test_burn_in_or_cooldown_throttle_does_not_reject_clean_timed_rows(
+            self, monkeypatch):
+        class ContaminatedWholeCellSampler:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc_info):
+                return None
+
+            def summary(self):
+                return {"any_thermal_throttle_during_measurement": True}
+
+        clean = {
+            "thermal_throttled": False, "power_limited": False,
+            "sw_thermal_slowdown_counter_us": "1000000",
+            "hw_thermal_slowdown_counter_us": "0",
+            "sw_power_cap_counter_us": "2000000",
+            "hw_power_brake_counter_us": "0",
+            "throttle_reasons_active": "0x0000000000000000",
+        }
+        monkeypatch.setattr(worker, "ThermalSampler", ContaminatedWholeCellSampler)
+        monkeypatch.setattr(
+            worker, "run_airllm",
+            lambda *a, **k: ([{
+                "case_id": "a", "repeat": 0, "wall_seconds": 5.0,
+                "gpu_thermal_before": dict(clean), "gpu_thermal": dict(clean),
+            }], {"initialization_seconds": 1.0}))
+
+        result = worker.run_cell(_base_config(
+            method_id="airllm", require_thermally_clean=True))
+
+        assert result["error"] is None
+        assert len(result["rows"]) == 1
+        assert result["thermal_monitoring"][
+            "any_thermal_throttle_during_measurement"] is True
+        assert result["thermal_measurement_monitoring"][
+            "any_thermal_throttle_during_measurement"] is False
 
     def test_energy_uses_actual_monotonic_sample_spacing(self):
         samples = [
