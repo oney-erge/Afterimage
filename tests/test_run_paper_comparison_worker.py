@@ -415,7 +415,74 @@ class TestThermalMonitorSummary:
             "mean_power_draw_w": None, "energy_joules_estimate": None,
             "energy_sampling_seconds": None, "energy_estimation_method": None,
             "any_throttle_during_measurement": None,
+            "any_thermal_throttle_during_measurement": None,
+            "thermal_throttle_samples": 0, "thermal_status_samples": 0,
+            "thermal_throttle_sample_fraction": None,
+            "thermal_throttle_duration_seconds_estimate": None,
+            "thermal_throttle_counter_delta_seconds": None,
+            "any_power_limit_during_measurement": None,
+            "power_limit_samples": 0, "power_status_samples": 0,
+            "power_limit_sample_fraction": None,
+            "power_limit_duration_seconds_estimate": None,
+            "power_limit_counter_delta_seconds": None,
+            "clock_event_reason_masks_seen": [],
         }
+
+    def test_separates_thermal_slowdown_from_ordinary_power_capping(self):
+        samples = [
+            {"sampled_at_monotonic_s": 10.0, "throttled": True,
+             "thermal_throttled": True, "power_limited": True,
+             "sw_thermal_slowdown_counter_us": "1000000",
+             "sw_power_cap_counter_us": "2000000",
+             "throttle_reasons_active": "0x0000000000000024"},
+            {"sampled_at_monotonic_s": 11.5, "throttled": True,
+             "thermal_throttled": False, "power_limited": True,
+             "sw_thermal_slowdown_counter_us": "2500000",
+             "sw_power_cap_counter_us": "3500000",
+             "throttle_reasons_active": "0x0000000000000004"},
+            {"sampled_at_monotonic_s": 13.0, "throttled": False,
+             "thermal_throttled": False, "power_limited": False,
+             "sw_thermal_slowdown_counter_us": "2500000",
+             "sw_power_cap_counter_us": "5000000",
+             "throttle_reasons_active": "0x0000000000000000"},
+        ]
+        summary = worker.thermal_monitor_summary(samples)
+        assert summary["any_thermal_throttle_during_measurement"] is True
+        assert summary["thermal_throttle_samples"] == 1
+        assert summary["thermal_throttle_sample_fraction"] == pytest.approx(1 / 3)
+        assert summary["thermal_throttle_duration_seconds_estimate"] == pytest.approx(1.5)
+        assert summary["thermal_throttle_counter_delta_seconds"] == pytest.approx(1.5)
+        assert summary["any_power_limit_during_measurement"] is True
+        assert summary["power_limit_samples"] == 2
+        assert summary["power_limit_sample_fraction"] == pytest.approx(2 / 3)
+        assert summary["power_limit_duration_seconds_estimate"] == pytest.approx(3.0)
+        assert summary["power_limit_counter_delta_seconds"] == pytest.approx(3.0)
+        assert summary["clock_event_reason_masks_seen"] == [
+            "0x0000000000000000", "0x0000000000000004", "0x0000000000000024"]
+
+    def test_strict_cell_rejects_thermal_contamination_but_preserves_evidence(
+            self, monkeypatch):
+        class FakeSampler:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc_info):
+                return None
+
+            def summary(self):
+                return {"any_thermal_throttle_during_measurement": True}
+
+        monkeypatch.setattr(worker, "ThermalSampler", FakeSampler)
+        monkeypatch.setattr(
+            worker, "run_airllm",
+            lambda *a, **k: ([{"case_id": "a"}], {"initialization_seconds": 1.0}))
+        result = worker.run_cell(_base_config(
+            method_id="airllm", require_thermally_clean=True))
+        assert result["rows"] == []
+        assert result["error"] == "ThermalIntegrityError('thermal throttle observed')"
+        rejection = result["metadata"]["thermal_integrity_rejection"]
+        assert rejection["discarded_row_count"] == 1
+        assert rejection["discarded_rows"] == [{"case_id": "a"}]
 
     def test_energy_uses_actual_monotonic_sample_spacing(self):
         samples = [

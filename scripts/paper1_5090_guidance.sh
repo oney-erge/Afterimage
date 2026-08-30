@@ -387,7 +387,7 @@ $PY -u scripts/run_paper_comparison.py \
   --warmup-tokens 8 --cooldown-seconds "$COOLDOWN_SECONDS" --cooldown-max-temp-c "$COOLDOWN_MAX_TEMP_C" \
   --time-budget-minutes-per-length 150 \
   --out-dir "$OUT/e6.3-${tag}" --run-label "overnight-ttft" \
-  --resume --require-complete \
+  --resume --require-complete --require-thermally-clean \
   > "$LOG_DIR/5_e6.3_ttft.log" 2>&1 || step_status=1
 log "step 5/6 exit=$? (log: $LOG_DIR/5_e6.3_ttft.log)"
 

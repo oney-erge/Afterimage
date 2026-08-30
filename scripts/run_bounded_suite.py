@@ -522,7 +522,11 @@ def gpu_thermal_snapshot() -> dict:
     raw = command_output([
         "nvidia-smi",
         "--query-gpu=clocks.sm,clocks.mem,temperature.gpu,power.draw,"
-        "enforced.power.limit,clocks_throttle_reasons.active",
+        "enforced.power.limit,clocks_throttle_reasons.active,"
+        "clocks_event_reasons_counters.sw_thermal_slowdown,"
+        "clocks_event_reasons_counters.sw_power_cap,"
+        "clocks_event_reasons_counters.hw_thermal_slowdown,"
+        "clocks_event_reasons_counters.hw_power_brake_slowdown",
         "--format=csv,noheader,nounits"])
     if not raw:
         return {}
@@ -530,8 +534,10 @@ def gpu_thermal_snapshot() -> dict:
     if len(parts) < 6:
         return {"raw": raw.strip()}
     keys = ("sm_clock_mhz", "mem_clock_mhz", "temperature_c", "power_draw_w",
-            "power_limit_w", "throttle_reasons_active")
-    snapshot = dict(zip(keys, parts, strict=True))
+            "power_limit_w", "throttle_reasons_active",
+            "sw_thermal_slowdown_counter_us", "sw_power_cap_counter_us",
+            "hw_thermal_slowdown_counter_us", "hw_power_brake_counter_us")
+    snapshot = dict(zip(keys, parts[:len(keys)]))
     snapshot["throttled"] = is_throttled(snapshot)
     snapshot["thermal_throttled"] = thermal_throttled(snapshot)
     snapshot["power_limited"] = power_limited(snapshot)

@@ -163,6 +163,56 @@ def thermal_monitor_summary(samples: list[dict], interval_s: float = 1.0) -> dic
             any_known = True
         if throttled is True:
             any_throttle = True
+
+    def flag_summary(key: str) -> dict:
+        known = [sample.get(key) for sample in samples if sample.get(key) is not None]
+        active = sum(value is True for value in known)
+        duration_s = 0.0
+        duration_observed = False
+        for current, following in zip(samples, samples[1:]):
+            if current.get(key) is not True:
+                continue
+            try:
+                started_at = float(current["sampled_at_monotonic_s"])
+                ended_at = float(following["sampled_at_monotonic_s"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if ended_at > started_at:
+                duration_s += ended_at - started_at
+                duration_observed = True
+        return {
+            "any": (active > 0) if known else None,
+            "active_samples": active,
+            "observed_samples": len(known),
+            "sample_fraction": (active / len(known)) if known else None,
+            "duration_seconds_estimate": duration_s if duration_observed else None,
+        }
+
+    thermal = flag_summary("thermal_throttled")
+    power = flag_summary("power_limited")
+
+    def counter_delta_seconds(key: str) -> float | None:
+        values = []
+        for sample in samples:
+            try:
+                values.append(float(sample[key]))
+            except (KeyError, TypeError, ValueError):
+                continue
+        if len(values) < 2 or values[-1] < values[0]:
+            return None
+        return (values[-1] - values[0]) / 1_000_000.0
+
+    thermal_counter_s = counter_delta_seconds("sw_thermal_slowdown_counter_us")
+    power_counter_s = counter_delta_seconds("sw_power_cap_counter_us")
+    if thermal_counter_s is not None and thermal_counter_s > 0:
+        thermal["any"] = True
+    if power_counter_s is not None and power_counter_s > 0:
+        power["any"] = True
+    reason_masks = sorted({
+        str(sample["throttle_reasons_active"])
+        for sample in samples
+        if sample.get("throttle_reasons_active") not in (None, "", "N/A", "[N/A]")
+    })
     # Integrate the actual monotonic sample spacing. nvidia-smi itself takes
     # nonzero and variable time, so assuming exactly interval_s between calls
     # biases long runs. Legacy/synthetic samples without timestamps retain the
@@ -200,6 +250,19 @@ def thermal_monitor_summary(samples: list[dict], interval_s: float = 1.0) -> dic
         # reading at all -- e.g. no nvidia-smi -- so "no throttle detected"
         # is never confused with "throttle status unknown for this cell".
         "any_throttle_during_measurement": any_throttle if any_known else None,
+        "any_thermal_throttle_during_measurement": thermal["any"],
+        "thermal_throttle_samples": thermal["active_samples"],
+        "thermal_status_samples": thermal["observed_samples"],
+        "thermal_throttle_sample_fraction": thermal["sample_fraction"],
+        "thermal_throttle_duration_seconds_estimate": thermal["duration_seconds_estimate"],
+        "thermal_throttle_counter_delta_seconds": thermal_counter_s,
+        "any_power_limit_during_measurement": power["any"],
+        "power_limit_samples": power["active_samples"],
+        "power_status_samples": power["observed_samples"],
+        "power_limit_sample_fraction": power["sample_fraction"],
+        "power_limit_duration_seconds_estimate": power["duration_seconds_estimate"],
+        "power_limit_counter_delta_seconds": power_counter_s,
+        "clock_event_reason_masks_seen": reason_masks,
     }
 
 
@@ -351,7 +414,26 @@ def run_cell(config: dict) -> dict:
             gc.collect()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
-    result["thermal_monitoring"] = sampler.summary()
+    monitoring = sampler.summary()
+    result["thermal_monitoring"] = monitoring
+    if config.get("require_thermally_clean") and result["error"] is None:
+        thermal_state = monitoring.get("any_thermal_throttle_during_measurement")
+        if thermal_state is not False:
+            metadata = dict(result.get("metadata") or {})
+            discarded_rows = result.get("rows") or []
+            metadata["thermal_integrity_rejection"] = {
+                "reason": ("thermal throttle observed" if thermal_state is True
+                           else "thermal status was not observable"),
+                "discarded_row_count": len(discarded_rows),
+                "monitoring": monitoring,
+                "discarded_rows": discarded_rows,
+            }
+            result["metadata"] = metadata
+            result["rows"] = []
+            result["error"] = (
+                "ThermalIntegrityError(%r)" %
+                metadata["thermal_integrity_rejection"]["reason"])
+            result["traceback"] = None
     return result
 
 

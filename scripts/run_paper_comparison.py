@@ -493,10 +493,13 @@ def run_one_token_length(args, tokenizer, rendered: list[dict],
                 "or remove it to start over)" % partial)
         result = json.loads(partial.read_text(encoding="utf-8"))
         mismatched = [
-            (name, result.get(name), value) for name, value in
-            (("max_new_tokens", n_tokens), ("blocks_requested", args.blocks),
-             ("seed", args.seed), ("selected_methods", selected))
-            if result.get(name) != value]
+            (name, (result.get(name, False) if name == "require_thermally_clean"
+                    else result.get(name)), value) for name, value in
+             (("max_new_tokens", n_tokens), ("blocks_requested", args.blocks),
+              ("seed", args.seed), ("selected_methods", selected),
+              ("require_thermally_clean", args.require_thermally_clean))
+             if (result.get(name, False) if name == "require_thermally_clean"
+                 else result.get(name)) != value]
         # prompt_suite predates this field in older .partial files; a
         # missing key means "evaluation" (the only split that existed
         # then), not "leave unspecified and refuse to resume".
@@ -569,6 +572,7 @@ def run_one_token_length(args, tokenizer, rendered: list[dict],
             "store": args.store,
             "selected_methods": selected,
             "seed": args.seed,
+            "require_thermally_clean": args.require_thermally_clean,
             "environment": environment_manifest(repo_root, tokenizer,
                                                 store=pathlib.Path(args.store)),
             "reproducible_from_commit": not bool(dirty),
@@ -630,6 +634,7 @@ def run_one_token_length(args, tokenizer, rendered: list[dict],
                 "warmup_tokens": args.warmup_tokens,
                 "cooldown_seconds": args.cooldown_seconds,
                 "cooldown_max_temp_c": args.cooldown_max_temp_c,
+                "require_thermally_clean": args.require_thermally_clean,
                 "seconds_remaining": deadline - time.perf_counter(),
                 "case_ids": case_ids, "prompt_suite": args.prompt_suite,
                 # The worker runs in a fresh subprocess and does not inherit
@@ -697,6 +702,12 @@ def run_one_token_length(args, tokenizer, rendered: list[dict],
                      if t.get("temperature_c_max") is not None]
         throttle_flags = [t["any_throttle_during_measurement"] for t in thermal_summaries
                           if t.get("any_throttle_during_measurement") is not None]
+        thermal_throttle_flags = [
+            t["any_thermal_throttle_during_measurement"] for t in thermal_summaries
+            if t.get("any_thermal_throttle_during_measurement") is not None]
+        power_limit_flags = [
+            t["any_power_limit_during_measurement"] for t in thermal_summaries
+            if t.get("any_power_limit_during_measurement") is not None]
         energy_values = [t["energy_joules_estimate"] for t in thermal_summaries
                          if t.get("energy_joules_estimate") is not None]
         # Sum, not mean: each cell's energy_joules_estimate already covers
@@ -748,6 +759,12 @@ def run_one_token_length(args, tokenizer, rendered: list[dict],
                 "temperature_c_max": max(temp_maxes) if temp_maxes else None,
                 "any_throttle_during_measurement": (
                     any(throttle_flags) if throttle_flags else None),
+                "any_thermal_throttle_during_measurement": (
+                    any(thermal_throttle_flags) if thermal_throttle_flags else None),
+                "thermal_throttled_cells": sum(bool(value) for value in thermal_throttle_flags),
+                "any_power_limit_during_measurement": (
+                    any(power_limit_flags) if power_limit_flags else None),
+                "power_limited_cells": sum(bool(value) for value in power_limit_flags),
                 # The worker-level sampler starts before method setup and ends
                 # after cleanup. These are deliberately named inclusive so a
                 # paper cannot mistake setup+warmup+generation energy for a
@@ -848,6 +865,12 @@ def main() -> int:
                              "measured seconds/token. 0 disables it.")
     parser.add_argument("--cooldown-seconds", type=float, default=20.0)
     parser.add_argument("--cooldown-max-temp-c", type=float, default=75.0)
+    parser.add_argument(
+        "--require-thermally-clean", action="store_true",
+        help="keep a cell resumable instead of accepting its timing when continuous "
+             "monitoring observes a thermal slowdown, or cannot observe thermal "
+             "status. Ordinary software power capping remains measured and reported "
+             "but does not reject the cell.")
     parser.add_argument("--case-ids", default=None,
                         help="comma-separated evaluation case IDs; default is all")
     parser.add_argument("--time-budget-minutes-per-length", type=float, default=90.0)

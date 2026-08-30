@@ -506,7 +506,8 @@ def _fake_args(**overrides):
         draft_model="Qwen/Qwen3-0.6B", store="/tmp/store", blocks=2,
         warmup_tokens=0, cooldown_seconds=0.0, cooldown_max_temp_c=None,
         time_budget_minutes_per_length=60.0, seed=0, resume=False,
-        require_complete=False, prompt_suite="evaluation",
+        require_complete=False, require_thermally_clean=False,
+        prompt_suite="evaluation",
     )
     base.update(overrides)
     return types.SimpleNamespace(**base)
@@ -529,6 +530,10 @@ def _cell_row(method_id, case_id, block, seconds_per_token=10.0, tokens=4):
 def stub_environment_manifest(monkeypatch):
     import scripts.run_paper_comparison as rpc
     monkeypatch.setattr(rpc, "environment_manifest", lambda *a, **k: {"stub": True})
+    monkeypatch.setattr(
+        rpc, "cool_down",
+        lambda *a, **k: {"cooldown_reached_target": True,
+                         "throttled_after_cooldown": False})
 
 
 class TestRunOneTokenLengthIntegration:
@@ -683,10 +688,12 @@ class TestRunOneTokenLengthIntegration:
             return {"rows": [_cell_row(config["method_id"], "a", config["block"])],
                    "metadata": {"initialization_seconds": 4.2},
                    "peak_host_rss_bytes": 500_000_000,
-                   "thermal_monitoring": {
-                       "samples_collected": 5, "sm_clock_mhz_min": 1200.0,
-                       "sm_clock_mhz_median": 1800.0, "temperature_c_max": 72.0,
-                       "any_throttle_during_measurement": False},
+                    "thermal_monitoring": {
+                        "samples_collected": 5, "sm_clock_mhz_min": 1200.0,
+                        "sm_clock_mhz_median": 1800.0, "temperature_c_max": 72.0,
+                        "any_throttle_during_measurement": False,
+                        "any_thermal_throttle_during_measurement": False,
+                        "any_power_limit_during_measurement": True},
                    "error": None}
 
         monkeypatch.setattr(rpc, "_run_cell_in_subprocess", fake_cell)
@@ -702,3 +709,5 @@ class TestRunOneTokenLengthIntegration:
         assert entry["thermal_across_all_cells"]["sm_clock_mhz_min"] == 1200.0
         assert entry["thermal_across_all_cells"]["temperature_c_max"] == 72.0
         assert entry["thermal_across_all_cells"]["any_throttle_during_measurement"] is False
+        assert entry["thermal_across_all_cells"]["any_thermal_throttle_during_measurement"] is False
+        assert entry["thermal_across_all_cells"]["any_power_limit_during_measurement"] is True
