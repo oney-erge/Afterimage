@@ -33,7 +33,15 @@ class RepresentationPlan:
     predicted_prepare_s: float
     feasible: bool = True
     reason: str = ""
-    schema_version: int = 1
+    # Schema v2 records the TOTAL resource contract separately from the
+    # persistent bytes selected by the representation planner.  Schema v1
+    # plans treated the full VRAM budget as persistent residency and thereby
+    # forgot the transient tensor/decode/activation reserve used by the
+    # ordinary tier planner.
+    vram_budget_bytes: int | None = None
+    ram_budget_bytes: int | None = None
+    vram_headroom_bytes: int = 0
+    schema_version: int = 2
 
     def to_dict(self) -> dict:
         return {
@@ -42,6 +50,9 @@ class RepresentationPlan:
             "storage_bytes": self.storage_bytes,
             "predicted_prepare_s": self.predicted_prepare_s,
             "feasible": self.feasible, "reason": self.reason,
+            "vram_budget_bytes": self.vram_budget_bytes,
+            "ram_budget_bytes": self.ram_budget_bytes,
+            "vram_headroom_bytes": self.vram_headroom_bytes,
             "schema_version": self.schema_version,
         }
 
@@ -55,7 +66,7 @@ class RepresentationPlan:
     @classmethod
     def load(cls, path) -> "RepresentationPlan":
         payload = json.loads(pathlib.Path(path).read_text(encoding="utf-8"))
-        if payload.get("schema_version") != 1:
+        if payload.get("schema_version") not in (1, 2):
             raise ValueError("unsupported representation-plan schema")
         choices = {key: RepresentationOption(**value)
                    for key, value in payload["choices"].items()}
@@ -65,6 +76,13 @@ class RepresentationPlan:
                    predicted_prepare_s=float(payload["predicted_prepare_s"]),
                    feasible=bool(payload.get("feasible", True)),
                    reason=str(payload.get("reason", "")),
+                   vram_budget_bytes=(
+                       int(payload["vram_budget_bytes"])
+                       if payload.get("vram_budget_bytes") is not None else None),
+                   ram_budget_bytes=(
+                       int(payload["ram_budget_bytes"])
+                       if payload.get("ram_budget_bytes") is not None else None),
+                   vram_headroom_bytes=int(payload.get("vram_headroom_bytes", 0)),
                    schema_version=int(payload["schema_version"]))
 
 
@@ -121,18 +139,27 @@ def _prune_dominated(states: dict[tuple[int, int], tuple[float, int, object]]) -
 
 def plan_representations(options: list[RepresentationOption], *, vram_budget_bytes: int,
                          ram_budget_bytes: int, storage_budget_bytes: int | None = None,
-                         quantum_bytes: int = 16 << 20) -> RepresentationPlan:
+                         quantum_bytes: int = 16 << 20,
+                         vram_headroom_bytes: int = 0) -> RepresentationPlan:
+    if vram_budget_bytes < 0 or ram_budget_bytes < 0:
+        raise ValueError("representation budgets must be non-negative")
+    if not 0 <= vram_headroom_bytes <= vram_budget_bytes:
+        raise ValueError("VRAM headroom must fit inside the total VRAM budget")
     grouped: dict[str, list[RepresentationOption]] = {}
     for option in options:
         if not option.exact:
             continue
         grouped.setdefault(option.tensor_key, []).append(option)
     if not grouped:
-        return RepresentationPlan({}, 0, 0, 0, 0.0, False,
-                                  "no exact representation options were supplied")
+        return RepresentationPlan(
+            {}, 0, 0, 0, 0.0, False,
+            "no exact representation options were supplied",
+            vram_budget_bytes=vram_budget_bytes,
+            ram_budget_bytes=ram_budget_bytes,
+            vram_headroom_bytes=vram_headroom_bytes)
 
     q = max(1, quantum_bytes)
-    vcap = vram_budget_bytes // q
+    vcap = (vram_budget_bytes - vram_headroom_bytes) // q
     rcap = ram_budget_bytes // q
     # Keep choices as linked back-pointers.  Copying a growing dictionary for
     # every DP transition made a real 441-tensor plan consume gigabytes and
@@ -161,8 +188,12 @@ def plan_representations(options: list[RepresentationOption], *, vram_budget_byt
                     next_states[(nv, nr)] = candidate
         states = _prune_dominated(next_states)
         if not states:
-            return RepresentationPlan({}, 0, 0, 0, 0.0, False,
-                                      "no representation for %s fits the budgets" % tensor_key)
+            return RepresentationPlan(
+                {}, 0, 0, 0, 0.0, False,
+                "no representation for %s fits the budgets" % tensor_key,
+                vram_budget_bytes=vram_budget_bytes,
+                ram_budget_bytes=ram_budget_bytes,
+                vram_headroom_bytes=vram_headroom_bytes)
 
     (used_v, used_r), (cost, storage, selected_node) = min(
         states.items(), key=lambda item: (item[1][0], item[1][1]))
@@ -170,7 +201,15 @@ def plan_representations(options: list[RepresentationOption], *, vram_budget_byt
     while selected_node is not None:
         selected_node, tensor_key, option = selected_node
         selected[tensor_key] = option
-    return RepresentationPlan(selected, used_v * q, used_r * q, storage, cost)
+    # The DP state is conservatively quantized for tractability, but the
+    # runtime contract and paper metadata must report real selected bytes.
+    actual_vram = sum(option.vram_bytes for option in selected.values())
+    actual_ram = sum(option.ram_bytes for option in selected.values())
+    return RepresentationPlan(
+        selected, actual_vram, actual_ram, storage, cost,
+        vram_budget_bytes=vram_budget_bytes,
+        ram_budget_bytes=ram_budget_bytes,
+        vram_headroom_bytes=vram_headroom_bytes)
 
 
 def validate_artifacts(plan: RepresentationPlan, store_dir) -> list[str]:

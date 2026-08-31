@@ -676,12 +676,25 @@ class StreamingLosslessModel:
                     "%s requests row_gather without a row-addressable store blob" % key)
         vram_limit = int(self.config.vram_budget_gb * 1e9)
         ram_limit = int((self.config.ram_budget_gb or 0.0) * 1e9)
-        if plan.vram_bytes > vram_limit or plan.ram_bytes > ram_limit:
+        if plan.vram_budget_bytes is not None:
+            if plan.vram_budget_bytes != vram_limit:
+                raise RuntimeError(
+                    "representation plan was built for %.3f GB total VRAM, "
+                    "but the runtime requested %.3f GB"
+                    % (plan.vram_budget_bytes / 1e9, vram_limit / 1e9))
+            if plan.ram_budget_bytes != ram_limit:
+                raise RuntimeError(
+                    "representation plan was built for %.3f GB RAM, but the "
+                    "runtime requested %.3f GB"
+                    % ((plan.ram_budget_bytes or 0) / 1e9, ram_limit / 1e9))
+        persistent_plus_transient = plan.vram_bytes + plan.vram_headroom_bytes
+        if persistent_plus_transient > vram_limit or plan.ram_bytes > ram_limit:
             raise RuntimeError(
-                "representation plan exceeds live budgets: plan VRAM/RAM "
-                "%.3f/%.3f GB, limits %.3f/%.3f GB"
-                % (plan.vram_bytes / 1e9, plan.ram_bytes / 1e9,
-                   vram_limit / 1e9, ram_limit / 1e9))
+                "representation plan exceeds live budgets: persistent VRAM "
+                "%.3f GB + transient headroom %.3f GB, RAM %.3f GB; limits "
+                "%.3f/%.3f GB"
+                % (plan.vram_bytes / 1e9, plan.vram_headroom_bytes / 1e9,
+                   plan.ram_bytes / 1e9, vram_limit / 1e9, ram_limit / 1e9))
         self._representation_plan = plan
         self._representation_names = {
             key: option.name for key, option in plan.choices.items()
@@ -920,13 +933,16 @@ class StreamingLosslessModel:
                     "lm_head_policy='ram_overlay' requires an untied, stored "
                     "lm_head.weight; this checkpoint has no independent head")
             plan_kwargs = {}
-            if cfg.max_context is not None:
+            if cfg.max_context is not None or cfg.vram_safety_margin_gb:
                 from .vram_planner import (
                     DEFAULT_ACTIVATION_SLACK_BYTES, kv_cache_bytes_per_token,
                 )
-                kv_reserve = kv_cache_bytes_per_token(self.hf_cfg) * cfg.max_context
+                kv_reserve = (
+                    kv_cache_bytes_per_token(self.hf_cfg) * cfg.max_context
+                    if cfg.max_context is not None else 0)
+                safety_reserve = int(cfg.vram_safety_margin_gb * 1e9)
                 plan_kwargs["activation_slack_bytes"] = (
-                    DEFAULT_ACTIVATION_SLACK_BYTES + kv_reserve)
+                    DEFAULT_ACTIVATION_SLACK_BYTES + kv_reserve + safety_reserve)
             plan = plan_from_manifest(
                 self.manifest, vram_budget_gb=cfg.vram_budget_gb,
                 ram_budget_gb=cfg.ram_budget_gb or 0.0,

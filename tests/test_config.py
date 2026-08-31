@@ -252,6 +252,12 @@ def test_trace_output_cannot_silently_write_an_empty_trace():
     EngineConfig(trace_events=True, trace_output="trace.json")
 
 
+def test_vram_safety_margin_requires_a_tiered_budget():
+    with pytest.raises(ValueError, match="vram_safety_margin_gb"):
+        EngineConfig(vram_safety_margin_gb=0.5)
+    EngineConfig(vram_budget_gb=8.0, vram_safety_margin_gb=0.5)
+
+
 def test_exactness_contract_distinguishes_greedy_and_sampling():
     assert EngineConfig().exactness_contract == "reference_execution_equivalent"
     assert EngineConfig(draft_mode="model").exactness_contract == "distribution_exact"

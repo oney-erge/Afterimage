@@ -116,6 +116,13 @@ class EngineConfig:
         Planning decides what SHOULD live where; this is what stops the
         allocator from silently creeping past it. None disables the cap.
 
+    vram_safety_margin_gb
+        Additional non-residency reserve inside vram_budget_gb for allocator
+        fragmentation, framework workspaces, and device allocations that are
+        not represented by the analytic largest-tensor/decode/activation
+        terms. Zero preserves historical planning. Regulated runs should
+        measure the smallest margin that survives their hard vram_cap_gb.
+
     max_context
         How many tokens of KV cache the VRAM plan must reserve room for.
         The KV cache grows with every generated token and lives in VRAM
@@ -358,6 +365,7 @@ class EngineConfig:
     vram_budget_gb: float | None = None
     ram_budget_gb: float | None = None
     vram_cap_gb: float | None = None
+    vram_safety_margin_gb: float = 0.0
     max_context: int | None = None
     io_prefetch_depth: int = 1
     storage_read_policy: str = "per_blob"
@@ -428,6 +436,10 @@ class EngineConfig:
                              % self.decode_slice_elems)
         if self.max_context is not None and self.max_context < 1:
             raise ValueError("max_context must be >= 1, got %d" % self.max_context)
+        if self.vram_safety_margin_gb < 0:
+            raise ValueError("vram_safety_margin_gb must be non-negative")
+        if self.vram_safety_margin_gb and self.vram_budget_gb is None:
+            raise ValueError("vram_safety_margin_gb requires vram_budget_gb")
         if self.max_context is not None and self.vram_budget_gb is None:
             raise ValueError(
                 "max_context requires vram_budget_gb to also be set -- with "
