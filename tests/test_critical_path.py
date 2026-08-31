@@ -1,4 +1,6 @@
 import random
+import threading
+from types import SimpleNamespace
 
 import pytest
 
@@ -154,6 +156,10 @@ def test_engine_trace_reset_drops_startup_dependency_ids():
     engine._last_read_event = {"w": startup_id}
     engine._layer_prepare_events = {0: [startup_id]}
     engine._layer_compute_start = {0: 0.0}
+    engine._module_compute_start = {"lm_head": 0.0}
+    engine._last_compute_event = startup_id
+    engine._last_forward_event = startup_id
+    engine._current_forward_start_event = startup_id
 
     engine._clear_startup_trace()
 
@@ -161,3 +167,84 @@ def test_engine_trace_reset_drops_startup_dependency_ids():
     assert engine._last_read_event == {}
     assert engine._layer_prepare_events == {}
     assert engine._layer_compute_start == {}
+    assert engine._module_compute_start == {}
+    assert engine._last_compute_event is None
+    assert engine._last_forward_event is None
+    assert engine._current_forward_start_event is None
+
+
+def test_forward_boundary_arms_prefetch_with_causal_dependencies():
+    from afterimage.runtime.streaming_engine import StreamingLosslessModel
+
+    engine = StreamingLosslessModel.__new__(StreamingLosslessModel)
+    engine.trace = TraceRecorder()
+    engine.prefetch = True
+    engine._prefetch_controller = SimpleNamespace(choose_depth=lambda: 2)
+    engine._last_compute_event = None
+    engine._last_forward_event = None
+    engine._current_forward_start_event = None
+    engine._forward_index = 0
+    calls = []
+    engine._start_prefetch = lambda idx, **kwargs: calls.append((idx, kwargs))
+
+    engine._begin_forward()
+
+    start = engine.trace.events[0]
+    assert start.kind == "forward_start"
+    assert [idx for idx, _kwargs in calls] == [0, 1]
+    assert all(call[1]["dependencies"] == (start.id,) for call in calls)
+
+    engine._last_compute_event = engine.trace.record(
+        "compute", "cuda-default", 0.0, 1.0,
+        dependencies=(start.id,))
+    engine._end_forward()
+    previous_end = engine._last_forward_event
+    calls.clear()
+    engine._begin_forward()
+
+    next_start = next(
+        event for event in reversed(engine.trace.events)
+        if event.kind == "forward_start")
+    assert previous_end in next_start.dependencies
+    assert all(call[1]["dependencies"] == (next_start.id,) for call in calls)
+
+
+def test_prefetch_read_depends_on_the_scheduler_launch_event():
+    from afterimage.runtime.streaming_engine import StreamingLosslessModel
+
+    engine = StreamingLosslessModel.__new__(StreamingLosslessModel)
+    engine.trace = TraceRecorder()
+    engine.n_layers = 1
+    engine._forward_index = 7
+    engine._prefetch_readers = [object()]
+    engine._prefetch_cache = {}
+    engine._prefetch_threads = {}
+    engine._prefetch_started_at = {}
+    engine._prefetch_lead_layers = {}
+    engine._prefetch_inflight_bytes = {}
+    engine._prefetch_lock = threading.Lock()
+    engine._tier = {"model.layers.0.w": "disk"}
+    engine.manifest = {"tensors": {
+        "model.layers.0.w": {
+            "comp_bytes": 10,
+            "blobs": {"codes": {"nbytes": 10}},
+        },
+    }}
+    engine.adapter = SimpleNamespace(
+        layer_key=lambda idx: "model.layers.%d" % idx)
+    engine.stats = SimpleNamespace(prefetch_peak_inflight_bytes=0)
+    observed = []
+
+    def fake_read(idx, reader, *, dependencies=()):
+        observed.append((idx, dependencies))
+        return {}, 0, 0
+
+    engine._read_layer_tensor_arrays = fake_read
+    engine._start_prefetch(0, dependencies=("compute-parent",))
+    engine.quiesce_prefetch()
+
+    launch = next(event for event in engine.trace.events
+                  if event.kind == "prefetch_launch")
+    assert launch.dependencies == ("compute-parent",)
+    assert observed == [(0, (launch.id,))]
+    assert engine._prefetch_cache == {}

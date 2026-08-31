@@ -47,13 +47,28 @@ class H65SearchReport:
     control_objective_s: float
     candidate_objective_s: float
     predicted_improvement: float
+    conservative_predicted_improvement: float
     minimum_predicted_improvement: float
+    minimum_live_improvement: float
     fallback_to_control: bool
     fallback_reason: str
     treatment_diverged: bool
     trace_count: int
+    training_trace_count: int
+    validation_trace_count: int
+    minimum_trace_count: int
+    training_improvements: tuple[float, ...]
+    validation_improvements: tuple[float, ...]
+    risk_penalty_weight: float
+    causal_trace_contract: bool
+    live_validation_required: bool
+    live_validation_eligible: bool
+    minimum_live_blocks: int
+    live_improvements: tuple[float, ...]
+    conservative_live_improvement: float | None
     observed_coverage: float
     h2d_gbps: float
+    h2d_memory_mode: str
     vram_budget_bytes: int
     ram_budget_bytes: int
     vram_headroom_bytes: int
@@ -66,7 +81,11 @@ class H65SearchReport:
     control_choices: dict[str, int]
     candidate_choices: dict[str, int]
     guard_failures: tuple[str, ...]
-    schema_version: int = 1
+    maximum_disk_byte_increase: float | None
+    maximum_disk_call_increase: float | None
+    maximum_layer_call_increase: float | None
+    compressed_ram_enabled: bool
+    schema_version: int = 3
 
 
 @dataclasses.dataclass(frozen=True)
@@ -82,8 +101,43 @@ def _disk_name(meta: dict) -> str:
     return "compressed_disk" if meta.get("compressed") else "raw_disk"
 
 
+def _validate_causal_trace(events: list[TraceEvent]) -> None:
+    """Reject the pre-H6.5 trace shape that omitted scheduler causality."""
+    kinds = {event.kind for event in events}
+    missing = {"forward_start", "forward_end"} - kinds
+    if missing:
+        raise ValueError(
+            "H6.5 requires scheduler-aware traces; missing event kind(s): %s"
+            % ", ".join(sorted(missing)))
+    launch_ids = {event.id for event in events if event.kind == "prefetch_launch"}
+    prefetched_reads = [
+        event for event in events
+        if event.kind in ("read", "io")
+        and event.metadata.get("prefetch") is True]
+    if prefetched_reads and not launch_ids:
+        raise ValueError(
+            "H6.5 trace contains background reads but no prefetch_launch events")
+    missing_launch = [
+        event.id for event in prefetched_reads
+        if not launch_ids.intersection(event.dependencies)]
+    if missing_launch:
+        raise ValueError(
+            "H6.5 background reads lack direct scheduler-launch dependencies: %s"
+            % ", ".join(missing_launch[:8]))
+    uncaused = [
+        event.id for event in events
+        if event.kind in PREPARE_KINDS | {"compute", "forward_end"}
+        and not event.dependencies]
+    if uncaused:
+        raise ValueError(
+            "H6.5 timed events lack scheduler/data dependencies: %s"
+            % ", ".join(uncaused[:8]))
+
+
 def _option_map(manifest: dict, traces: list[list[TraceEvent]],
-                h2d_gbps: float) -> dict[str, dict[str, RepresentationOption]]:
+                h2d_gbps: float, *,
+                enable_compressed_ram: bool = True,
+                ) -> dict[str, dict[str, RepresentationOption]]:
     if h2d_gbps <= 0:
         raise ValueError("h2d_gbps must be positive")
     durations: dict[str, Counter] = defaultdict(Counter)
@@ -126,7 +180,7 @@ def _option_map(manifest: dict, traces: list[list[TraceEvent]],
                 key, "decoded_vram", vram_bytes=original,
                 storage_bytes=storage, prepare_s=0.0),
         }
-        if meta.get("compressed"):
+        if enable_compressed_ram and meta.get("compressed"):
             options["compressed_ram"] = RepresentationOption(
                 key, "compressed_ram", ram_bytes=storage,
                 storage_bytes=storage, prepare_s=decode_s + transfer_s)
@@ -252,61 +306,89 @@ def plan_geometry(manifest: dict,
     )
 
 
-def _guard_failures(control: PlanGeometry, candidate: PlanGeometry) -> tuple[str, ...]:
+def _guard_failures(
+        control: PlanGeometry, candidate: PlanGeometry, *,
+        maximum_disk_byte_increase: float | None = None,
+        maximum_disk_call_increase: float | None = None,
+        maximum_layer_call_increase: float | None = None) -> tuple[str, ...]:
+    """Return violations of optional traffic caps.
+
+    These are deliberately not topology constraints.  Requiring at least as
+    many fully resident layers (or no more all-disk layers) as the traffic
+    control prevented critical-path placement from exchanging a large,
+    overlap-hidden tensor for a smaller blocking tensor.  Budgets, robust
+    replay, and paired live validation are the correctness/speed gates; the
+    caps here are only explicit experiment-policy limits.
+    """
     failures = []
-    if candidate.disk_bytes_per_sweep > control.disk_bytes_per_sweep:
+    if (maximum_disk_byte_increase is not None
+            and candidate.disk_bytes_per_sweep
+            > control.disk_bytes_per_sweep * (1 + maximum_disk_byte_increase)):
         failures.append("disk_bytes_increased")
-    if candidate.disk_read_calls_per_sweep > control.disk_read_calls_per_sweep:
+    if (maximum_disk_call_increase is not None
+            and candidate.disk_read_calls_per_sweep
+            > control.disk_read_calls_per_sweep * (1 + maximum_disk_call_increase)):
         failures.append("disk_read_calls_increased")
-    if candidate.maximum_layer_read_calls > control.maximum_layer_read_calls:
+    if (maximum_layer_call_increase is not None
+            and candidate.maximum_layer_read_calls
+            > control.maximum_layer_read_calls * (1 + maximum_layer_call_increase)):
         failures.append("maximum_layer_read_calls_increased")
-    if candidate.fully_resident_layers < control.fully_resident_layers:
-        failures.append("fewer_fully_resident_layers")
-    if candidate.all_disk_layers > control.all_disk_layers:
-        failures.append("more_all_disk_layers")
     return tuple(failures)
 
 
 class _ReplayScorer:
     def __init__(self, manifest: dict, traces: list[list[TraceEvent]], *,
-                 h2d_gbps: float, fragmentation_penalty_weight: float):
+                 h2d_gbps: float, fragmentation_penalty_weight: float,
+                 risk_penalty_weight: float = 0.0):
         self.manifest = manifest
         self.traces = traces
         self.h2d_gbps = h2d_gbps
+        self.risk_penalty_weight = risk_penalty_weight
         self.topologies = [compile_topology(events) for events in traces]
         self.by_tensor = []
         read_call_samples = []
-        observed = set()
+        observed_by_trace = []
         for events in traces:
+            trace_observed = set()
             grouped: dict[str, dict[str, list[TraceEvent]]] = defaultdict(
                 lambda: defaultdict(list))
             for event in events:
                 if event.tensor_key and event.kind in PREPARE_KINDS:
                     grouped[event.tensor_key][event.kind].append(event)
-                    observed.add(event.tensor_key)
+                    trace_observed.add(event.tensor_key)
                     if event.kind in ("read", "io"):
                         calls = max(1, len(manifest["tensors"][event.tensor_key].get(
                             "blobs", {})))
                         read_call_samples.append(event.duration_s / calls)
             self.by_tensor.append(grouped)
+            observed_by_trace.append(trace_observed)
         eligible = {
             key for key, meta in manifest["tensors"].items()
             if not meta.get("row_gather")
         }
-        self.observed = observed & eligible
-        self.coverage = len(self.observed) / max(len(eligible), 1)
+        # A tensor is searchable only when every training trace observed it.
+        # Union coverage let one complete trace hide holes in another and then
+        # silently gave some candidates fewer samples than their controls.
+        common = set.intersection(*observed_by_trace) if observed_by_trace else set()
+        self.observed = common & eligible
+        self.coverage_by_trace = tuple(
+            len(observed & eligible) / max(len(eligible), 1)
+            for observed in observed_by_trace)
+        self.coverage = min(self.coverage_by_trace, default=0.0)
         measured_call_s = (
             statistics.median(read_call_samples) if read_call_samples else 0.0)
         self.call_penalty_s = measured_call_s * fragmentation_penalty_weight
         self.evaluations = 0
         self._cache = {}
+        self._sample_cache = {}
 
     def _fingerprint(self, choices: dict[str, RepresentationOption]) -> tuple:
         return tuple((key, choices[key].name) for key in sorted(choices))
 
-    def replay(self, choices: dict[str, RepresentationOption]) -> float:
+    def replay_samples(
+            self, choices: dict[str, RepresentationOption]) -> tuple[float, ...]:
         fingerprint = self._fingerprint(choices)
-        cached = self._cache.get(fingerprint)
+        cached = self._sample_cache.get(fingerprint)
         if cached is not None:
             return cached
         durations = []
@@ -336,16 +418,31 @@ class _ReplayScorer:
                 if not anchors:
                     anchors = events.get("read", ()) or events.get("io", ())
                 for event in anchors:
-                    overrides[event.id] = max(event.duration_s, floor)
+                    overrides[event.id] = floor
             durations.append(critical_path_fast(topology, overrides).duration_s)
-        value = statistics.mean(durations)
-        self._cache[fingerprint] = value
+        value = tuple(durations)
+        self._sample_cache[fingerprint] = value
         self.evaluations += 1
         return value
 
+    def replay(self, choices: dict[str, RepresentationOption]) -> float:
+        fingerprint = self._fingerprint(choices)
+        cached = self._cache.get(fingerprint)
+        if cached is not None:
+            return cached
+        value = statistics.mean(self.replay_samples(choices))
+        self._cache[fingerprint] = value
+        return value
+
+    def risk_adjusted_replay(
+            self, choices: dict[str, RepresentationOption]) -> float:
+        samples = self.replay_samples(choices)
+        spread = statistics.pstdev(samples) if len(samples) > 1 else 0.0
+        return statistics.mean(samples) + self.risk_penalty_weight * spread
+
     def objective(self, choices: dict[str, RepresentationOption]) -> float:
         geometry = plan_geometry(self.manifest, choices)
-        return self.replay(choices) + (
+        return self.risk_adjusted_replay(choices) + (
             self.call_penalty_s * geometry.disk_read_calls_per_sweep)
 
 
@@ -365,9 +462,24 @@ def optimize_h65_plan(
         vram_budget_gb: float, ram_budget_gb: float, h2d_gbps: float,
         decode_slice_elems: int = 1 << 22, search_iterations: int = 512,
         seed: int = 0, minimum_coverage: float = 0.90,
-        minimum_predicted_improvement: float = 0.08,
+        minimum_predicted_improvement: float = 0.0,
+        minimum_live_improvement: float | None = 0.05,
         fragmentation_penalty_weight: float = 0.0,
-        vram_safety_margin_gb: float = 0.0) -> H65PlanningResult:
+        vram_safety_margin_gb: float = 0.0,
+        minimum_trace_count: int = 3,
+        validation_trace_count: int = 1,
+        risk_penalty_weight: float = 1.0,
+        h2d_memory_mode: str = "measured_unspecified",
+        require_causal_trace: bool = True,
+        require_live_validation: bool = True,
+        live_control_seconds: tuple[float, ...] = (),
+        live_candidate_seconds: tuple[float, ...] = (),
+        live_validation_eligible: bool = False,
+        minimum_live_blocks: int = 2,
+        enable_compressed_ram: bool = True,
+        maximum_disk_byte_increase: float | None = None,
+        maximum_disk_call_increase: float | None = None,
+        maximum_layer_call_increase: float | None = None) -> H65PlanningResult:
     """Return a guarded H6.5 plan and the best divergent diagnostic plan.
 
     The search starts from the exact traffic-density plan, adds exact-byte
@@ -376,21 +488,68 @@ def optimize_h65_plan(
     Read duration and overlap are already represented in that replay, so the
     additional per-call fragmentation term defaults to zero.  A nonzero value
     is valid only when it was calibrated on the same storage/runtime path.
-    Deployment falls back to the control unless the best candidate both
-    passes locality guards and clears ``minimum_predicted_improvement``.
+    The final ``validation_trace_count`` traces are held out of search.  The
+    training objective is mean replay time plus ``risk_penalty_weight`` times
+    its population standard deviation, and deployment falls back unless the
+    candidate does not regress on any training or held-out replay and clears
+    the material-effect threshold on every exact paired live block.  Replay
+    is a counterfactual ranking model, while the live blocks are the direct
+    measurement, so imposing the live threshold on both would create false
+    negatives.  The defaults require three traces rather than allowing a
+    one-off SSD timing excursion to become a frozen placement.
     """
     if not traces or any(not trace for trace in traces):
         raise ValueError("at least one non-empty raw calibration trace is required")
+    if require_causal_trace:
+        for trace in traces:
+            _validate_causal_trace(trace)
     if search_iterations < 0:
         raise ValueError("search_iterations must be non-negative")
     if not 0.0 <= minimum_predicted_improvement < 1.0:
         raise ValueError("minimum_predicted_improvement must be in [0, 1)")
+    if minimum_live_improvement is None:
+        minimum_live_improvement = minimum_predicted_improvement
+    if not 0.0 <= minimum_live_improvement < 1.0:
+        raise ValueError("minimum_live_improvement must be in [0, 1)")
     if not 0.0 <= fragmentation_penalty_weight <= 1.0:
         raise ValueError("fragmentation_penalty_weight must be in [0, 1]")
+    if minimum_trace_count < 1:
+        raise ValueError("minimum_trace_count must be at least 1")
+    if validation_trace_count < 0:
+        raise ValueError("validation_trace_count must be non-negative")
+    if validation_trace_count >= minimum_trace_count:
+        raise ValueError(
+            "validation_trace_count must be smaller than minimum_trace_count")
+    if risk_penalty_weight < 0:
+        raise ValueError("risk_penalty_weight must be non-negative")
+    if not h2d_memory_mode:
+        raise ValueError("h2d_memory_mode must be non-empty")
+    if minimum_live_blocks < 1:
+        raise ValueError("minimum_live_blocks must be at least 1")
+    for name, value in (
+            ("maximum_disk_byte_increase", maximum_disk_byte_increase),
+            ("maximum_disk_call_increase", maximum_disk_call_increase),
+            ("maximum_layer_call_increase", maximum_layer_call_increase)):
+        if value is not None and value < 0:
+            raise ValueError("%s must be non-negative or None" % name)
+    live_control_seconds = tuple(float(value) for value in live_control_seconds)
+    live_candidate_seconds = tuple(float(value) for value in live_candidate_seconds)
+    if len(live_control_seconds) != len(live_candidate_seconds):
+        raise ValueError("live control/candidate samples must be paired")
+    if any(value <= 0 for value in live_control_seconds + live_candidate_seconds):
+        raise ValueError("live latency samples must be positive")
     if vram_safety_margin_gb < 0:
         raise ValueError("vram_safety_margin_gb must be non-negative")
 
     safety_margin_bytes = int(vram_safety_margin_gb * 1e9)
+    effective_validation_count = (
+        validation_trace_count if len(traces) > validation_trace_count else 0)
+    if effective_validation_count:
+        training_traces = traces[:-effective_validation_count]
+        validation_traces = traces[-effective_validation_count:]
+    else:
+        training_traces = traces
+        validation_traces = []
 
     control_tier = plan_from_manifest(
         manifest, vram_budget_gb=vram_budget_gb,
@@ -401,7 +560,9 @@ def optimize_h65_plan(
         placement_policy="traffic_density")
     if not control_tier.feasible:
         raise ValueError("infeasible H6.5 control: " + control_tier.reason)
-    options = _option_map(manifest, traces, h2d_gbps)
+    options = _option_map(
+        manifest, training_traces, h2d_gbps,
+        enable_compressed_ram=enable_compressed_ram)
     control = _choices_from_tier_plan(manifest, control_tier, options)
     disk = {
         key: option_set["row_gather" if manifest["tensors"][key].get("row_gather")
@@ -409,8 +570,9 @@ def optimize_h65_plan(
         for key, option_set in options.items()
     }
     scorer = _ReplayScorer(
-        manifest, traces, h2d_gbps=h2d_gbps,
-        fragmentation_penalty_weight=fragmentation_penalty_weight)
+        manifest, training_traces, h2d_gbps=h2d_gbps,
+        fragmentation_penalty_weight=fragmentation_penalty_weight,
+        risk_penalty_weight=risk_penalty_weight)
     if scorer.coverage < minimum_coverage:
         missing = sorted(
             key for key, meta in manifest["tensors"].items()
@@ -418,14 +580,24 @@ def optimize_h65_plan(
         raise ValueError(
             "raw H6.5 traces cover %.1f%% of candidates, below %.1f%%; "
             "missing examples: %s" %
-            (100 * scorer.coverage, 100 * minimum_coverage, ", ".join(missing[:5])))
+             (100 * scorer.coverage, 100 * minimum_coverage, ", ".join(missing[:5])))
+    validation_scorer = (
+        _ReplayScorer(
+            manifest, validation_traces, h2d_gbps=h2d_gbps,
+            fragmentation_penalty_weight=fragmentation_penalty_weight,
+            risk_penalty_weight=0.0)
+        if validation_traces else None)
+    if validation_scorer is not None and validation_scorer.coverage < minimum_coverage:
+        raise ValueError(
+            "held-out H6.5 traces cover %.1f%% of candidates, below %.1f%%"
+            % (100 * validation_scorer.coverage, 100 * minimum_coverage))
 
     vram_limit = control_tier.vram_budget_bytes - control_tier.vram_headroom_bytes
     ram_limit = control_tier.ram_budget_bytes
     control_geometry = plan_geometry(manifest, control)
     control_replay = scorer.replay(control)
     control_objective = scorer.objective(control)
-    all_disk_replay = scorer.replay(disk)
+    all_disk_replay = scorer.risk_adjusted_replay(disk)
 
     # Single-choice counterfactuals are used only to seed and repair plans;
     # final ranking always replays the complete DAG.
@@ -438,7 +610,7 @@ def optimize_h65_plan(
             trial = dict(disk)
             trial[key] = option
             independent_benefit[(key, name)] = max(
-                0.0, all_disk_replay - scorer.replay(trial))
+                0.0, all_disk_replay - scorer.risk_adjusted_replay(trial))
 
     def density(key: str, name: str) -> float:
         option = options[key][name]
@@ -450,10 +622,14 @@ def optimize_h65_plan(
         return used_vram <= vram_limit and used_ram <= ram_limit
 
     def guarded(choices) -> bool:
-        return not _guard_failures(control_geometry, plan_geometry(manifest, choices))
+        return not _guard_failures(
+            control_geometry, plan_geometry(manifest, choices),
+            maximum_disk_byte_increase=maximum_disk_byte_increase,
+            maximum_disk_call_increase=maximum_disk_call_increase,
+            maximum_layer_call_increase=maximum_layer_call_increase)
 
     def fill(seed_choices, order: str):
-        choices = dict(disk)
+        choices = dict(seed_choices)
 
         def add_vram():
             used_vram, _ = _usage(choices)
@@ -596,28 +772,85 @@ def optimize_h65_plan(
         proposal = repair(proposal)
         consider(proposal)
 
-    candidate_replay = scorer.replay(best)
+    control_samples = scorer.replay_samples(control)
+    candidate_samples = scorer.replay_samples(best)
+    candidate_replay = statistics.mean(candidate_samples)
     candidate_geometry = plan_geometry(manifest, best)
-    failures = _guard_failures(control_geometry, candidate_geometry)
+    failures = _guard_failures(
+        control_geometry, candidate_geometry,
+        maximum_disk_byte_increase=maximum_disk_byte_increase,
+        maximum_disk_call_increase=maximum_disk_call_increase,
+        maximum_layer_call_increase=maximum_layer_call_increase)
     improvement = (
         (control_replay - candidate_replay) / control_replay
         if control_replay > 0 else 0.0)
+    training_improvements = tuple(
+        ((control_value - candidate_value) / control_value
+         if control_value > 0 else 0.0)
+        for control_value, candidate_value
+        in zip(control_samples, candidate_samples))
+    if validation_scorer is not None:
+        validation_control_samples = validation_scorer.replay_samples(control)
+        validation_candidate_samples = validation_scorer.replay_samples(best)
+        validation_improvements = tuple(
+            ((control_value - candidate_value) / control_value
+             if control_value > 0 else 0.0)
+            for control_value, candidate_value
+            in zip(validation_control_samples, validation_candidate_samples))
+    else:
+        validation_control_samples = ()
+        validation_candidate_samples = ()
+        validation_improvements = ()
+    all_improvements = training_improvements + validation_improvements
+    conservative_improvement = min(all_improvements, default=0.0)
+    live_improvements = tuple(
+        (control_value - candidate_value) / control_value
+        for control_value, candidate_value
+        in zip(live_control_seconds, live_candidate_seconds))
+    conservative_live_improvement = (
+        min(live_improvements) if live_improvements else None)
     diverged = any(best[key].name != control[key].name for key in control)
     fallback_reason = ""
     if failures:
         fallback_reason = "candidate failed locality guards: " + ", ".join(failures)
     elif not diverged:
         fallback_reason = "search found no guarded plan better than traffic placement"
-    elif improvement < minimum_predicted_improvement:
+    elif len(traces) < minimum_trace_count:
         fallback_reason = (
-            "predicted improvement %.2f%% is below the %.2f%% deployment gate"
-            % (100 * improvement, 100 * minimum_predicted_improvement))
+            "only %d calibration trace(s) were supplied; at least %d are "
+            "required for risk-aware deployment"
+            % (len(traces), minimum_trace_count))
+    elif conservative_improvement < minimum_predicted_improvement:
+        fallback_reason = (
+            "worst train/held-out improvement %.2f%% is below the %.2f%% "
+            "deployment gate"
+            % (100 * conservative_improvement,
+               100 * minimum_predicted_improvement))
+    elif require_live_validation and len(live_improvements) < minimum_live_blocks:
+        fallback_reason = (
+            "candidate passed replay but awaits %d paired live validation blocks"
+            % minimum_live_blocks)
+    elif require_live_validation and not live_validation_eligible:
+        fallback_reason = (
+            "live samples were supplied but are not marked exact, cold-cache, "
+            "and thermally eligible")
+    elif (require_live_validation
+          and conservative_live_improvement < minimum_live_improvement):
+        fallback_reason = (
+            "worst paired live improvement %.2f%% is below the %.2f%% "
+            "deployment gate"
+            % (100 * conservative_live_improvement,
+               100 * minimum_live_improvement))
     fallback = bool(fallback_reason)
     deployment = control if fallback else best
-    deployment_replay = control_replay if fallback else candidate_replay
+    all_control_samples = control_samples + validation_control_samples
+    all_candidate_samples = candidate_samples + validation_candidate_samples
+    control_all_replay = statistics.mean(all_control_samples)
+    candidate_all_replay = statistics.mean(all_candidate_samples)
+    deployment_replay = control_all_replay if fallback else candidate_all_replay
 
     candidate_plan = _plan_from_choices(
-        best, predicted_s=candidate_replay,
+        best, predicted_s=candidate_all_replay,
         vram_budget_bytes=control_tier.vram_budget_bytes,
         ram_budget_bytes=control_tier.ram_budget_bytes,
         vram_headroom_bytes=control_tier.vram_headroom_bytes)
@@ -632,12 +865,29 @@ def optimize_h65_plan(
         control_objective_s=control_objective,
         candidate_objective_s=best_objective,
         predicted_improvement=improvement,
+        conservative_predicted_improvement=conservative_improvement,
         minimum_predicted_improvement=minimum_predicted_improvement,
+        minimum_live_improvement=minimum_live_improvement,
         fallback_to_control=fallback,
         fallback_reason=fallback_reason,
         treatment_diverged=diverged,
-        trace_count=len(traces), observed_coverage=scorer.coverage,
-        h2d_gbps=h2d_gbps,
+        trace_count=len(traces),
+        training_trace_count=len(training_traces),
+        validation_trace_count=len(validation_traces),
+        minimum_trace_count=minimum_trace_count,
+        training_improvements=training_improvements,
+        validation_improvements=validation_improvements,
+        risk_penalty_weight=risk_penalty_weight,
+        causal_trace_contract=require_causal_trace,
+        live_validation_required=require_live_validation,
+        live_validation_eligible=live_validation_eligible,
+        minimum_live_blocks=minimum_live_blocks,
+        live_improvements=live_improvements,
+        conservative_live_improvement=conservative_live_improvement,
+        observed_coverage=min(
+            scorer.coverage,
+            validation_scorer.coverage if validation_scorer else 1.0),
+        h2d_gbps=h2d_gbps, h2d_memory_mode=h2d_memory_mode,
         vram_budget_bytes=control_tier.vram_budget_bytes,
         ram_budget_bytes=control_tier.ram_budget_bytes,
         vram_headroom_bytes=control_tier.vram_headroom_bytes,
@@ -650,5 +900,9 @@ def optimize_h65_plan(
         control_choices=_choice_counts(control),
         candidate_choices=_choice_counts(best),
         guard_failures=failures,
+        maximum_disk_byte_increase=maximum_disk_byte_increase,
+        maximum_disk_call_increase=maximum_disk_call_increase,
+        maximum_layer_call_increase=maximum_layer_call_increase,
+        compressed_ram_enabled=enable_compressed_ram,
     )
     return H65PlanningResult(plan, candidate_plan, report)

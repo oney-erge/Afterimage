@@ -1240,6 +1240,7 @@ def run_afterimage(method: Method, rendered: list[dict], n_tokens: int,
             if burn_in_tokens < 1 or time.perf_counter() >= deadline:
                 break
             ids = tokenizer(item["prompt"], return_tensors="pt").input_ids.cuda()
+            engine.quiesce_prefetch()
             cache = drop_caches()
             engine.stats.reset()
             t0 = time.perf_counter()
@@ -1279,13 +1280,18 @@ def run_afterimage(method: Method, rendered: list[dict], n_tokens: int,
         # make token IDs comparable across repeats and any mismatch a real
         # exactness failure rather than sampling noise. Repeats therefore
         # measure timing variance only, which is what they are for.
+        measurement_trace_started = False
         for repeat, (case_index, item) in [
                 (r, ci) for r in range(repeats) for ci in enumerate(rendered)]:
             if time.perf_counter() >= deadline:
                 break
             ids = tokenizer(item["prompt"], return_tensors="pt").input_ids.cuda()
             cooldown = cool_down(COOLDOWN_SECONDS, COOLDOWN_MAX_TEMPERATURE_C)
+            engine.quiesce_prefetch()
             cache = drop_caches()
+            if not measurement_trace_started:
+                engine.reset_measurement_trace()
+                measurement_trace_started = True
             engine.stats.reset()
             reset_cuda_peak()
             read0 = process_read_bytes()
@@ -1440,7 +1446,9 @@ def prepare_critical_profile(tokenizer, temp_dir: pathlib.Path, deadline: float)
         item = calibration_item(tokenizer, cases[index % len(cases)])
         engine = StreamingLosslessModel(MODEL, STORE, device="cuda", config=cfg)
         ids = tokenizer(item["prompt"], return_tensors="pt").input_ids.cuda()
+        engine.quiesce_prefetch()
         cache = drop_caches()
+        engine.reset_measurement_trace()
         engine.stats.reset()
         t0 = time.perf_counter()
         sequence = engine.generate_greedy(ids, max_new_tokens=1)
@@ -1488,6 +1496,7 @@ def prepare_spec_state(tokenizer, draft_model, temp_dir: pathlib.Path,
                     break
                 item = calibration_item(tokenizer, case)
                 ids = tokenizer(item["prompt"], return_tensors="pt").input_ids.cuda()
+                engine.quiesce_prefetch()
                 cache = drop_caches()
                 engine.stats.reset()
                 t0 = time.perf_counter()
@@ -1535,6 +1544,7 @@ def prepare_spec_state(tokenizer, draft_model, temp_dir: pathlib.Path,
                     break
                 item = calibration_item(tokenizer, case)
                 ids = tokenizer(item["prompt"], return_tensors="pt").input_ids.cuda()
+                gate_engine.quiesce_prefetch()
                 cache = drop_caches()
                 gate_engine.stats.reset()
                 generator = torch.Generator(device="cuda").manual_seed(9000 + case_index)
