@@ -68,6 +68,10 @@ def classify(relative: str, payload: dict | None,
     if parse_error:
         return "invalid", ["unparseable_json", parse_error], None
     assert payload is not None
+    if basename.endswith(".watch.json"):
+        return "diagnostic_only", [
+            "watcher health/ETA state, not a measurement artifact",
+        ], None
     if basename.endswith(".partial") or result_status(payload) != "complete":
         return "invalid", [
             "incomplete_or_interrupted_artifact",
@@ -75,6 +79,14 @@ def classify(relative: str, payload: dict | None,
         ], None
 
     if basename.startswith("h65-paper-matrix-"):
+        if (payload.get("kind") == "h65_causal_paper_matrix"
+                and payload.get("confirmatory_protocol_satisfied")
+                and (payload.get("gates") or {}).get(
+                    "confirmatory_execution_eligible")):
+            return "confirmatory", [
+                "frozen independent protocol executed completely",
+                "all recorded causal-matrix scientific gates passed",
+            ], None
         if (payload.get("kind") == "h65_causal_paper_matrix"
                 and (payload.get("gates") or {}).get("paper_pilot_eligible")):
             return "regulated_pilot", [

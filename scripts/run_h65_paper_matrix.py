@@ -406,12 +406,20 @@ def main() -> int:
     parser.add_argument("--cooldown-max-temp-c", type=float, default=75.0)
     parser.add_argument("--cell-timeout-minutes", type=float, default=20.0)
     parser.add_argument("--wait-for-gpu-minutes", type=float, default=5.0)
+    parser.add_argument(
+        "--confirmatory-protocol",
+        help="frozen protocol file; requires at least eight balanced blocks and "
+             "labels the completed artifact confirmatory only if every scientific "
+             "gate passes")
     parser.add_argument("--out", required=True)
     parser.add_argument("--resume", action="store_true")
     args = parser.parse_args()
 
     calibration_cases = parse_cases(args.calibration_cases)
     evaluation_cases = parse_cases(args.evaluation_cases)
+    confirmatory_protocol = (
+        pathlib.Path(args.confirmatory_protocol).resolve()
+        if args.confirmatory_protocol else None)
     if len(calibration_cases) < 3 or len(set(calibration_cases)) != len(calibration_cases):
         parser.error("at least three unique calibration cases are required")
     if len(evaluation_cases) < 4 or len(set(evaluation_cases)) != len(evaluation_cases):
@@ -420,6 +428,8 @@ def main() -> int:
         parser.error("calibration and evaluation cases must be disjoint")
     if args.blocks < len(METHODS) or args.blocks % len(METHODS):
         parser.error("--blocks must be a positive multiple of %d" % len(METHODS))
+    if confirmatory_protocol is not None and args.blocks < 8:
+        parser.error("a confirmatory protocol requires at least eight blocks")
     if (args.max_new_tokens < 1 or args.vram_gb <= 0 or args.ram_gb < 0
             or args.decode_slice_elems < 1 or args.search_iterations < 0
             or args.cell_timeout_minutes <= 0):
@@ -432,7 +442,9 @@ def main() -> int:
     out = pathlib.Path(args.out).resolve()
     partial = out.with_suffix(out.suffix + ".partial")
     root = out.parent / (out.stem + "-artifacts")
-    for required in (store, manifest_path, h2d_path, WORKER, *SOURCE_FILES):
+    for required in (
+            store, manifest_path, h2d_path, WORKER, *SOURCE_FILES,
+            *([confirmatory_protocol] if confirmatory_protocol else [])):
         if not required.exists():
             parser.error("required path does not exist: %s" % required)
     if out.exists():
@@ -469,6 +481,10 @@ def main() -> int:
         "seed": args.seed,
         "cell_timeout_minutes": args.cell_timeout_minutes,
         "method_order_per_block": [list(order) for order in orders],
+        "confirmatory_protocol": (
+            str(confirmatory_protocol) if confirmatory_protocol else None),
+        "confirmatory_protocol_sha256": (
+            sha256(confirmatory_protocol) if confirmatory_protocol else None),
     }
     if args.resume:
         result = load(partial)
@@ -479,7 +495,13 @@ def main() -> int:
         if mismatch:
             raise ValueError("resume settings differ: %s" % mismatch)
         for relative, entry in result["source_snapshot"].items():
-            current = REPO / relative
+            current = (
+                confirmatory_protocol
+                if relative == "confirmatory_protocol"
+                else REPO / relative)
+            if current is None:
+                raise RuntimeError(
+                    "partial run requires its frozen confirmatory protocol")
             if sha256(current) != entry["source_sha256"]:
                 raise RuntimeError("source changed since partial run: %s" % relative)
         result.pop("error", None)
@@ -488,15 +510,27 @@ def main() -> int:
     else:
         root.mkdir(parents=True)
         source_snapshot = archive_sources(root)
+        if confirmatory_protocol is not None:
+            protocol_snapshot = root / "source_snapshot" / "confirmatory_protocol.md"
+            shutil.copy2(confirmatory_protocol, protocol_snapshot)
+            source_snapshot["confirmatory_protocol"] = {
+                "source_sha256": sha256(confirmatory_protocol),
+                "snapshot": str(protocol_snapshot),
+                "snapshot_sha256": sha256(protocol_snapshot),
+            }
         result = {
             "schema_version": 1,
             "kind": "h65_causal_paper_matrix",
             "campaign_id": CAMPAIGN_ID,
             "status": "initializing",
-            "evidence_level": "L2_regulated_exploratory",
-            "exploratory": True,
+            "evidence_level": (
+                "L3_frozen_confirmatory" if confirmatory_protocol
+                else "L2_regulated_exploratory"),
+            "exploratory": confirmatory_protocol is None,
             "confirmatory_protocol_satisfied": False,
             "paper_claim_scope": (
+                "frozen bounded TTFT/short-decode confirmatory causal matrix"
+                if confirmatory_protocol else
                 "bounded TTFT/short-decode causal pilot; use for effect-size and "
                 "power planning, not a standalone confirmatory claim"),
             **settings,
@@ -751,8 +785,14 @@ def main() -> int:
                 for entry in result["source_snapshot"].values()),
         }
         gates["paper_pilot_eligible"] = all(gates.values())
+        gates["confirmatory_execution_eligible"] = bool(
+            confirmatory_protocol is not None
+            and args.blocks >= 8
+            and gates["paper_pilot_eligible"])
         result["exactness_failures"] = exact_failures
         result["gates"] = gates
+        result["confirmatory_protocol_satisfied"] = bool(
+            gates["confirmatory_execution_eligible"])
         result["status"] = "complete"
         result["completed_at_unix"] = time.time()
         result["elapsed_seconds"] = result.get("elapsed_seconds", 0.0) + (
