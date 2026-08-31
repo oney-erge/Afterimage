@@ -62,6 +62,35 @@ def _make_store(tmp_path, monkeypatch, model, cfg, model_id, tag):
     return store_dir
 
 
+def test_measurement_trace_has_scheduler_causality(tmp_path, monkeypatch):
+    from afterimage.runtime.config import EngineConfig
+    from afterimage.runtime.h65_planner import _validate_causal_trace
+    from afterimage.runtime.streaming_engine import StreamingLosslessModel
+
+    cfg, ref_model = _build_tiny_model(tie=False, seed=404)
+    store_dir = _make_store(tmp_path, monkeypatch, ref_model, cfg,
+                            "fake/causal-trace-engine", "causal_trace")
+    ids = torch.randint(0, cfg.vocab_size, (1, 5), device="cuda")
+    engine = StreamingLosslessModel(
+        "fake/causal-trace-engine", store_dir, device="cuda",
+        config=EngineConfig(io_prefetch_depth=1, trace_events=True))
+    try:
+        engine.quiesce_prefetch()
+        engine.reset_measurement_trace()
+        with torch.no_grad():
+            engine.forward_logits(ids)
+        events = engine.trace.events
+        _validate_causal_trace(events)
+        assert events[0].kind == "forward_start"
+        assert events[-1].kind == "forward_end"
+        assert any(event.kind == "prefetch_launch" for event in events)
+        assert any(event.kind == "compute"
+                   and event.metadata.get("module") == "lm_head"
+                   for event in events)
+    finally:
+        engine.close()
+
+
 def test_untied_row_gather_and_prefetch_are_bit_exact_vs_reference(tmp_path, monkeypatch):
     from afterimage.runtime.config import EngineConfig
     from afterimage.runtime.streaming_engine import StreamingLosslessModel

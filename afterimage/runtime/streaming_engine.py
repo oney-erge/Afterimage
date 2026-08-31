@@ -520,6 +520,11 @@ class StreamingLosslessModel:
         self._last_read_event: dict[str, str] = {}
         self._layer_prepare_events: dict[int, list[str]] = {}
         self._layer_compute_start: dict[int, float] = {}
+        self._module_compute_start: dict[str, float] = {}
+        self._last_compute_event: str | None = None
+        self._last_forward_event: str | None = None
+        self._current_forward_start_event: str | None = None
+        self._forward_index = 0
 
         self._reader = BinaryWeightReader(self.store / "weights.bin")
         n_prefetch_readers = max(1, self._prefetch_pool_depth)
@@ -606,14 +611,15 @@ class StreamingLosslessModel:
         self._install_hooks()
         self._install_streamed_module_hooks()
         self._install_chunked_lm_head()
-        # Research traces represent steady-state generation, not one-time
-        # materialization or index construction. Clear startup spans before
-        # the initial generation prefetch begins.
+        self._install_output_head_trace_hooks()
+        # Research traces represent generation, not one-time materialization
+        # or index construction.  Initial prefetch is deliberately NOT armed
+        # here: construction happens before a benchmark's cooldown/cache-drop
+        # boundary, so constructor-time reads would survive the later cache
+        # drop in Python-owned arrays and make a nominally cold first sweep
+        # warm.  _begin_forward() arms it inside the measured forward instead.
         if self.trace.enabled:
             self._clear_startup_trace()
-        if self.prefetch:
-            for ahead in range(1, self._prefetch_controller.choose_depth() + 1):
-                self._start_prefetch(ahead - 1, lead_layers=ahead - 1)
 
     def _clear_startup_trace(self) -> None:
         """Start the measured DAG without dependencies on discarded events.
@@ -627,6 +633,72 @@ class StreamingLosslessModel:
         self._last_read_event.clear()
         self._layer_prepare_events.clear()
         self._layer_compute_start.clear()
+        self._module_compute_start.clear()
+        self._last_compute_event = None
+        self._last_forward_event = None
+        self._current_forward_start_event = None
+
+    @staticmethod
+    def _event_dependencies(*event_ids: str | None) -> tuple[str, ...]:
+        """Deduplicated non-null trace dependencies, preserving order."""
+        return tuple(dict.fromkeys(event_id for event_id in event_ids if event_id))
+
+    def quiesce_prefetch(self) -> None:
+        """Join and discard every speculative read owned by this engine.
+
+        Benchmark callers invoke this *before* dropping the OS page cache.
+        Otherwise an old background reader can refill the cache after the
+        drop, while an unconsumed Python array can bypass it entirely.  Full
+        decoder sweeps normally consume every entry, but early exit,
+        speculative drafting, cancellation, and a shortened test model do
+        not, so the boundary must be explicit rather than assumed.
+        """
+        with self._prefetch_lock:
+            pending = list(self._prefetch_threads.values())
+        for thread in pending:
+            thread.join()
+        with self._prefetch_lock:
+            self._prefetch_cache.clear()
+            self._prefetch_threads.clear()
+            self._prefetch_started_at.clear()
+            self._prefetch_lead_layers.clear()
+            self._prefetch_inflight_bytes.clear()
+
+    def reset_measurement_trace(self) -> None:
+        """Start a causal trace after quiescence and the cache-drop boundary."""
+        with self._prefetch_lock:
+            if self._prefetch_threads or self._prefetch_cache:
+                raise RuntimeError(
+                    "reset_measurement_trace requires quiesce_prefetch() first")
+        if self.trace.enabled:
+            self._clear_startup_trace()
+
+    def _begin_forward(self) -> None:
+        """Record/arm one target sweep at the point it actually starts."""
+        self._forward_index += 1
+        now = time.perf_counter()
+        start_event = self.trace.record(
+            "forward_start", "scheduler", now, now,
+            dependencies=self._event_dependencies(self._last_forward_event),
+            metadata={"sweep": self._forward_index})
+        self._current_forward_start_event = start_event
+        self._last_compute_event = start_event
+        if self.prefetch:
+            depth = self._prefetch_controller.choose_depth()
+            for ahead in range(1, depth + 1):
+                self._start_prefetch(
+                    ahead - 1, lead_layers=ahead - 1,
+                    dependencies=self._event_dependencies(start_event))
+
+    def _end_forward(self) -> None:
+        """Close the causal sweep chain after all target CUDA work finishes."""
+        now = time.perf_counter()
+        event_id = self.trace.record(
+            "forward_end", "cuda-default", now, now,
+            dependencies=self._event_dependencies(self._last_compute_event),
+            metadata={"sweep": self._forward_index})
+        self._last_forward_event = event_id
+        self._current_forward_start_event = None
 
     def _load_representation_plan(self) -> None:
         """Load and fail-closed validate one exact physical choice per tensor."""
@@ -676,12 +748,25 @@ class StreamingLosslessModel:
                     "%s requests row_gather without a row-addressable store blob" % key)
         vram_limit = int(self.config.vram_budget_gb * 1e9)
         ram_limit = int((self.config.ram_budget_gb or 0.0) * 1e9)
-        if plan.vram_bytes > vram_limit or plan.ram_bytes > ram_limit:
+        if plan.vram_budget_bytes is not None:
+            if plan.vram_budget_bytes != vram_limit:
+                raise RuntimeError(
+                    "representation plan was built for %.3f GB total VRAM, "
+                    "but the runtime requested %.3f GB"
+                    % (plan.vram_budget_bytes / 1e9, vram_limit / 1e9))
+            if plan.ram_budget_bytes != ram_limit:
+                raise RuntimeError(
+                    "representation plan was built for %.3f GB RAM, but the "
+                    "runtime requested %.3f GB"
+                    % ((plan.ram_budget_bytes or 0) / 1e9, ram_limit / 1e9))
+        persistent_plus_transient = plan.vram_bytes + plan.vram_headroom_bytes
+        if persistent_plus_transient > vram_limit or plan.ram_bytes > ram_limit:
             raise RuntimeError(
-                "representation plan exceeds live budgets: plan VRAM/RAM "
-                "%.3f/%.3f GB, limits %.3f/%.3f GB"
-                % (plan.vram_bytes / 1e9, plan.ram_bytes / 1e9,
-                   vram_limit / 1e9, ram_limit / 1e9))
+                "representation plan exceeds live budgets: persistent VRAM "
+                "%.3f GB + transient headroom %.3f GB, RAM %.3f GB; limits "
+                "%.3f/%.3f GB"
+                % (plan.vram_bytes / 1e9, plan.vram_headroom_bytes / 1e9,
+                   plan.ram_bytes / 1e9, vram_limit / 1e9, ram_limit / 1e9))
         self._representation_plan = plan
         self._representation_names = {
             key: option.name for key, option in plan.choices.items()
@@ -736,10 +821,7 @@ class StreamingLosslessModel:
         self-draft tests, which close() shortly after touching only a few
         layers.
         """
-        with self._prefetch_lock:
-            pending = list(self._prefetch_threads.values())
-        for th in pending:
-            th.join()
+        self.quiesce_prefetch()
         self._reader.close()
         for r in self._prefetch_readers:
             r.close()
@@ -920,13 +1002,16 @@ class StreamingLosslessModel:
                     "lm_head_policy='ram_overlay' requires an untied, stored "
                     "lm_head.weight; this checkpoint has no independent head")
             plan_kwargs = {}
-            if cfg.max_context is not None:
+            if cfg.max_context is not None or cfg.vram_safety_margin_gb:
                 from .vram_planner import (
                     DEFAULT_ACTIVATION_SLACK_BYTES, kv_cache_bytes_per_token,
                 )
-                kv_reserve = kv_cache_bytes_per_token(self.hf_cfg) * cfg.max_context
+                kv_reserve = (
+                    kv_cache_bytes_per_token(self.hf_cfg) * cfg.max_context
+                    if cfg.max_context is not None else 0)
+                safety_reserve = int(cfg.vram_safety_margin_gb * 1e9)
                 plan_kwargs["activation_slack_bytes"] = (
-                    DEFAULT_ACTIVATION_SLACK_BYTES + kv_reserve)
+                    DEFAULT_ACTIVATION_SLACK_BYTES + kv_reserve + safety_reserve)
             plan = plan_from_manifest(
                 self.manifest, vram_budget_gb=cfg.vram_budget_gb,
                 ram_budget_gb=cfg.ram_budget_gb or 0.0,
@@ -958,7 +1043,9 @@ class StreamingLosslessModel:
 
     # -- store access ----------------------------------------------------
 
-    def _read_tensor_arrays(self, key: str) -> tuple[dict, float, int, int]:
+    def _read_tensor_arrays(
+            self, key: str, *, dependencies: tuple[str, ...] = (),
+            ) -> tuple[dict, float, int, int]:
         meta = self.manifest["tensors"][key]
         named_refs = list(meta["blobs"].items())
         t0 = time.perf_counter()
@@ -975,12 +1062,16 @@ class StreamingLosslessModel:
             extent_bytes = sum(int(ref["nbytes"]) for _, ref in named_refs)
         end = time.perf_counter()
         event_id = self.trace.record("read", "storage-main", t0, end, tensor_key=key,
-                                     nbytes=int(meta["comp_bytes"]))
+                                     nbytes=int(meta["comp_bytes"]),
+                                     dependencies=dependencies,
+                                     metadata={"sweep": self._forward_index,
+                                               "prefetch": False})
         if event_id:
             self._last_read_event[key] = event_id
         return arrays, end - t0, read_calls, extent_bytes
 
-    def _decode_tensor(self, key: str, arrays: dict) -> torch.Tensor:
+    def _decode_tensor(self, key: str, arrays: dict, *,
+                       dependencies: tuple[str, ...] = ()) -> torch.Tensor:
         meta = self.manifest["tensors"][key]
 
         if not meta["compressed"]:
@@ -1020,7 +1111,9 @@ class StreamingLosslessModel:
                 self.stats.h2d_bytes += out.numel() * out.element_size()
             event_id = self.trace.record(
                 "transfer", "cuda-default", t1, time.perf_counter(),
-                tensor_key=key, dependencies=([dependency] if dependency else ()))
+                tensor_key=key,
+                dependencies=self._event_dependencies(dependency, *dependencies),
+                metadata={"sweep": self._forward_index})
             self._remember_layer_prepare(key, event_id)
             return out
 
@@ -1037,7 +1130,8 @@ class StreamingLosslessModel:
         dependency = self._last_read_event.pop(key, None)
         event_id = self.trace.record(
             "decode", "cuda-default", t1, end, tensor_key=key,
-            dependencies=([dependency] if dependency else ()))
+            dependencies=self._event_dependencies(dependency, *dependencies),
+            metadata={"sweep": self._forward_index})
         self._remember_layer_prepare(key, event_id)
         return out
 
@@ -1074,12 +1168,14 @@ class StreamingLosslessModel:
             shape=tuple(meta["shape"]),
         )
 
-    def _load_tensor(self, key: str) -> torch.Tensor:
+    def _load_tensor(self, key: str, *,
+                     dependencies: tuple[str, ...] = ()) -> torch.Tensor:
         """Synchronous read-then-decode -- the path used whenever a
         prefetch did not already do the read (resident materialization at
         startup, and any disk-tier layer tensor the background thread has
         not finished reading yet)."""
-        arrays, io_s, read_calls, extent_bytes = self._read_tensor_arrays(key)
+        arrays, io_s, read_calls, extent_bytes = self._read_tensor_arrays(
+            key, dependencies=dependencies)
         self.stats.bytes_read += self.manifest["tensors"][key]["comp_bytes"]
         self.stats.io_seconds += io_s
         self.stats.storage_read_calls += read_calls
@@ -1159,8 +1255,15 @@ class StreamingLosslessModel:
             ])
             t = torch.from_numpy(rows).view(torch.bfloat16)
             t = t.to(device).view(*input_ids.shape, hidden)
+            end = time.perf_counter()
             stats.bytes_read += rows.nbytes
-            stats.io_seconds += time.perf_counter() - t0
+            stats.io_seconds += end - t0
+            self.trace.record(
+                "read", "storage-main", t0, end, tensor_key=key,
+                nbytes=int(rows.nbytes),
+                dependencies=self._event_dependencies(
+                    self._current_forward_start_event),
+                metadata={"sweep": self._forward_index, "row_gather": True})
             return t
 
         self.adapter.embedding.forward = forward
@@ -1368,11 +1471,21 @@ class StreamingLosslessModel:
                         continue
                     top_k_pos, token_idx = torch.where(expert_mask[expert_index])
                     current_state = hidden_states[token_idx]
+                    now = time.perf_counter()
+                    demand = engine.trace.record(
+                        "module_demand", "scheduler", now, now,
+                        dependencies=engine._event_dependencies(
+                            engine._last_compute_event),
+                        metadata={"module": _gate, "expert": expert_index,
+                                  "sweep": engine._forward_index})
+                    dependencies = engine._event_dependencies(demand)
                     gate_up = engine._load_tensor(
-                        "%s.__expert__.%d" % (_gate, expert_index)
+                        "%s.__expert__.%d" % (_gate, expert_index),
+                        dependencies=dependencies,
                     )
                     down = engine._load_tensor(
-                        "%s.__expert__.%d" % (_down, expert_index)
+                        "%s.__expert__.%d" % (_down, expert_index),
+                        dependencies=dependencies,
                     )
                     gate, up = torch.nn.functional.linear(
                         current_state, gate_up
@@ -1426,7 +1539,8 @@ class StreamingLosslessModel:
                   file=sys.stderr, flush=True)
 
     def _read_layer_tensor_arrays(
-            self, idx: int, reader: BinaryWeightReader) -> tuple[dict, int, int]:
+            self, idx: int, reader: BinaryWeightReader, *,
+            dependencies: tuple[str, ...] = ()) -> tuple[dict, int, int]:
         """Reads only this layer's DISK-tier tensors -- vram/ram-tier ones
         are never re-read from disk after _materialize_resident, so
         prefetching them would be pure waste."""
@@ -1476,7 +1590,9 @@ class StreamingLosslessModel:
                 event_id = self.trace.record(
                     "read", "storage-%d" % id(reader), cursor, key_end,
                     tensor_key=key, nbytes=key_bytes[key],
-                    metadata={"modelled": True})
+                    dependencies=dependencies,
+                    metadata={"modelled": True, "prefetch": True, "layer": idx,
+                              "sweep": self._forward_index})
                 if event_id:
                     self._last_read_event[key] = event_id
                 result[key] = (arrays, io_s)
@@ -1506,13 +1622,17 @@ class StreamingLosslessModel:
             read_calls += key_calls
             extent_bytes += key_extent_bytes
             event_id = self.trace.record("read", "storage-%d" % id(reader), t0, t1,
-                                         tensor_key=key, nbytes=int(meta["comp_bytes"]))
+                                         tensor_key=key, nbytes=int(meta["comp_bytes"]),
+                                         dependencies=dependencies,
+                                         metadata={"prefetch": True, "layer": idx,
+                                                   "sweep": self._forward_index})
             if event_id:
                 self._last_read_event[key] = event_id
             result[key] = (arrays, t1 - t0)
         return result, read_calls, extent_bytes
 
-    def _start_prefetch(self, idx: int, *, lead_layers: int = 1) -> None:
+    def _start_prefetch(self, idx: int, *, lead_layers: int = 1,
+                        dependencies: tuple[str, ...] = ()) -> None:
         """Kick off a background read of layer idx's disk-tier bytes.
 
         Uses one of a small POOL of BinaryWeightReaders (io_prefetch_depth
@@ -1541,19 +1661,27 @@ class StreamingLosslessModel:
             return
 
         reader = self._prefetch_readers[idx % len(self._prefetch_readers)]
-
-        def worker():
-            try:
-                result = self._read_layer_tensor_arrays(idx, reader)
-                with self._prefetch_lock:
-                    self._prefetch_cache[idx] = result
-            finally:
-                with self._prefetch_lock:
-                    self._prefetch_inflight_bytes.pop(idx, None)
-
         with self._prefetch_lock:
             if idx in self._prefetch_cache or idx in self._prefetch_threads:
                 return
+            now = time.perf_counter()
+            launch_event = self.trace.record(
+                "prefetch_launch", "scheduler", now, now,
+                dependencies=dependencies,
+                metadata={"layer": idx, "lead_layers": max(0, int(lead_layers)),
+                          "sweep": self._forward_index})
+            read_dependencies = self._event_dependencies(launch_event)
+
+            def worker():
+                try:
+                    result = self._read_layer_tensor_arrays(
+                        idx, reader, dependencies=read_dependencies)
+                    with self._prefetch_lock:
+                        self._prefetch_cache[idx] = result
+                finally:
+                    with self._prefetch_lock:
+                        self._prefetch_inflight_bytes.pop(idx, None)
+
             th = threading.Thread(target=worker, daemon=True)
             self._prefetch_threads[idx] = th
             self._prefetch_started_at[idx] = time.perf_counter()
@@ -1604,7 +1732,10 @@ class StreamingLosslessModel:
             # order of magnitude larger to hide inside.
             active_depth = self._prefetch_controller.choose_depth()
             for ahead in range(1, active_depth + 1):
-                self._start_prefetch(idx + ahead, lead_layers=ahead)
+                self._start_prefetch(
+                    idx + ahead, lead_layers=ahead,
+                    dependencies=self._event_dependencies(
+                        self._last_compute_event))
 
             useful_bytes = sum(
                 int(self.manifest["tensors"][key]["comp_bytes"])
@@ -1633,7 +1764,10 @@ class StreamingLosslessModel:
                 continue  # materialized once in _materialize_resident, permanent
             elif tier == "ram":
                 if self._ram_format_for(key) == "compressed":
-                    out = self._decode_tensor(key, self._ram_cache[key])
+                    out = self._decode_tensor(
+                        key, self._ram_cache[key],
+                        dependencies=self._event_dependencies(
+                            self._last_compute_event))
                 else:
                     t0 = time.perf_counter()
                     out = self._ram_cache[key].to(
@@ -1645,7 +1779,10 @@ class StreamingLosslessModel:
                         self.stats.h2d_bytes += out.numel() * out.element_size()
                     event_id = self.trace.record(
                         "transfer", "cuda-default", t0, time.perf_counter(),
-                        tensor_key=key)
+                        tensor_key=key,
+                        dependencies=self._event_dependencies(
+                            self._last_compute_event),
+                        metadata={"layer": idx, "sweep": self._forward_index})
                     self._remember_layer_prepare(key, event_id)
             elif cached is not None and key in cached:
                 arrays, io_s = cached[key]
@@ -1653,7 +1790,9 @@ class StreamingLosslessModel:
                 self.stats.bytes_read += self.manifest["tensors"][key]["comp_bytes"]
                 out = self._decode_tensor(key, arrays)
             else:
-                out = self._load_tensor(key)
+                out = self._load_tensor(
+                    key, dependencies=self._event_dependencies(
+                        self._last_compute_event))
             self._set_param(layer, pname, out)
 
         self.stats.layer_loads += 1
@@ -1711,10 +1850,15 @@ class StreamingLosslessModel:
                     start = self._layer_compute_start.pop(idx, end)
                     self._prefetch_controller.update_compute(end - start)
                 if self.trace.enabled:
-                    dependencies = self._layer_prepare_events.pop(idx, ())
-                    self.trace.record("compute", "cuda-default", start, end,
-                                      dependencies=dependencies,
-                                      metadata={"layer": idx})
+                    dependencies = self._event_dependencies(
+                        self._last_compute_event,
+                        *self._layer_prepare_events.pop(idx, ()))
+                    event_id = self.trace.record(
+                        "compute", "cuda-default", start, end,
+                        dependencies=dependencies,
+                        metadata={"layer": idx, "sweep": self._forward_index})
+                    if event_id:
+                        self._last_compute_event = event_id
                 self._free_layer(idx)
                 return output
             return post
@@ -1722,6 +1866,41 @@ class StreamingLosslessModel:
         for i, layer in enumerate(self.layers):
             layer.register_forward_pre_hook(make_pre(i), with_kwargs=True)
             layer.register_forward_hook(make_post(i), with_kwargs=True)
+
+    def _install_output_head_trace_hooks(self) -> None:
+        """Measure the final projection instead of leaving a wall-time hole.
+
+        H6.5 replays dependency durations, not raw timestamps.  The output
+        projection can be a substantial CUDA operation (especially for a
+        large vocabulary), so merely putting a zero-duration ``forward_end``
+        after it made the replay systematically optimistic.  Register these
+        hooks after the residency/chunking hooks so loading is excluded from
+        this compute span while their cleanup remains part of the live range.
+        """
+        if not self.trace.enabled:
+            return
+        head = self.adapter.output_head
+        name = "lm_head"
+
+        def pre(module, args, kwargs):
+            self._module_compute_start[name] = time.perf_counter()
+            return None
+
+        def post(module, args, kwargs, output):
+            self._synchronize_device()
+            end = time.perf_counter()
+            start = self._module_compute_start.pop(name, end)
+            event_id = self.trace.record(
+                "compute", "cuda-default", start, end,
+                dependencies=self._event_dependencies(
+                    self._last_compute_event),
+                metadata={"module": name, "sweep": self._forward_index})
+            if event_id:
+                self._last_compute_event = event_id
+            return output
+
+        head.register_forward_pre_hook(pre, with_kwargs=True)
+        head.register_forward_hook(post, with_kwargs=True)
 
     def _streamed_module_params(self) -> dict:
         """Non-decoder-layer modules that own disk-tier parameters, as
@@ -1775,15 +1954,35 @@ class StreamingLosslessModel:
         cross the bus every token, so bytes-read/token rises. That tradeoff
         is the point of exposing it as a budget rather than hardcoding it.
         """
-        def load_key(key: str) -> torch.Tensor:
+        def load_key(key: str, dependencies: tuple[str, ...]) -> torch.Tensor:
             if self._tier.get(key) == "ram":
                 cached = self._ram_cache[key]
-                return (self._decode_tensor(key, cached)
-                        if self._ram_format_for(key) == "compressed"
-                        else cached.to(
-                            self.device,
-                            non_blocking=(key not in self._ram_cache_pageable_keys)))
-            return self._load_tensor(key)
+                if self._ram_format_for(key) == "compressed":
+                    return self._decode_tensor(
+                        key, cached, dependencies=dependencies)
+                t0 = time.perf_counter()
+                out = cached.to(
+                    self.device,
+                    non_blocking=(key not in self._ram_cache_pageable_keys))
+                if self.trace.enabled and torch.cuda.is_available():
+                    torch.cuda.synchronize()
+                    self.stats.h2d_seconds += time.perf_counter() - t0
+                    self.stats.h2d_bytes += out.numel() * out.element_size()
+                self.trace.record(
+                    "transfer", "cuda-default", t0, time.perf_counter(),
+                    tensor_key=key, dependencies=dependencies,
+                    metadata={"sweep": self._forward_index})
+                return out
+            return self._load_tensor(key, dependencies=dependencies)
+
+        def module_demand(name: str) -> tuple[str, ...]:
+            now = time.perf_counter()
+            event_id = self.trace.record(
+                "module_demand", "scheduler", now, now,
+                dependencies=self._event_dependencies(
+                    self._last_compute_event),
+                metadata={"module": name, "sweep": self._forward_index})
+            return self._event_dependencies(event_id)
 
         for mod_name, pnames in self._streamed_module_params().items():
             module = self.model.get_submodule(mod_name)
@@ -1791,9 +1990,11 @@ class StreamingLosslessModel:
             def make_pre(mn, pns):
                 def pre(module, args, kwargs):
                     self.control.checkpoint()
+                    dependencies = module_demand(mn)
                     for pn in pns:
                         key = mn + "." + pn
-                        self._set_param(module, pn, load_key(key))
+                        self._set_param(
+                            module, pn, load_key(key, dependencies))
                     return None
                 return pre
 
@@ -1827,7 +2028,9 @@ class StreamingLosslessModel:
 
             def tied_head_pre(module, args, kwargs):
                 self.control.checkpoint()
-                self._set_param(module, "weight", load_key(embed_key))
+                self._set_param(
+                    module, "weight",
+                    load_key(embed_key, module_demand("lm_head")))
                 return None
 
             def tied_head_post(module, args, kwargs, output):
@@ -1942,6 +2145,7 @@ class StreamingLosslessModel:
         decode0 = self.stats.decode_seconds
         h2d0 = self.stats.h2d_seconds
         t0 = time.perf_counter()
+        self._begin_forward()
         extra = self._initial_forward_kwargs if self._kv_cache is None else {}
         if use_cache:
             out = self.model(input_ids=input_ids, use_cache=True,
@@ -1950,6 +2154,7 @@ class StreamingLosslessModel:
         else:
             out = self.model(input_ids=input_ids, use_cache=False, **extra)
         self._synchronize_device()
+        self._end_forward()
         wall = time.perf_counter() - t0
         io_delta = self.stats.io_seconds - io0
         decode_delta = self.stats.decode_seconds - decode0
@@ -1973,6 +2178,7 @@ class StreamingLosslessModel:
         decode0 = self.stats.decode_seconds
         h2d0 = self.stats.h2d_seconds
         t0 = time.perf_counter()
+        self._begin_forward()
         if use_cache:
             out = self.adapter.language_model(input_ids=input_ids, use_cache=True,
                                    past_key_values=self._kv_cache)
@@ -1987,9 +2193,19 @@ class StreamingLosslessModel:
         def full_fallback():
             return torch.nn.functional.linear(hidden, weight).argmax()
 
+        head_start = time.perf_counter()
         result = certified_argmax(hidden, weight, self._certified_mips_index,
                                   fallback=full_fallback)
         self._synchronize_device()
+        head_end = time.perf_counter()
+        event_id = self.trace.record(
+            "compute", "cuda-default", head_start, head_end,
+            dependencies=self._event_dependencies(self._last_compute_event),
+            metadata={"module": "certified_lm_head",
+                      "sweep": self._forward_index})
+        if event_id:
+            self._last_compute_event = event_id
+        self._end_forward()
         wall = time.perf_counter() - t0
         self.stats.compute_seconds += max(
             0.0, wall - (self.stats.io_seconds - io0)
@@ -2043,7 +2259,15 @@ class StreamingLosslessModel:
 
         def forward(x: torch.Tensor) -> torch.Tensor:
             self.control.checkpoint()
-            arrays, io_s, read_calls, extent_bytes = self._read_tensor_arrays(key)
+            now = time.perf_counter()
+            demand = self.trace.record(
+                "module_demand", "scheduler", now, now,
+                dependencies=self._event_dependencies(
+                    self._last_compute_event),
+                tensor_key=key,
+                metadata={"module": "lm_head", "sweep": self._forward_index})
+            arrays, io_s, read_calls, extent_bytes = self._read_tensor_arrays(
+                key, dependencies=self._event_dependencies(demand))
             self.stats.io_seconds += io_s
             self.stats.bytes_read += comp_bytes
             self.stats.storage_read_calls += read_calls

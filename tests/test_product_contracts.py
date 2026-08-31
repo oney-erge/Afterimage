@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 from afterimage.runtime.adapters import classify_config, resolve_model_adapter
 from afterimage.runtime.compressed_store import CompressedLayer, decompress_layer_cpu_reference
 from afterimage.runtime.control import JobControl
+from afterimage.runtime.critical_path import TraceRecorder
 from afterimage.runtime.huffman_chunked import ChunkedEncoded
 from afterimage.runtime.streaming_engine import StreamingLosslessModel, _compress_one_tensor
 from afterimage.server.app import app
@@ -396,6 +397,9 @@ def test_selected_expert_forward_matches_packed_reference():
     engine = StreamingLosslessModel.__new__(StreamingLosslessModel)
     engine.model = root
     engine.control = JobControl()
+    engine.trace = TraceRecorder(enabled=False)
+    engine._last_compute_event = None
+    engine._forward_index = 0
     engine._expert_slices = {
         "experts.gate_up_proj": [f"experts.gate_up_proj.__expert__.{i}" for i in range(3)],
         "experts.down_proj": [f"experts.down_proj.__expert__.{i}" for i in range(3)],
@@ -404,7 +408,7 @@ def test_selected_expert_forward_matches_packed_reference():
         **{f"experts.gate_up_proj.__expert__.{i}": gate[i] for i in range(3)},
         **{f"experts.down_proj.__expert__.{i}": down[i] for i in range(3)},
     }
-    engine._load_tensor = lambda key: tensors[key]
+    engine._load_tensor = lambda key, **_kwargs: tensors[key]
     engine._install_expert_streaming()
     actual = root.experts(hidden, indices, routing)
     assert torch.allclose(actual, expected)
