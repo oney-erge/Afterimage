@@ -371,6 +371,23 @@ def test_afterimage_plan_method_rejects_infeasible_plan(tmp_path):
         afterimage_plan_method("h65-selected=%s" % plan_path)
 
 
+def test_afterimage_plan_method_accepts_an_explicit_legacy_policy(tmp_path):
+    plan_path = tmp_path / "h6.json"
+    plan_path.write_text(json.dumps({
+        "schema_version": 2,
+        "feasible": True,
+        "choices": {"model.weight": {"name": "compressed_disk"}},
+        "vram_budget_bytes": 4_000_000_000,
+        "ram_budget_bytes": 8_000_000_000,
+    }), encoding="utf-8")
+
+    _method_id, method, provenance = afterimage_plan_method(
+        "legacy-h6=per_tensor:%s" % plan_path)
+
+    assert method.overrides["representation_policy"] == "per_tensor"
+    assert provenance["representation_policy"] == "per_tensor"
+
+
 def test_snapshot_afterimage_plan_method_is_content_addressed(tmp_path, monkeypatch):
     plan_path = tmp_path / "h65.json"
     plan_path.write_text(json.dumps({

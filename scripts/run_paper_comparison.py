@@ -174,11 +174,12 @@ def budget_method_variants(budget_gb: float) -> dict[str, object]:
 def afterimage_plan_method(spec: str) -> tuple[str, object, dict]:
     """Build a comparison method from one frozen H6.5 representation plan.
 
-    ``spec`` is ``METHOD_ID=PATH``. The plan carries its own decimal-GB VRAM
-    and RAM limits, so the runner does not ask the caller to repeat those
-    values and risk comparing a plan under a different declared budget. The
-    raw-file hash is retained for provenance and later checked when the plan
-    is snapshotted beside the result.
+    ``spec`` is ``METHOD_ID=PATH`` for an H6.5 multi-state plan, or
+    ``METHOD_ID=per_tensor:PATH`` for a legacy per-tensor plan. The plan
+    carries its own decimal-GB VRAM and RAM limits, so the runner does not ask
+    the caller to repeat those values and risk comparing a plan under a
+    different declared budget. The raw-file hash is retained for provenance
+    and later checked when the plan is snapshotted beside the result.
     """
     method_id, separator, raw_path = spec.partition("=")
     method_id = method_id.strip()
@@ -189,6 +190,13 @@ def afterimage_plan_method(spec: str) -> tuple[str, object, dict]:
         raise ValueError(
             "plan METHOD_ID may contain only letters, digits, '-', '.', and '_'")
 
+    representation_policy = "multi_state"
+    for explicit_policy in ("multi_state", "per_tensor"):
+        policy_prefix = explicit_policy + ":"
+        if raw_path.startswith(policy_prefix):
+            representation_policy = explicit_policy
+            raw_path = raw_path[len(policy_prefix):]
+            break
     path = pathlib.Path(raw_path).expanduser().resolve()
     if not path.is_file():
         raise ValueError("representation plan does not exist: %s" % path)
@@ -215,14 +223,14 @@ def afterimage_plan_method(spec: str) -> tuple[str, object, dict]:
 
     method = bounded.Method(
         id=method_id,
-        title="Afterimage H6.5 frozen plan (%s)" % method_id,
+        title="Afterimage frozen %s plan (%s)" % (representation_policy, method_id),
         kind="afterimage",
         overrides={
             "vram_budget_gb": vram_budget_gb,
             "ram_budget_gb": ram_budget_gb,
             "decode_slice_elems": 1 << 22,
             "io_prefetch_depth": 2,
-            "representation_policy": "multi_state",
+            "representation_policy": representation_policy,
             "representation_plan_state": str(path),
         },
         exactness="reference_execution_equivalent",
@@ -230,6 +238,7 @@ def afterimage_plan_method(spec: str) -> tuple[str, object, dict]:
     )
     provenance = {
         "method_id": method_id,
+        "representation_policy": representation_policy,
         "source_path": str(path),
         "source_sha256": hashlib.sha256(payload).hexdigest(),
         "plan_schema_version": plan["schema_version"],
