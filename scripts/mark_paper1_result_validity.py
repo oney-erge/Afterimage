@@ -78,8 +78,11 @@ def classify(relative: str, payload: dict | None,
             "partial and failed runs must never enter figures or tables",
         ], None
 
-    if basename.startswith("h65-paper-matrix-"):
-        if (payload.get("kind") == "h65_causal_paper_matrix"
+    if basename.startswith(("h65-paper-matrix-", "h65-frozen-confirm-")):
+        if (payload.get("kind") in {
+                    "h65_causal_paper_matrix",
+                    "h65_frozen_plan_confirmatory_matrix",
+                }
                 and payload.get("confirmatory_protocol_satisfied")
                 and (payload.get("gates") or {}).get(
                     "confirmatory_execution_eligible")):
