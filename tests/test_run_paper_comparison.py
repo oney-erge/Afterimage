@@ -6,7 +6,9 @@ synthetic rows, without touching CUDA or any real model.
 """
 from __future__ import annotations
 
+import json
 import math
+import pathlib
 import types
 
 import pytest
@@ -18,6 +20,7 @@ from scripts.run_paper_comparison import (
     DEFAULT_TOKEN_LENGTHS,
     DEFAULT_TOKEN_LENGTHS_BY_SUITE,
     _shuffled_order,
+    afterimage_plan_method,
     budget_label,
     budget_method_variants,
     completed_cells,
@@ -26,6 +29,7 @@ from scripts.run_paper_comparison import (
     paired_block_log_ratios,
     paper_eligibility,
     run_one_token_length,
+    snapshot_afterimage_plan_methods,
     token_exactness,
     vram_regime,
     workload_for,
@@ -329,6 +333,64 @@ def test_budget_method_variants_preserves_every_other_override_from_the_base_met
 def test_budget_method_variants_ids_do_not_collide_with_static_methods():
     variants = budget_method_variants(4.0)
     assert set(variants) & set(METHODS) == set()
+
+
+def test_afterimage_plan_method_uses_plan_budgets_and_hash(tmp_path):
+    plan_path = tmp_path / "h65.json"
+    plan_path.write_text(json.dumps({
+        "schema_version": 2,
+        "feasible": True,
+        "choices": {"model.weight": {"name": "decoded_ram"}},
+        "vram_budget_bytes": 4_000_000_000,
+        "ram_budget_bytes": 8_000_000_000,
+        "predicted_prepare_s": 12.5,
+    }), encoding="utf-8")
+
+    method_id, method, provenance = afterimage_plan_method(
+        "h65-selected=%s" % plan_path)
+
+    assert method_id == "h65-selected"
+    assert method.overrides["representation_policy"] == "multi_state"
+    assert method.overrides["vram_budget_gb"] == 4.0
+    assert method.overrides["ram_budget_gb"] == 8.0
+    assert provenance["choice_count"] == 1
+    assert len(provenance["source_sha256"]) == 64
+
+
+def test_afterimage_plan_method_rejects_infeasible_plan(tmp_path):
+    plan_path = tmp_path / "infeasible.json"
+    plan_path.write_text(json.dumps({
+        "schema_version": 2,
+        "feasible": False,
+        "choices": {"model.weight": {}},
+        "vram_budget_bytes": 4_000_000_000,
+        "ram_budget_bytes": 8_000_000_000,
+    }), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="not feasible"):
+        afterimage_plan_method("h65-selected=%s" % plan_path)
+
+
+def test_snapshot_afterimage_plan_method_is_content_addressed(tmp_path, monkeypatch):
+    plan_path = tmp_path / "h65.json"
+    plan_path.write_text(json.dumps({
+        "schema_version": 2,
+        "feasible": True,
+        "choices": {"model.weight": {"name": "decoded_vram"}},
+        "vram_budget_bytes": 4_000_000_000,
+        "ram_budget_bytes": 8_000_000_000,
+    }), encoding="utf-8")
+    method_id, method, provenance = afterimage_plan_method(
+        "h65-test-snapshot=%s" % plan_path)
+    monkeypatch.setitem(METHODS, method_id, method)
+
+    frozen = snapshot_afterimage_plan_methods(
+        [provenance], tmp_path / "results", "qwen-smoke")
+
+    snapshot = pathlib.Path(frozen[0]["snapshot_path"])
+    assert snapshot.read_bytes() == plan_path.read_bytes()
+    assert provenance["source_sha256"][:12] in snapshot.name
+    assert METHODS[method_id].overrides["representation_plan_state"] == str(snapshot)
 
 
 # -------------------------------------------------------------- workload_for

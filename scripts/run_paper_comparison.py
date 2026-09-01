@@ -59,6 +59,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import hashlib
 import json
 import math
 import pathlib
@@ -168,6 +169,111 @@ def budget_method_variants(budget_gb: float) -> dict[str, object]:
         overrides={**accelerate.overrides,
                   "gpu_memory": "%dMB" % round(budget_gb * 1024)})
     return variants
+
+
+def afterimage_plan_method(spec: str) -> tuple[str, object, dict]:
+    """Build a comparison method from one frozen H6.5 representation plan.
+
+    ``spec`` is ``METHOD_ID=PATH``. The plan carries its own decimal-GB VRAM
+    and RAM limits, so the runner does not ask the caller to repeat those
+    values and risk comparing a plan under a different declared budget. The
+    raw-file hash is retained for provenance and later checked when the plan
+    is snapshotted beside the result.
+    """
+    method_id, separator, raw_path = spec.partition("=")
+    method_id = method_id.strip()
+    raw_path = raw_path.strip()
+    if not separator or not method_id or not raw_path:
+        raise ValueError("--afterimage-plan-method must be METHOD_ID=PATH")
+    if any(not (char.isalnum() or char in "-._") for char in method_id):
+        raise ValueError(
+            "plan METHOD_ID may contain only letters, digits, '-', '.', and '_'")
+
+    path = pathlib.Path(raw_path).expanduser().resolve()
+    if not path.is_file():
+        raise ValueError("representation plan does not exist: %s" % path)
+    payload = path.read_bytes()
+    try:
+        plan = json.loads(payload)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("representation plan is not valid JSON: %s" % path) from exc
+    if not isinstance(plan, dict) or plan.get("schema_version") != 2:
+        raise ValueError("representation plan must use schema_version 2: %s" % path)
+    if plan.get("feasible") is not True:
+        raise ValueError("representation plan is not feasible: %s" % path)
+    if not isinstance(plan.get("choices"), dict) or not plan["choices"]:
+        raise ValueError("representation plan has no tensor choices: %s" % path)
+    try:
+        vram_budget_gb = float(plan["vram_budget_bytes"]) / 1e9
+        ram_budget_gb = float(plan["ram_budget_bytes"]) / 1e9
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(
+            "representation plan must declare numeric VRAM and RAM budgets: %s"
+            % path) from exc
+    if vram_budget_gb <= 0 or ram_budget_gb < 0:
+        raise ValueError("representation plan budgets are invalid: %s" % path)
+
+    method = bounded.Method(
+        id=method_id,
+        title="Afterimage H6.5 frozen plan (%s)" % method_id,
+        kind="afterimage",
+        overrides={
+            "vram_budget_gb": vram_budget_gb,
+            "ram_budget_gb": ram_budget_gb,
+            "decode_slice_elems": 1 << 22,
+            "io_prefetch_depth": 2,
+            "representation_policy": "multi_state",
+            "representation_plan_state": str(path),
+        },
+        exactness="reference_execution_equivalent",
+        estimated_s_per_token=float(plan.get("predicted_prepare_s") or 0.0),
+    )
+    provenance = {
+        "method_id": method_id,
+        "source_path": str(path),
+        "source_sha256": hashlib.sha256(payload).hexdigest(),
+        "plan_schema_version": plan["schema_version"],
+        "choice_count": len(plan["choices"]),
+        "vram_budget_gb": vram_budget_gb,
+        "ram_budget_gb": ram_budget_gb,
+        "predicted_prepare_s": plan.get("predicted_prepare_s"),
+    }
+    return method_id, method, provenance
+
+
+def snapshot_afterimage_plan_methods(
+        registrations: list[dict], out_dir: pathlib.Path, label: str) -> list[dict]:
+    """Freeze dynamic plan files next to a campaign and point methods there."""
+    if not registrations:
+        return []
+    snapshot_dir = out_dir / (label + "-plans")
+    snapshot_dir.mkdir(parents=True, exist_ok=True)
+    frozen = []
+    for registration in registrations:
+        method_id = registration["method_id"]
+        source = pathlib.Path(registration["source_path"])
+        payload = source.read_bytes()
+        digest = hashlib.sha256(payload).hexdigest()
+        if digest != registration["source_sha256"]:
+            raise RuntimeError(
+                "representation plan changed after preflight: %s" % source)
+        target = snapshot_dir / ("%s-%s.json" % (method_id, digest[:12]))
+        if target.exists():
+            if hashlib.sha256(target.read_bytes()).hexdigest() != digest:
+                raise RuntimeError("refusing to overwrite plan snapshot: %s" % target)
+        else:
+            temporary = target.with_suffix(target.suffix + ".tmp")
+            if temporary.exists():
+                raise FileExistsError("plan snapshot temporary exists: %s" % temporary)
+            temporary.write_bytes(payload)
+            temporary.replace(target)
+        method = METHODS[method_id]
+        METHODS[method_id] = dataclasses.replace(
+            method,
+            overrides={**method.overrides,
+                       "representation_plan_state": str(target.resolve())})
+        frozen.append({**registration, "snapshot_path": str(target.resolve())})
+    return frozen
 
 # The Afterimage method every other method is compared against. exact-min
 # is the "reference_execution_equivalent" control -- greedy-exact, no
@@ -478,6 +584,7 @@ def run_one_token_length(args, tokenizer, rendered: list[dict],
                          selected: list[str], out_path: pathlib.Path,
                          repo_root: pathlib.Path, n_tokens: int,
                          dirty: str | None, work_dir: pathlib.Path) -> dict:
+    plan_methods = getattr(args, "afterimage_plan_methods", [])
     partial = out_path.with_suffix(out_path.suffix + ".partial")
     if out_path.exists():
         if args.resume:
@@ -494,12 +601,15 @@ def run_one_token_length(args, tokenizer, rendered: list[dict],
         result = json.loads(partial.read_text(encoding="utf-8"))
         mismatched = [
             (name, (result.get(name, False) if name == "require_thermally_clean"
+                    else result.get(name, []) if name == "afterimage_plan_methods"
                     else result.get(name)), value) for name, value in
-             (("max_new_tokens", n_tokens), ("blocks_requested", args.blocks),
-              ("seed", args.seed), ("selected_methods", selected),
-              ("require_thermally_clean", args.require_thermally_clean))
-             if (result.get(name, False) if name == "require_thermally_clean"
-                 else result.get(name)) != value]
+              (("max_new_tokens", n_tokens), ("blocks_requested", args.blocks),
+               ("seed", args.seed), ("selected_methods", selected),
+               ("afterimage_plan_methods", plan_methods),
+               ("require_thermally_clean", args.require_thermally_clean))
+            if (result.get(name, False) if name == "require_thermally_clean"
+                else result.get(name, []) if name == "afterimage_plan_methods"
+                else result.get(name)) != value]
         # prompt_suite predates this field in older .partial files; a
         # missing key means "evaluation" (the only split that existed
         # then), not "leave unspecified and refuse to resume".
@@ -571,6 +681,7 @@ def run_one_token_length(args, tokenizer, rendered: list[dict],
             "draft_model": args.draft_model,
             "store": args.store,
             "selected_methods": selected,
+            "afterimage_plan_methods": plan_methods,
             "seed": args.seed,
             "require_thermally_clean": args.require_thermally_clean,
             "environment": environment_manifest(repo_root, tokenizer,
@@ -850,8 +961,15 @@ def main() -> int:
              "pareto_frontier in the result JSON for the (VRAM, seconds/token) "
              "plot this is for. AirLLM and DFloat11 contribute whatever "
              "peak_vram_gb they naturally land on instead -- see "
-             "budget_method_variants()'s docstring for why only Afterimage and "
-             "Accelerate can be pinned this way today.")
+              "budget_method_variants()'s docstring for why only Afterimage and "
+              "Accelerate can be pinned this way today.")
+    parser.add_argument(
+        "--afterimage-plan-method", action="append", default=[],
+        metavar="METHOD_ID=PATH",
+        help="add one frozen H6.5 multi-state representation plan as an exact "
+             "Afterimage method. May be repeated. The plan's own VRAM/RAM "
+             "budgets are enforced, and a SHA-256-addressed copy is saved next "
+             "to the result before any GPU cell runs.")
     parser.add_argument(
         "--prompt-suite", default="evaluation",
         choices=["evaluation", "paper_generation"],
@@ -930,11 +1048,18 @@ def main() -> int:
     args = parser.parse_args()
 
     selected = [part.strip() for part in args.methods.split(",") if part.strip()]
-    unknown = sorted(set(selected) - set(METHODS))
-    if unknown:
-        parser.error("unknown methods: %s" % ", ".join(unknown))
-    if CONTROL_METHOD not in selected:
-        parser.error("--methods must include %r (the comparison control)" % CONTROL_METHOD)
+    plan_registrations = []
+    for spec in args.afterimage_plan_method:
+        try:
+            method_id, method, provenance = afterimage_plan_method(spec)
+        except ValueError as exc:
+            parser.error(str(exc))
+        if method_id in METHODS:
+            parser.error("plan method ID already exists: %s" % method_id)
+        METHODS[method_id] = method
+        plan_registrations.append(provenance)
+        if method_id not in selected:
+            selected.append(method_id)
     if args.vram_budgets:
         try:
             budgets = [float(part.strip()) for part in args.vram_budgets.split(",")
@@ -951,6 +1076,11 @@ def main() -> int:
                     selected.append(method_id)
                 if method_id.startswith("accelerate-"):
                     DEPENDENCY_PACKAGE[method_id] = "accelerate"
+    unknown = sorted(set(selected) - set(METHODS))
+    if unknown:
+        parser.error("unknown methods: %s" % ", ".join(unknown))
+    if CONTROL_METHOD not in selected:
+        parser.error("--methods must include %r (the comparison control)" % CONTROL_METHOD)
     token_lengths_arg = args.token_lengths or ",".join(
         map(str, DEFAULT_TOKEN_LENGTHS_BY_SUITE[args.prompt_suite]))
     try:
@@ -1012,6 +1142,8 @@ def main() -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
     label = args.run_label or (
         args.model.split("/")[-1].lower() + "-" + time.strftime("%Y-%m-%d"))
+    args.afterimage_plan_methods = snapshot_afterimage_plan_methods(
+        plan_registrations, out_dir, label)
 
     written = []
     incomplete = []
