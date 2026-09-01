@@ -308,8 +308,8 @@ def test_cool_down_checks_throttle_even_with_no_cooldown_flags_at_all(monkeypatc
     assert result["cooldown_reached_target"] is False
 
 
-def test_cool_down_returns_immediately_when_not_throttled_and_no_flags_given(monkeypatch):
-    """The common case must stay cheap: an unthrottled GPU with the fully
+def test_cool_down_returns_immediately_when_not_thermally_throttled(monkeypatch):
+    """The common case must stay cheap: a thermally clear GPU with the fully
     default call still returns on the first snapshot, not after waiting."""
     from scripts import run_bounded_suite as bounded
 
@@ -320,10 +320,36 @@ def test_cool_down_returns_immediately_when_not_throttled_and_no_flags_given(mon
     assert result["cooldown_reached_target"] is True
 
 
-def test_cool_down_seconds_floor_also_requires_throttle_clear(monkeypatch):
+def test_cool_down_does_not_wait_for_an_ordinary_software_power_cap(monkeypatch):
+    """A laptop power limit is a measured operating condition, not heat that
+    an idle wait can clear. Only the thermal bit should hold the cooldown."""
+    from scripts import run_bounded_suite as bounded
+
+    calls = {"n": 0}
+
+    def snapshot():
+        calls["n"] += 1
+        return {
+            "temperature_c": "59",
+            "throttle_reasons_active": "0x0000000000000004",
+            "throttled": True,
+            "thermal_throttled": False,
+            "power_limited": True,
+        }
+
+    monkeypatch.setattr(bounded, "gpu_thermal_snapshot", snapshot)
+    result = bounded.cool_down(0.0, max_temperature_c=65.0)
+
+    assert result["cooldown_reached_target"] is True
+    assert result["thermal_throttled_after_cooldown"] is False
+    assert result["power_limited_after_cooldown"] is True
+    assert calls["n"] == 2  # readiness sample plus final audit sample
+
+
+def test_cool_down_seconds_floor_also_requires_thermal_clear(monkeypatch):
     """Previously the seconds-only floor path (--cooldown-seconds with no
-    --cooldown-max-temp-c) never consulted is_throttled() at all, so it
-    would wait out the floor and report done even on a still-throttled GPU.
+    --cooldown-max-temp-c) never consulted thermal state at all, so it
+    would wait out the floor and report done even on a still-hot GPU.
     The floor must now be a minimum, not a substitute for the throttle
     check."""
     from scripts import run_bounded_suite as bounded

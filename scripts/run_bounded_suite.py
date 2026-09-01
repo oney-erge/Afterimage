@@ -616,21 +616,30 @@ def cool_down(seconds: float, max_temperature_c: float | None) -> dict:
     would have measured "cool enough" and immediately resumed the still-
     throttled run.
 
-    Throttle-clear is therefore mandatory and unconditional: even the fully
+    Thermal-clear is therefore mandatory and unconditional: even the fully
     default call ``cool_down(0.0, None)`` -- what every timed cell got
     whenever a caller (canonical benchmark.sh included) passed neither
     --cooldown-seconds nor --cooldown-max-temp-c -- waits out
-    ``is_throttled() is True`` up to the 600 s hard ceiling before
+    ``thermal_throttled() is True`` up to the 600 s hard ceiling before
     proceeding. This used to be gated behind ``max_temperature_c`` being
     set, and separately the seconds-only floor path never consulted
-    ``is_throttled()`` at all, so a genuinely throttled GPU was invisible to
+    thermal state at all, so a genuinely hot GPU was invisible to
     cool_down() unless a caller happened to also pass a temperature target.
     --cooldown-seconds and --cooldown-max-temp-c now only ADD an idle floor
     and/or a temperature ceiling on top of the mandatory throttle check;
     they do not gate whether that check runs. An unknown throttle reading
-    (``is_throttled()`` returns None -- no nvidia-smi, non-NVIDIA host) does
+    (``thermal_throttled()`` returns None -- no nvidia-smi, non-NVIDIA host) does
     not block, matching every other place in this module that treats
     "unknown" as distinct from a confident "not throttled".
+
+    A software power cap is deliberately *not* a cooldown blocker. NVIDIA
+    defines SwPowerCap as clocks being optimized to remain inside the current
+    power limit; on the reference laptop that is a normal steady-state
+    operating condition and can remain asserted at low temperature. Waiting
+    for the combined ``is_throttled()`` signal to clear therefore burned the
+    full ten-minute safety ceiling without making the machine cooler. Power
+    events remain recorded in every row and cell; only explicitly thermal
+    event bits govern whether cooling has finished.
     """
     started = time.perf_counter()
     deadline = started + max(seconds, 0.0)
@@ -642,11 +651,13 @@ def cool_down(seconds: float, max_temperature_c: float | None) -> dict:
             temperature = float(snapshot.get("temperature_c"))
         except (TypeError, ValueError):
             temperature = None
-        throttled = snapshot.get("throttled")
+        thermal_state = snapshot.get("thermal_throttled")
+        if thermal_state is None:
+            thermal_state = thermal_throttled(snapshot)
         temperature_ok = max_temperature_c is None or (
             temperature is not None and temperature <= max_temperature_c)
-        throttle_ok = throttled is not True  # None (unknown) does not block.
-        reached = temperature_ok and throttle_ok
+        thermal_ok = thermal_state is not True  # None (unknown) does not block.
+        reached = temperature_ok and thermal_ok
         # Honour the floor wait even once ready, so a fast-cooling run still
         # gets a consistent inter-cell gap.
         if reached and now >= deadline:
@@ -665,6 +676,8 @@ def cool_down(seconds: float, max_temperature_c: float | None) -> dict:
         "cooldown_reached_target": reached,
         "temperature_after_cooldown_c": final.get("temperature_c"),
         "throttled_after_cooldown": final.get("throttled"),
+        "thermal_throttled_after_cooldown": final.get("thermal_throttled"),
+        "power_limited_after_cooldown": final.get("power_limited"),
     }
 
 
