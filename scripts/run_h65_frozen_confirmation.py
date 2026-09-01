@@ -191,7 +191,7 @@ def main() -> int:
             "disk_plan": str(disk_plan),
             "disk_plan_sha256": sha256(disk_plan),
             "candidate_plans": {
-                method: entry["path"] for method, entry in frozen.items()},
+                method: str(entry["path"]) for method, entry in frozen.items()},
         },
         **settings,
         "h2d_gbps": float(h2d["median_stable_gbps"]),
