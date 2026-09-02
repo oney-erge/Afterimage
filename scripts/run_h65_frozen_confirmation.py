@@ -10,8 +10,6 @@ algorithm.
 from __future__ import annotations
 
 import argparse
-import hashlib
-import json
 import pathlib
 import shutil
 import time
@@ -27,15 +25,12 @@ from scripts.run_h65_paper_matrix import (  # noqa: E402
     METHODS,
     balanced_order,
     cache_drop_preflight,
-    cell_metric,
     common_overrides,
     exactness_failures,
-    gpu_processes,
     load,
     run_cell,
     sha256,
     summarize_live,
-    terminate_group,
     wait_for_gpu,
     worker_config,
     checkpoint,
