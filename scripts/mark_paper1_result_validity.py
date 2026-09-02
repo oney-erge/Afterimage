@@ -78,10 +78,12 @@ def classify(relative: str, payload: dict | None,
             "partial and failed runs must never enter figures or tables",
         ], None
 
-    if basename.startswith(("h65-paper-matrix-", "h65-frozen-confirm-")):
+    if basename.startswith((
+            "h65-paper-matrix-", "h65-frozen-confirm-", "h65-direct-pair-")):
         if (payload.get("kind") in {
                     "h65_causal_paper_matrix",
                     "h65_frozen_plan_confirmatory_matrix",
+                    "h65_direct_pair_confirmatory",
                 }
                 and payload.get("confirmatory_protocol_satisfied")
                 and (payload.get("gates") or {}).get(
@@ -177,8 +179,9 @@ def markdown(ledger: dict) -> str:
         "This index is deny-by-default. Original result JSON files remain immutable; "
         "the adjacent `.validity.json` files and this ledger determine allowed use.",
         "",
-        "No current artifact is automatically authorized as a confirmatory primary "
-        "paper claim. `regulated_pilot` means effect-size/supporting evidence only.",
+        "Only artifacts explicitly classified `confirmatory` are authorized for a "
+        "primary paper claim. `regulated_pilot` means effect-size/supporting "
+        "evidence only.",
         "",
         "## Counts",
         "",
