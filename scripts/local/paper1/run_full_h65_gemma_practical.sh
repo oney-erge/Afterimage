@@ -10,7 +10,7 @@ REPO="/mnt/c/for fun/Afterimage"
 PYTHON="/root/.venv/bin/python"
 MODEL="google/gemma-2-27b-it"
 STORE="/root/afterimage/paper1/store_gemma2_27b"
-STAMP="20260902"
+STAMP="20260903"
 ROOT="$REPO/scripts/local/paper1/output/paper-h65-gemma-practical-$STAMP"
 LOG_DIR="$ROOT/logs"
 STATUS_FILE="$ROOT/campaign-status.txt"
@@ -95,6 +95,10 @@ fi
 
 export AFTERIMAGE_BENCHMARK_POWER_PROFILE="unmodified Windows laptop profile; software thermal scaling recorded, not excluded"
 export AFTERIMAGE_GPU_POWER_CONTROL="unavailable: nvidia-smi power-limit and clock-lock requests rejected"
+# Gemma's 27B tensor stream allocates several large temporary blocks.  Use the
+# same expandable CUDA allocator policy for every method so fragmentation does
+# not turn a feasible frozen plan into a method-specific OOM.
+export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
 printf 'started_at=%s model=%s thermal_policy=record_and_pair\n' \
     "$(date -Is)" "$MODEL" | tee -a "$STATUS_FILE"
 
