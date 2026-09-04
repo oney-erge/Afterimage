@@ -973,6 +973,12 @@ def main() -> int:
               "budget_method_variants()'s docstring for why only Afterimage and "
               "Accelerate can be pinned this way today.")
     parser.add_argument(
+        "--exact-min-vram-budget-gb", type=float, default=None,
+        help="replace exact-min's default 1.80 GB cap with a model-specific "
+             "viable cap. Use only when the default cannot materialize an "
+             "individual tensor; the resolved title and per-cell overrides "
+             "record the actual control budget in the result artifact.")
+    parser.add_argument(
         "--afterimage-plan-method", action="append", default=[],
         metavar="METHOD_ID=PATH",
         help="add one frozen H6.5 multi-state representation plan as an exact "
@@ -1055,6 +1061,18 @@ def main() -> int:
              "hits its time budget partway through still finalizes normally, "
              "with paper_eligible recorded honestly as False.")
     args = parser.parse_args()
+
+    if args.exact_min_vram_budget_gb is not None:
+        if args.exact_min_vram_budget_gb <= 0:
+            parser.error("--exact-min-vram-budget-gb must be positive")
+        exact = METHODS[CONTROL_METHOD]
+        label = budget_label(args.exact_min_vram_budget_gb)
+        METHODS[CONTROL_METHOD] = dataclasses.replace(
+            exact,
+            title=("Afterimage exact streaming at %s GB "
+                   "(model-specific viable control)" % label),
+            overrides={**exact.overrides,
+                       "vram_budget_gb": args.exact_min_vram_budget_gb})
 
     selected = [part.strip() for part in args.methods.split(",") if part.strip()]
     plan_registrations = []

@@ -10,12 +10,16 @@ REPO="/mnt/c/for fun/Afterimage"
 PYTHON="/root/.venv/bin/python"
 MODEL="google/gemma-2-27b-it"
 STORE="/root/afterimage/paper1/store_gemma2_27b"
-STAMP="20260903"
+STAMP="20260903-r2-vram27"
+PILOT_STAMP="20260903"
 ROOT="$REPO/scripts/local/paper1/output/paper-h65-gemma-practical-$STAMP"
 LOG_DIR="$ROOT/logs"
 STATUS_FILE="$ROOT/campaign-status.txt"
-PILOT_OUT="$ROOT/planner/gemma2-27b-h65-pilot-practical-$STAMP.json"
-PILOT_ROOT="$ROOT/planner/gemma2-27b-h65-pilot-practical-$STAMP-artifacts"
+# Reuse the completed, frozen Sep. 3 pilot. The fresh r2 result root below
+# prevents the former infeasible 1.80 GB exact-control partials from being
+# resumed or mixed into this corrected matrix.
+PILOT_OUT="$REPO/scripts/local/paper1/output/paper-h65-gemma-practical-$PILOT_STAMP/planner/gemma2-27b-h65-pilot-practical-$PILOT_STAMP.json"
+PILOT_ROOT="$REPO/scripts/local/paper1/output/paper-h65-gemma-practical-$PILOT_STAMP/planner/gemma2-27b-h65-pilot-practical-$PILOT_STAMP-artifacts"
 H65_PLAN="$PILOT_ROOT/h65-full-candidate.json"
 DISK_PLAN="$PILOT_ROOT/disk-plan.json"
 H2D="$REPO/scripts/local/paper1/output/pageable-h2d-rtx3080-20260828.json"
@@ -130,6 +134,7 @@ run_stage matched_tier_ttft_8block \
     "$PYTHON" -u scripts/run_paper_comparison.py \
     --model "$MODEL" --store "$STORE" \
     --methods exact-min,simple-v4-r8 \
+    --exact-min-vram-budget-gb 2.7 \
     --afterimage-plan-method "disk-frozen=per_tensor:$DISK_PLAN" \
     --afterimage-plan-method "h65-selected=$H65_PLAN" \
     --token-lengths 1 --blocks 8 --warmup-tokens 1 \
@@ -143,6 +148,7 @@ run_stage external_ttft_8block \
     "$PYTHON" -u scripts/run_paper_comparison.py \
     --model "$MODEL" --store "$STORE" \
     --methods exact-min,airllm,accelerate,deepspeed-zero-inference \
+    --exact-min-vram-budget-gb 2.7 \
     --afterimage-plan-method "h65-selected=$H65_PLAN" \
     --token-lengths 1 --blocks 8 --warmup-tokens 1 \
     --cooldown-seconds 45 --cooldown-max-temp-c 50 \
@@ -155,6 +161,7 @@ run_stage matched_tier_decode_32tok_3block \
     "$PYTHON" -u scripts/run_paper_comparison.py \
     --model "$MODEL" --store "$STORE" \
     --methods exact-min,simple-v4-r8 \
+    --exact-min-vram-budget-gb 2.7 \
     --afterimage-plan-method "disk-frozen=per_tensor:$DISK_PLAN" \
     --afterimage-plan-method "h65-selected=$H65_PLAN" \
     --prompt-suite paper_generation --token-lengths 32 --blocks 3 \
