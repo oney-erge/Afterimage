@@ -21,6 +21,7 @@ import argparse
 import dataclasses
 import hashlib
 import json
+import math
 import os
 import pathlib
 import random
@@ -38,6 +39,9 @@ WORKER = REPO / "scripts/run_h65_paper_worker.py"
 sys.path.insert(0, str(REPO))
 
 from afterimage.runtime.critical_path import TraceRecorder  # noqa: E402
+from afterimage.bench.ram_prepare import (  # noqa: E402
+    profile_execution_contract, runtime_source_fingerprint, validate_ram_profile,
+)
 from afterimage.runtime.h65_planner import (  # noqa: E402
     build_uniform_disk_plan,
     optimize_h65_plan,
@@ -70,6 +74,7 @@ SOURCE_FILES = (
     REPO / "afterimage/runtime/h65_planner.py",
     REPO / "afterimage/runtime/streaming_engine.py",
     REPO / "afterimage/runtime/representations.py",
+    REPO / "afterimage/bench/ram_prepare.py",
 )
 
 
@@ -199,6 +204,7 @@ def parse_cases(value: str) -> tuple[str, ...]:
 
 def common_overrides(args: argparse.Namespace) -> dict:
     return {
+        "reuse_decode_tables": getattr(args, "reuse_decode_tables", False),
         "vram_budget_gb": args.vram_gb,
         "ram_budget_gb": args.ram_gb,
         "vram_cap_gb": args.vram_gb,
@@ -223,6 +229,7 @@ def worker_config(*, args: argparse.Namespace, method_id: str,
         "case_split": split,
         "case_ids": list(case_ids),
         "max_new_tokens": max_new_tokens,
+        "warmup_tokens": getattr(args, "warmup_tokens", 0),
         "cooldown_seconds": args.cooldown_seconds,
         "cooldown_max_temp_c": args.cooldown_max_temp_c,
         "time_budget_minutes": args.cell_timeout_minutes,
@@ -265,6 +272,33 @@ def plan_budget_ok(plan) -> bool:
     return bool(
         plan.vram_bytes + plan.vram_headroom_bytes <= plan.vram_budget_bytes
         and plan.ram_bytes <= plan.ram_budget_bytes)
+
+
+def whole_cell_budget_ok(rows: list[dict], budget_gb: float) -> bool:
+    """A feasible logical plan is not proof that its physical runtime fits."""
+    return bool(rows and all(
+        isinstance(row.get("peak_vram_gb"), (int, float))
+        and math.isfinite(row["peak_vram_gb"])
+        and 0 <= row["peak_vram_gb"] <= budget_gb
+        and row.get("peak_vram_source") in (
+            "whole_cell_nvidia_smi_delta", "whole_cell_smi_delta_decimal_gb")
+        for row in rows))
+
+
+def representation_ablation_status(placement, full) -> dict:
+    """Compare physical choices, not score metadata or different filenames."""
+    placement_names = {key: option.name for key, option in placement.choices.items()}
+    full_names = {key: option.name for key, option in full.choices.items()}
+    identical = placement_names == full_names
+    compressed_count = sum(name == "compressed_ram" for name in full_names.values())
+    return {
+        "plans_identical": identical,
+        "compressed_ram_tensor_count": compressed_count,
+        "representation_effect_identifiable": not identical and compressed_count > 0,
+        "speculation_enabled": False,
+        "interpretation": ("A/A repeat: timing differences cannot identify a representation gain"
+                           if identical else "Distinct physical plans; compare paired measurements"),
+    }
 
 
 def rows_by_case(cell: dict) -> dict[str, dict]:
@@ -395,6 +429,14 @@ def main() -> int:
     parser.add_argument("--ram-gb", type=float, default=16.0)
     parser.add_argument("--decode-slice-elems", type=int, default=1 << 22)
     parser.add_argument("--vram-safety-margin-gb", type=float, default=0.5)
+    parser.add_argument("--reuse-decode-tables", action=argparse.BooleanOptionalAction,
+                        default=False, help="Use the same decoder path in calibration and evaluation")
+    parser.add_argument("--warmup-tokens", type=int, default=0)
+    parser.add_argument(
+        "--ram-prepare-profile",
+        help="Schema-v2 allocation/copy profile with matching model, budgets, "
+             "execution contract and disjoint calibration. Historical profiles "
+             "without execution provenance cannot calibrate this paper run.")
     parser.add_argument("--search-iterations", type=int, default=256)
     parser.add_argument("--minimum-live-improvement", type=float, default=0.05)
     parser.add_argument("--calibration-cases", default=",".join(DEFAULT_CALIBRATION_CASES))
@@ -432,10 +474,17 @@ def main() -> int:
         parser.error("a confirmatory protocol requires at least eight blocks")
     if (args.max_new_tokens < 1 or args.vram_gb <= 0 or args.ram_gb < 0
             or args.decode_slice_elems < 1 or args.search_iterations < 0
-            or args.cell_timeout_minutes <= 0):
+            or args.cell_timeout_minutes <= 0 or args.warmup_tokens < 0):
         parser.error("token count, budgets, search, and timeout are invalid")
 
     store = pathlib.Path(args.store).resolve()
+    ram_prepare_seconds = {}
+    ram_prepare_profile_path = None
+    if args.ram_prepare_profile:
+        ram_prepare_profile_path = pathlib.Path(args.ram_prepare_profile).resolve()
+        if not ram_prepare_profile_path.exists():
+            parser.error("RAM preparation profile does not exist: %s"
+                         % ram_prepare_profile_path)
     manifest_path = (pathlib.Path(args.manifest).resolve() if args.manifest
                      else store / "manifest.json")
     h2d_path = pathlib.Path(args.h2d).resolve()
@@ -459,6 +508,18 @@ def main() -> int:
         raise FileExistsError("partial matrix exists; pass --resume: %s" % partial)
 
     manifest = load(manifest_path)
+    if ram_prepare_profile_path:
+        try:
+            ram_prepare_seconds = validate_ram_profile(
+                load(ram_prepare_profile_path), manifest_sha256=sha256(manifest_path),
+                vram_gb=args.vram_gb, ram_gb=args.ram_gb,
+                safety_gb=args.vram_safety_margin_gb, evaluation_cases=evaluation_cases,
+                tensor_keys=manifest["tensors"],
+                expected_execution=profile_execution_contract(
+                    common_overrides(args), warmup_tokens=args.warmup_tokens,
+                    source_sha256=runtime_source_fingerprint(REPO), h2d_sha256=sha256(h2d_path)))
+        except ValueError as exc:
+            parser.error(str(exc))
     h2d = load(h2d_path)
     h2d_gbps = float(h2d["median_stable_gbps"])
     session_started = time.time()
@@ -468,6 +529,17 @@ def main() -> int:
         "store": str(store),
         "manifest": str(manifest_path),
         "h2d_artifact": str(h2d_path),
+        # Records whether the RAM-cost fix was actually in force. A run with
+        # this null planned RAM residency from bandwidth alone, whatever the
+        # planner's code supports, and must not be compared against one that
+        # supplied measured costs.
+        "ram_prepare_profile": (str(ram_prepare_profile_path)
+                                if ram_prepare_profile_path else None),
+        "ram_prepare_profile_sha256": (sha256(ram_prepare_profile_path)
+                                       if ram_prepare_profile_path else None),
+        "ram_prepare_seconds": dict(ram_prepare_seconds),
+        "reuse_decode_tables": args.reuse_decode_tables,
+        "warmup_tokens": args.warmup_tokens,
         "vram_budget_gb": args.vram_gb,
         "ram_budget_gb": args.ram_gb,
         "decode_slice_elems": args.decode_slice_elems,
@@ -620,7 +692,8 @@ def main() -> int:
                 minimum_live_improvement=args.minimum_live_improvement,
                 vram_safety_margin_gb=args.vram_safety_margin_gb,
                 h2d_memory_mode=str(h2d.get("memory_mode") or "unknown"),
-                enable_compressed_ram=compressed)
+                enable_compressed_ram=compressed,
+                ram_prepare_seconds=ram_prepare_seconds)
             candidate_path = root / (method + "-candidate.json")
             deployment_path = root / (method + "-deployment.json")
             planning.candidate_plan.save(candidate_path)
@@ -642,6 +715,10 @@ def main() -> int:
             }
             checkpoint(partial, result)
 
+        result["representation_ablation"] = representation_ablation_status(
+            planned["h65-placement-only"]["planning"].candidate_plan,
+            planned["h65-full"]["planning"].candidate_plan)
+        result["evaluated_plan_kind"] = "diagnostic_candidate_not_guarded_deployment"
         method_overrides = {
             "disk-only": {
                 **common,
@@ -708,7 +785,11 @@ def main() -> int:
             candidate_seconds = tuple(
                 live["methods"][method]["block_median_seconds_per_token"])
             eligible = bool(
-                len(traffic_seconds) == len(candidate_seconds) == args.blocks)
+                len(traffic_seconds) == len(candidate_seconds) == args.blocks
+                and whole_cell_budget_ok([
+                    row for cell in evaluation_cells
+                    if cell.get("method_id") in ("traffic-placement", method)
+                    for row in cell.get("rows", [])], args.vram_gb))
             final = optimize_h65_plan(
                 manifest, traces,
                 vram_budget_gb=args.vram_gb, ram_budget_gb=args.ram_gb,
@@ -720,6 +801,7 @@ def main() -> int:
                 vram_safety_margin_gb=args.vram_safety_margin_gb,
                 h2d_memory_mode=str(h2d.get("memory_mode") or "unknown"),
                 enable_compressed_ram=compressed,
+                ram_prepare_seconds=ram_prepare_seconds,
                 live_control_seconds=traffic_seconds,
                 live_candidate_seconds=candidate_seconds,
                 live_validation_eligible=eligible,
@@ -773,6 +855,7 @@ def main() -> int:
             "thermal_gate_passed": thermal_clean,
             "whole_cell_vram_measured": bool(rows and all(
                 row.get("peak_vram_gb") is not None for row in rows)),
+            "measured_whole_cell_within_budget": whole_cell_budget_ok(rows, args.vram_gb),
             "placement_candidate_within_budget": plan_budget_ok(placement_plan),
             "full_candidate_within_budget": plan_budget_ok(full_plan),
             "placement_candidate_diverged_from_traffic": bool(

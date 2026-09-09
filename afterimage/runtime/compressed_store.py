@@ -158,7 +158,8 @@ def _slice_encoded(enc: ChunkedEncoded, c0: int, c1: int) -> ChunkedEncoded:
     )
 
 
-def _decode_exponent(enc: ChunkedEncoded, device: str) -> torch.Tensor:
+def _decode_exponent(enc: ChunkedEncoded, device: str, *,
+                     tables: tuple | None = None) -> torch.Tensor:
     """Decodes enc's exponent stream to a length-n_symbols uint8 tensor on
     `device`. On a CUDA device this is the Triton kernel in gpu_decode_v2.py;
     otherwise it's the numba-compiled decoder in cpu_decode.py -- the same
@@ -178,11 +179,13 @@ def _decode_exponent(enc: ChunkedEncoded, device: str) -> torch.Tensor:
         arr = decode_chunks_numba(enc)[: enc.n_symbols]
         return torch.from_numpy(arr.copy())
     from .gpu_decode_v2 import decode_gpu_v2
-    return decode_gpu_v2(enc, device=device)
+    return decode_gpu_v2(enc, device=device, tables=tables,
+                         synchronize=tables is None)
 
 
 def decompress_layer_gpu(layer: CompressedLayer, device: str = "cuda",
-                         max_slice_elems: int = 1 << 25) -> torch.Tensor:
+                         max_slice_elems: int = 1 << 25, *,
+                         reuse_decode_tables: bool = False) -> torch.Tensor:
     """Reconstructs the EXACT original bf16 tensor.
 
     Despite the name (kept for callers already using it), this dispatches by
@@ -205,9 +208,17 @@ def decompress_layer_gpu(layer: CompressedLayer, device: str = "cuda",
     """
     enc = layer.encoded
     n = enc.n_symbols
+    tables = None
+    if reuse_decode_tables and str(device).startswith("cuda"):
+        from .gpu_decode_v2 import prepare_decode_tables
+        # Identical codebooks accompany every chunk slice of this tensor.
+        # Retain just those small tables, not the full packed tensor or a
+        # second full decoded copy. Operations remain ordered on the current
+        # CUDA stream; the caller synchronizes at its measurement boundary.
+        tables = prepare_decode_tables(enc, device)
 
     if n <= max_slice_elems:
-        exponent = _decode_exponent(enc, device).to(device=device)
+        exponent = _decode_exponent(enc, device, tables=tables).to(device=device)
         sm = layer.sign_mantissa.to(device=device)
         return _recombine(exponent[:n], sm[:n], layer.shape)
 
@@ -217,7 +228,7 @@ def decompress_layer_gpu(layer: CompressedLayer, device: str = "cuda",
     for c0 in range(0, enc.n_chunks, chunks_per_slice):
         c1 = min(c0 + chunks_per_slice, enc.n_chunks)
         sub = _slice_encoded(enc, c0, c1)
-        exp = _decode_exponent(sub, device).to(device=device)
+        exp = _decode_exponent(sub, device, tables=tables).to(device=device)
 
         s0 = c0 * enc.chunk_size
         s1 = min(c1 * enc.chunk_size, n)

@@ -62,7 +62,8 @@ def _make_store(tmp_path, monkeypatch, model, cfg, model_id, tag):
     return store_dir
 
 
-def test_measurement_trace_has_scheduler_causality(tmp_path, monkeypatch):
+@pytest.mark.parametrize("prefetch_depth", [1, 2])
+def test_measurement_trace_has_scheduler_causality(tmp_path, monkeypatch, prefetch_depth):
     from afterimage.runtime.config import EngineConfig
     from afterimage.runtime.h65_planner import _validate_causal_trace
     from afterimage.runtime.streaming_engine import StreamingLosslessModel
@@ -73,17 +74,21 @@ def test_measurement_trace_has_scheduler_causality(tmp_path, monkeypatch):
     ids = torch.randint(0, cfg.vocab_size, (1, 5), device="cuda")
     engine = StreamingLosslessModel(
         "fake/causal-trace-engine", store_dir, device="cuda",
-        config=EngineConfig(io_prefetch_depth=1, trace_events=True))
+        config=EngineConfig(io_prefetch_depth=prefetch_depth, trace_events=True))
     try:
         engine.quiesce_prefetch()
         engine.reset_measurement_trace()
         with torch.no_grad():
+            engine.forward_logits(ids)
             engine.forward_logits(ids)
         events = engine.trace.events
         _validate_causal_trace(events)
         assert events[0].kind == "forward_start"
         assert events[-1].kind == "forward_end"
         assert any(event.kind == "prefetch_launch" for event in events)
+        barriers = [event for event in events if event.kind == "layer_ready"]
+        assert len(barriers) == 2 * cfg.num_hidden_layers
+        assert {event.metadata["sweep"] for event in barriers} == {1, 2}
         assert any(event.kind == "compute"
                    and event.metadata.get("module") == "lm_head"
                    for event in events)

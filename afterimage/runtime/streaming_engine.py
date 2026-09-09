@@ -1122,7 +1122,8 @@ class StreamingLosslessModel:
         t1 = time.perf_counter()
         layer = self._compressed_layer(key, arrays)
         out = decompress_layer_gpu(layer, device=self.device,
-                                   max_slice_elems=self.config.decode_slice_elems)
+                                   max_slice_elems=self.config.decode_slice_elems,
+                                   reuse_decode_tables=self.config.reuse_decode_tables)
         if self.trace.enabled and torch.cuda.is_available():
             torch.cuda.synchronize()
         end = time.perf_counter()
@@ -1697,6 +1698,28 @@ class StreamingLosslessModel:
                 sum(self._prefetch_inflight_bytes.values()))
         th.start()
 
+    def _record_layer_ready(self, idx: int, cached: dict | None) -> str | None:
+        """Record the whole-batch join, not an extra measured wait duration.
+
+        The prefetch worker publishes a layer only after ALL of its reads
+        finish. Decoding any tensor (including a RAM tensor) and launching
+        more prefetch work happen after that join. Depending on just each
+        tensor's own read incorrectly lets counterfactual replay unpack the
+        first tensor while the rest of this layer is still being read.
+        The predecessor reads already price the wait: this is a zero-time
+        barrier so it shrinks naturally when residency removes those reads.
+        """
+        if not self.trace.enabled:
+            return None
+        now = time.perf_counter()
+        return self.trace.record(
+            "layer_ready", "scheduler", now, now,
+            dependencies=self._event_dependencies(
+                self._last_compute_event,
+                *(self._last_read_event.get(key) for key in (cached or {}))),
+            metadata={"layer": idx, "sweep": self._forward_index,
+                      "prefetch_batch_join": cached is not None})
+
     def _load_layer(self, idx: int) -> None:
         self.control.checkpoint()  # pause/cancel boundary: one layer at a time
         demand_time = time.perf_counter()
@@ -1705,6 +1728,7 @@ class StreamingLosslessModel:
         prefetch_wait = 0.0
         lead_s = 0.0
         lead_layers = 0
+        ready_event = None
         if self.prefetch:
             with self._prefetch_lock:
                 ready_before_wait = idx in self._prefetch_cache
@@ -1723,6 +1747,7 @@ class StreamingLosslessModel:
                 cached, cached_read_calls, cached_extent_bytes = None, 0, 0
             else:
                 cached, cached_read_calls, cached_extent_bytes = cached_batch
+            ready_event = self._record_layer_ready(idx, cached)
             # Fire the next `io_prefetch_depth` layers' reads NOW, before
             # decoding idx's own bytes, not after this whole method
             # returns. Per-layer GPU compute is a few tens of ms -- far too
@@ -1735,7 +1760,7 @@ class StreamingLosslessModel:
                 self._start_prefetch(
                     idx + ahead, lead_layers=ahead,
                     dependencies=self._event_dependencies(
-                        self._last_compute_event))
+                        ready_event, self._last_compute_event))
 
             useful_bytes = sum(
                 int(self.manifest["tensors"][key]["comp_bytes"])
@@ -1754,6 +1779,10 @@ class StreamingLosslessModel:
                 bandwidth_bytes_s=(useful_bytes / io_seconds if io_seconds > 0 else 0.0),
                 lead_s=lead_s, lead_layers=lead_layers))
 
+        if not self.prefetch:
+            ready_event = self._record_layer_ready(idx, None)
+        prepare_dependencies = self._event_dependencies(
+            ready_event, self._last_compute_event)
         layer = self.layers[idx]
         for pname, _ in layer.named_parameters():
             key = self.adapter.layer_key(idx, pname)
@@ -1766,8 +1795,7 @@ class StreamingLosslessModel:
                 if self._ram_format_for(key) == "compressed":
                     out = self._decode_tensor(
                         key, self._ram_cache[key],
-                        dependencies=self._event_dependencies(
-                            self._last_compute_event))
+                        dependencies=prepare_dependencies)
                 else:
                     t0 = time.perf_counter()
                     out = self._ram_cache[key].to(
@@ -1780,19 +1808,18 @@ class StreamingLosslessModel:
                     event_id = self.trace.record(
                         "transfer", "cuda-default", t0, time.perf_counter(),
                         tensor_key=key,
-                        dependencies=self._event_dependencies(
-                            self._last_compute_event),
+                        dependencies=prepare_dependencies,
                         metadata={"layer": idx, "sweep": self._forward_index})
                     self._remember_layer_prepare(key, event_id)
             elif cached is not None and key in cached:
                 arrays, io_s = cached[key]
                 self.stats.io_seconds += io_s
                 self.stats.bytes_read += self.manifest["tensors"][key]["comp_bytes"]
-                out = self._decode_tensor(key, arrays)
+                out = self._decode_tensor(
+                    key, arrays, dependencies=prepare_dependencies)
             else:
                 out = self._load_tensor(
-                    key, dependencies=self._event_dependencies(
-                        self._last_compute_event))
+                    key, dependencies=prepare_dependencies)
             self._set_param(layer, pname, out)
 
         self.stats.layer_loads += 1

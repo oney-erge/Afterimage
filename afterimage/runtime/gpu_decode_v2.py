@@ -68,7 +68,16 @@ def _huffman_decode_kernel_v2(
         nbits = nbits - clen
 
 
-def decode_gpu_v2(enc: ChunkedEncoded, block_chunks: int = 32, device: str = "cuda") -> torch.Tensor:
+def prepare_decode_tables(enc: ChunkedEncoded, device: str = "cuda") -> tuple:
+    """One tensor-local codebook; never cache across unrelated tensors."""
+    assert enc.sym_lut.max() <= 255, (
+        "decoder output is uint8; symbol alphabet must fit in a byte")
+    return (torch.from_numpy(enc.sym_lut.astype(np.int32)).to(device=device),
+            torch.from_numpy(enc.len_lut.astype(np.int32)).to(device=device))
+
+
+def decode_gpu_v2(enc: ChunkedEncoded, block_chunks: int = 32, device: str = "cuda",
+                  *, tables: tuple | None = None, synchronize: bool = True) -> torch.Tensor:
     """block_chunks must be a power of 2 -- Triton's tl.arange requires it,
     and this is checked here (not left to fail deep inside the Triton
     compiler with a less legible error) since it is a real constraint
@@ -82,20 +91,17 @@ def decode_gpu_v2(enc: ChunkedEncoded, block_chunks: int = 32, device: str = "cu
     fills one warp, and larger blocks that span multiple warps measured
     worse, likely from increased register pressure or reduced occupancy.
     """
-    if block_chunks & (block_chunks - 1) != 0:
+    if block_chunks < 1 or block_chunks & (block_chunks - 1) != 0:
         raise ValueError(f"block_chunks must be a power of 2, got {block_chunks}")
 
     packed_t = torch.from_numpy(enc.packed).to(device=device, dtype=torch.uint8)
-    sym_lut_t = torch.from_numpy(enc.sym_lut.astype(np.int32)).to(device=device)
-    len_lut_t = torch.from_numpy(enc.len_lut.astype(np.int32)).to(device=device)
+    sym_lut_t, len_lut_t = tables if tables is not None else prepare_decode_tables(enc, device)
     offsets_t = torch.from_numpy(enc.chunk_offsets.astype(np.int32)).to(device=device)
     # uint8, not int32. Symbols here are float EXPONENT fields, which are
     # 8 bits wide by construction -- storing them 4 bytes each wasted 4x
     # the scratch memory. On a 778M-weight embedding that is 3.1 GB of
     # scratch instead of 778 MB, which is what actually blew a 4 GB VRAM
     # cap (the cap surfaced the waste; it was there all along).
-    assert enc.sym_lut.max() <= 255, (
-        "decoder output is uint8; symbol alphabet must fit in a byte")
     out_t = torch.zeros(enc.n_chunks * enc.chunk_size, dtype=torch.uint8, device=device)
 
     grid = (triton.cdiv(enc.n_chunks, block_chunks),)
@@ -106,5 +112,6 @@ def decode_gpu_v2(enc: ChunkedEncoded, block_chunks: int = 32, device: str = "cu
         max_bits=enc.max_bits,
         BLOCK_CHUNKS=block_chunks,
     )
-    torch.cuda.synchronize()
+    if synchronize:
+        torch.cuda.synchronize()
     return out_t[: enc.n_symbols]

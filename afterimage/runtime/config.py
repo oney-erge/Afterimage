@@ -372,6 +372,9 @@ class EngineConfig:
     storage_extent_max_bytes: int = 1 << 28
     storage_extent_max_gap_bytes: int = 0
     decode_slice_elems: int = 1 << 25
+    # Opt-in until end-to-end paired validation; exact tensor-local LUT reuse
+    # and stream-ordered decoding, with the same bounded slice size.
+    reuse_decode_tables: bool = False
     empty_cache_every: int = 0
     progress: bool = False
     ram_tier_format: str = "decoded"

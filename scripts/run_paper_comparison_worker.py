@@ -78,6 +78,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 import torch
 
 from afterimage.bench.prompt_suite import prompt_cases
+from afterimage.bench.memory import MemoryProbe
 from scripts.run_bounded_suite import (
     METHODS,
     load_tokenizer,
@@ -485,25 +486,26 @@ def run_cell(config: dict) -> dict:
     for item in rendered:
         item["tokenizer"] = tokenizer
 
+    checkpoint_cb = rows_checkpoint(config)
     draft_model = None
     result: dict
     with ThermalSampler() as sampler:
         try:
             if method.kind == "airllm":
                 rows, metadata = run_airllm(
-                    method, rendered, n_tokens, deadline, None,
+                    method, rendered, n_tokens, deadline, checkpoint_cb,
                     repeats=1, repeat_offset=block, warmup_tokens=warmup_tokens)
             elif method.kind == "accelerate":
                 rows, metadata = run_accelerate(
-                    method, rendered, n_tokens, deadline, None,
+                    method, rendered, n_tokens, deadline, checkpoint_cb,
                     repeats=1, repeat_offset=block, warmup_tokens=warmup_tokens)
             elif method.kind == "dfloat11":
                 rows, metadata = run_dfloat11(
-                    method, rendered, n_tokens, deadline, None,
+                    method, rendered, n_tokens, deadline, checkpoint_cb,
                     repeats=1, repeat_offset=block, warmup_tokens=warmup_tokens)
             elif method.kind == "deepspeed":
                 rows, metadata = run_deepspeed_zero_inference(
-                    method, rendered, n_tokens, deadline, None,
+                    method, rendered, n_tokens, deadline, checkpoint_cb,
                     repeats=1, repeat_offset=block, warmup_tokens=warmup_tokens)
             else:
                 # Keyed on the method's own draft_mode, not a literal
@@ -521,7 +523,7 @@ def run_cell(config: dict) -> dict:
                     draft_model=draft_model,
                     burn_in_rendered=rendered[:1] if warmup_tokens > 0 else None,
                     burn_in_tokens=warmup_tokens,
-                    rows_checkpoint=None, repeats=1, repeat_offset=block)
+                    rows_checkpoint=checkpoint_cb, repeats=1, repeat_offset=block)
             result = {"rows": rows, "metadata": metadata,
                       "peak_host_rss_bytes": _peak_rss_bytes(),
                       "error": None, "traceback": None}
@@ -563,6 +565,58 @@ def run_cell(config: dict) -> dict:
     return result
 
 
+def rows_checkpoint(config: dict):
+    """Retain finished prompts on timeout, without declaring a cell valid."""
+    if not config.get("checkpoint_output"):
+        return None
+
+    def save(rows):
+        path = pathlib.Path(config["checkpoint_output"])
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(path.suffix + ".tmp")
+        temporary.write_text(json.dumps({
+            "status": "partial_unvalidated", "rows": rows,
+            "whole_cell_memory_finalized": False,
+            "method_id": config["method_id"], "block": config["block"],
+        }, indent=2), encoding="utf-8")
+        temporary.replace(path)
+
+    return save
+
+
+def run_measured_cell(config: dict) -> dict:
+    """Sample before model creation, including external resident weights.
+
+    This device delta assumes stable unrelated GPU use; it is a measurement,
+    not a hard memory enforcement mechanism. GB is decimal, SMI uses MiB.
+    """
+    with MemoryProbe(interval_s=0.5) as probe:
+        output = run_cell(config)
+    report = probe.report()
+    known = (report.smi_baseline_used_mb is not None
+             and report.smi_peak_used_mb is not None and report.n_samples >= 2)
+    peak = report.smi_delta_gb if known else None
+    output.setdefault("metadata", {})["whole_cell_memory"] = {
+        "scope": "before model initialization through cleanup",
+        "source": "sampled device delta; assumes stable unrelated GPU use",
+        "baseline_mib": report.smi_baseline_used_mb,
+        "peak_mib": report.smi_peak_used_mb,
+        "samples": report.n_samples,
+        "peak_decimal_gb": peak,
+        "host_rss_peak_bytes": report.host_rss_peak_bytes,
+    }
+    for row in output.get("rows", []):
+        row["generation_only_peak_vram_gb"] = row.get("peak_vram_gb")
+        row["generation_only_peak_vram_source"] = row.get("peak_vram_source")
+        row["peak_vram_gb"] = peak
+        row["peak_vram_source"] = "whole_cell_smi_delta_decimal_gb"
+    if not known and output.get("error") is None:
+        output["error"] = "MemoryIntegrityError: whole-cell GPU memory unavailable"
+        output["metadata"]["unusable_rows"] = output.pop("rows", [])
+        output["rows"] = []
+    return output
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -571,7 +625,8 @@ def main() -> int:
     args = parser.parse_args()
 
     config = json.loads(pathlib.Path(args.config).read_text(encoding="utf-8"))
-    output = run_cell(config)
+    config.setdefault("checkpoint_output", args.out + ".partial")
+    output = run_measured_cell(config)
     pathlib.Path(args.out).write_text(json.dumps(output, indent=2), encoding="utf-8")
     return 0 if output["error"] is None else 1
 

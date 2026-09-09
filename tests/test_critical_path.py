@@ -248,3 +248,29 @@ def test_prefetch_read_depends_on_the_scheduler_launch_event():
     assert launch.dependencies == ("compute-parent",)
     assert observed == [(0, (launch.id,))]
     assert engine._prefetch_cache == {}
+
+
+def test_engine_layer_ready_depends_on_entire_batch_not_only_first_tensor():
+    from afterimage.runtime.streaming_engine import StreamingLosslessModel
+
+    engine = StreamingLosslessModel.__new__(StreamingLosslessModel)
+    engine.trace = TraceRecorder()
+    engine._forward_index = 1
+    engine._last_compute_event = engine.trace.record(
+        "forward_start", "scheduler", 0, 0)
+    read_a = engine.trace.record("read", "disk", 0, 1, tensor_key="a")
+    read_b = engine.trace.record("read", "disk", 1, 10, tensor_key="b")
+    engine._last_read_event = {"a": read_a, "b": read_b}
+
+    ready_id = engine._record_layer_ready(0, {"a": None, "b": None})
+    ready = engine.trace.events[-1]
+    assert ready.id == ready_id
+    assert ready.kind == "layer_ready"
+    assert {read_a, read_b, engine._last_compute_event}.issubset(ready.dependencies)
+    assert ready.duration_s == 0
+    assert ready.metadata["prefetch_batch_join"] is True
+
+    engine.trace.enabled = False
+    count = len(engine.trace.events)
+    assert engine._record_layer_ready(0, {"a": None}) is None
+    assert len(engine.trace.events) == count

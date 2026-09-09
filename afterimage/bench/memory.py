@@ -44,7 +44,7 @@ def nvidia_smi_used_mb() -> int | None:
             capture_output=True, text=True, timeout=10, check=True,
         )
         return int(out.stdout.strip().splitlines()[0])
-    except (subprocess.SubprocessError, ValueError, IndexError):
+    except (OSError, subprocess.SubprocessError, ValueError, IndexError):
         return None
 
 
@@ -116,7 +116,10 @@ class MemoryReport:
         configs."""
         if self.smi_peak_used_mb is None or self.smi_baseline_used_mb is None:
             return None
-        return max(0, self.smi_peak_used_mb - self.smi_baseline_used_mb) / 1000.0
+        # nvidia-smi reports MiB, while engine budgets and torch's GB
+        # properties use decimal bytes. Dividing MiB by 1000 underreports
+        # whole-process memory by about 4.6 percent.
+        return max(0, self.smi_peak_used_mb - self.smi_baseline_used_mb) * (1 << 20) / 1e9
 
     @property
     def host_rss_peak_gb(self) -> float | None:
