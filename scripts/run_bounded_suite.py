@@ -519,7 +519,7 @@ def gpu_thermal_snapshot() -> dict:
     / run_airllm) -- a laptop GPU throttles under sustained load, and a
     manifest-level snapshot alone cannot show drift across a multi-hour
     campaign."""
-    raw = command_output([
+    query = [
         "nvidia-smi",
         "--query-gpu=clocks.sm,clocks.mem,temperature.gpu,power.draw,"
         "enforced.power.limit,clocks_throttle_reasons.active,"
@@ -527,7 +527,16 @@ def gpu_thermal_snapshot() -> dict:
         "clocks_event_reasons_counters.sw_power_cap,"
         "clocks_event_reasons_counters.hw_thermal_slowdown,"
         "clocks_event_reasons_counters.hw_power_brake_slowdown",
-        "--format=csv,noheader,nounits"])
+        "--format=csv,noheader,nounits"]
+    # Retry missing driver telemetry outside timed inference. Keep the gate
+    # fail-closed if every query fails; never substitute a cached/clean value.
+    raw = None
+    for attempt in range(4):
+        raw = command_output(query)
+        if raw:
+            break
+        if attempt < 3:
+            time.sleep(0.5 * (attempt + 1))
     if not raw:
         return {}
     parts = [p.strip() for p in raw.strip().split(",")]

@@ -22,7 +22,7 @@ sys.path.insert(0, str(REPO))
 from afterimage.bench.memory import MemoryProbe  # noqa: E402
 from afterimage.bench.prompt_suite import prompt_cases  # noqa: E402
 import scripts.run_bounded_suite as rbs  # noqa: E402
-from scripts.run_paper_comparison_worker import ThermalSampler  # noqa: E402
+from scripts.run_paper_comparison_worker import ThermalSampler, rows_checkpoint  # noqa: E402
 
 
 def _write_atomic(path: pathlib.Path, payload: dict) -> None:
@@ -80,10 +80,14 @@ def run(config: dict) -> dict:
                 method = rbs.Method(
                     config["method_id"], config["method_id"], "afterimage",
                     config["overrides"], "reference_execution_equivalent", 60.0)
+                warmup_tokens = int(config.get("warmup_tokens", 0))
                 rows, metadata = rbs.run_afterimage(
                     method, rendered, int(config["max_new_tokens"]), deadline,
+                    burn_in_rendered=rendered[:1] if warmup_tokens > 0 else None,
+                    burn_in_tokens=warmup_tokens,
                     critical_profile=None, repeats=1,
-                    repeat_offset=int(config["block"]), rows_checkpoint=None)
+                    repeat_offset=int(config["block"]),
+                    rows_checkpoint=rows_checkpoint(config))
             whole_report = whole_probe.report()
         thermal = thermal_sampler.summary()
 
@@ -94,10 +98,10 @@ def run(config: dict) -> dict:
             row["peak_vram_gb"] = peak_vram_gb
             row["peak_vram_source"] = peak_source
             row["whole_cell_smi_baseline_vram_gb"] = (
-                whole_report.smi_baseline_used_mb / 1000.0
+                whole_report.smi_baseline_used_mb * (1 << 20) / 1e9
                 if whole_report.smi_baseline_used_mb is not None else None)
             row["whole_cell_smi_peak_vram_gb"] = (
-                whole_report.smi_peak_used_mb / 1000.0
+                whole_report.smi_peak_used_mb * (1 << 20) / 1e9
                 if whole_report.smi_peak_used_mb is not None else None)
             row["whole_cell_torch_peak_vram_gb"] = whole_report.torch_peak_vram_gb
     except Exception as exc:
@@ -131,6 +135,7 @@ def main() -> int:
     args = parser.parse_args()
 
     config = json.loads(pathlib.Path(args.config).read_text(encoding="utf-8"))
+    config.setdefault("checkpoint_output", args.out + ".partial")
     result = run(config)
     _write_atomic(pathlib.Path(args.out), result)
     return 1 if result["error"] else 0

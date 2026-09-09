@@ -13,6 +13,7 @@ The search is intentionally offline.  The runtime consumes only the frozen
 from __future__ import annotations
 
 import dataclasses
+import math
 import random
 import statistics
 from collections import Counter, defaultdict
@@ -85,7 +86,9 @@ class H65SearchReport:
     maximum_disk_call_increase: float | None
     maximum_layer_call_increase: float | None
     compressed_ram_enabled: bool
-    schema_version: int = 3
+    trace_contract: str = "whole_layer_prefetch_join_v2"
+    ram_prepare_seconds: dict[str, float] = dataclasses.field(default_factory=dict)
+    schema_version: int = 5
 
 
 @dataclasses.dataclass(frozen=True)
@@ -124,6 +127,43 @@ def _validate_causal_trace(events: list[TraceEvent]) -> None:
         raise ValueError(
             "H6.5 background reads lack direct scheduler-launch dependencies: %s"
             % ", ".join(missing_launch[:8]))
+    # A launch edge alone is insufficient. The runtime joins the entire
+    # layer's prefetch batch before ANY of its tensors can be prepared.
+    # Reject older traces rather than silently optimizing an impossible
+    # tensor-at-a-time producer/consumer schedule.
+    read_batches: dict[tuple, set[str]] = defaultdict(set)
+    ready_batches = {}
+    for event in prefetched_reads:
+        batch = (event.metadata.get("sweep"), event.metadata.get("layer"))
+        read_batches[batch].add(event.id)
+    for event in events:
+        if event.kind == "layer_ready":
+            batch = (event.metadata.get("sweep"), event.metadata.get("layer"))
+            if batch in ready_batches:
+                raise ValueError("duplicate whole-layer ready barrier: %r" % (batch,))
+            ready_batches[batch] = event
+    for batch, reads in read_batches.items():
+        ready = ready_batches.get(batch)
+        if ready is None or not reads.issubset(ready.dependencies):
+            raise ValueError(
+                "H6.5 requires whole-layer prefetch join barriers; batch %r "
+                "is incomplete. Recollect calibration traces with the fixed engine."
+                % (batch,))
+    by_id = {event.id: event for event in events}
+    for event in events:
+        if event.kind in ("decode", "transfer", "copy") and event.tensor_key:
+            batch = (event.metadata.get("sweep"), _layer_index(event.tensor_key))
+            ready = ready_batches.get(batch)
+            if batch in read_batches and ready.id not in event.dependencies:
+                raise ValueError(
+                    "H6.5 preparation bypasses whole-layer ready barrier: %s"
+                    % event.id)
+        if event.kind == "prefetch_launch":
+            parent_kinds = {by_id[parent].kind for parent in event.dependencies
+                            if parent in by_id}
+            if not parent_kinds.intersection(("forward_start", "layer_ready")):
+                raise ValueError(
+                    "H6.5 prefetch launch bypasses layer admission: %s" % event.id)
     uncaused = [
         event.id for event in events
         if event.kind in PREPARE_KINDS | {"compute", "forward_end"}
@@ -137,6 +177,7 @@ def _validate_causal_trace(events: list[TraceEvent]) -> None:
 def _option_map(manifest: dict, traces: list[list[TraceEvent]],
                 h2d_gbps: float, *,
                 enable_compressed_ram: bool = True,
+                ram_prepare_seconds: dict[str, float] | None = None,
                 ) -> dict[str, dict[str, RepresentationOption]]:
     if h2d_gbps <= 0:
         raise ValueError("h2d_gbps must be positive")
@@ -168,6 +209,9 @@ def _option_map(manifest: dict, traces: list[list[TraceEvent]],
             (measured["transfer"] + measured["copy"]) / count,
             original / (h2d_gbps * 1e9),
         )
+        # A decoded-RAM allocation/copy profile does not describe compressed
+        # bytes uploaded for decoding. Keep those representation costs separate.
+        ram_prepare_s = max(transfer_s, (ram_prepare_seconds or {}).get(key, 0.0))
         disk = _disk_name(meta)
         options = {
             disk: RepresentationOption(
@@ -175,7 +219,7 @@ def _option_map(manifest: dict, traces: list[list[TraceEvent]],
                 prepare_s=read_s + decode_s + transfer_s),
             "decoded_ram": RepresentationOption(
                 key, "decoded_ram", ram_bytes=original,
-                storage_bytes=storage, prepare_s=transfer_s),
+                storage_bytes=storage, prepare_s=ram_prepare_s),
             "decoded_vram": RepresentationOption(
                 key, "decoded_vram", vram_bytes=original,
                 storage_bytes=storage, prepare_s=0.0),
@@ -339,11 +383,13 @@ def _guard_failures(
 class _ReplayScorer:
     def __init__(self, manifest: dict, traces: list[list[TraceEvent]], *,
                  h2d_gbps: float, fragmentation_penalty_weight: float,
-                 risk_penalty_weight: float = 0.0):
+                 risk_penalty_weight: float = 0.0,
+                 ram_prepare_seconds: dict[str, float] | None = None):
         self.manifest = manifest
         self.traces = traces
         self.h2d_gbps = h2d_gbps
         self.risk_penalty_weight = risk_penalty_weight
+        self.ram_prepare_seconds = _validate_ram_prepare_profile(manifest, ram_prepare_seconds)
         self.topologies = [compile_topology(events) for events in traces]
         self.by_tensor = []
         read_call_samples = []
@@ -412,6 +458,12 @@ class _ReplayScorer:
                     overrides.update((event.id, 0.0) for event in events.get(kind, ()))
                 floor = int(self.manifest["tensors"][key]["orig_bytes"]) / (
                     self.h2d_gbps * 1e9)
+                # A bandwidth microbenchmark is only a floor: a real RAM
+                # preparation also allocates destination storage under the
+                # current live/reserved working set. Price an independently
+                # measured allocation+copy cost when supplied, exactly once
+                # per tensor use, rather than adding it to the floor.
+                floor = max(floor, self.ram_prepare_seconds.get(key, 0.0))
                 anchors = events.get("transfer", ()) or events.get("copy", ())
                 if not anchors:
                     anchors = events.get("decode", ())
@@ -457,6 +509,18 @@ def _choice_counts(choices: dict[str, RepresentationOption]) -> dict[str, int]:
     return dict(sorted(Counter(option.name for option in choices.values()).items()))
 
 
+def _validate_ram_prepare_profile(manifest: dict, profile: dict | None) -> dict[str, float]:
+    result = {}
+    for key, value in (profile or {}).items():
+        if key not in manifest["tensors"]:
+            raise ValueError("unknown tensor in RAM preparation profile: %s" % key)
+        value = float(value)
+        if not math.isfinite(value) or value < 0:
+            raise ValueError("RAM preparation seconds must be finite and non-negative")
+        result[key] = value
+    return result
+
+
 def optimize_h65_plan(
         manifest: dict, traces: list[list[TraceEvent]], *,
         vram_budget_gb: float, ram_budget_gb: float, h2d_gbps: float,
@@ -470,6 +534,7 @@ def optimize_h65_plan(
         validation_trace_count: int = 1,
         risk_penalty_weight: float = 1.0,
         h2d_memory_mode: str = "measured_unspecified",
+        ram_prepare_seconds: dict[str, float] | None = None,
         require_causal_trace: bool = True,
         require_live_validation: bool = True,
         live_control_seconds: tuple[float, ...] = (),
@@ -497,7 +562,14 @@ def optimize_h65_plan(
     measurement, so imposing the live threshold on both would create false
     negatives.  The defaults require three traces rather than allowing a
     one-off SSD timing excursion to become a frozen placement.
+
+    Optional ``ram_prepare_seconds`` values are completed allocation+copy
+    timings for individual decoded-RAM tensors, collected under a representative
+    live memory footprint and allocator/cache policy. They replace (not add to)
+    the bandwidth floor. Keep profile provenance/budget with the run and freeze
+    it before independent evaluation; a single observation is diagnostic only.
     """
+    ram_prepare_seconds = _validate_ram_prepare_profile(manifest, ram_prepare_seconds)
     if not traces or any(not trace for trace in traces):
         raise ValueError("at least one non-empty raw calibration trace is required")
     if require_causal_trace:
@@ -562,7 +634,8 @@ def optimize_h65_plan(
         raise ValueError("infeasible H6.5 control: " + control_tier.reason)
     options = _option_map(
         manifest, training_traces, h2d_gbps,
-        enable_compressed_ram=enable_compressed_ram)
+        enable_compressed_ram=enable_compressed_ram,
+        ram_prepare_seconds=ram_prepare_seconds)
     control = _choices_from_tier_plan(manifest, control_tier, options)
     disk = {
         key: option_set["row_gather" if manifest["tensors"][key].get("row_gather")
@@ -572,7 +645,8 @@ def optimize_h65_plan(
     scorer = _ReplayScorer(
         manifest, training_traces, h2d_gbps=h2d_gbps,
         fragmentation_penalty_weight=fragmentation_penalty_weight,
-        risk_penalty_weight=risk_penalty_weight)
+        risk_penalty_weight=risk_penalty_weight,
+        ram_prepare_seconds=ram_prepare_seconds)
     if scorer.coverage < minimum_coverage:
         missing = sorted(
             key for key, meta in manifest["tensors"].items()
@@ -585,7 +659,7 @@ def optimize_h65_plan(
         _ReplayScorer(
             manifest, validation_traces, h2d_gbps=h2d_gbps,
             fragmentation_penalty_weight=fragmentation_penalty_weight,
-            risk_penalty_weight=0.0)
+            risk_penalty_weight=0.0, ram_prepare_seconds=ram_prepare_seconds)
         if validation_traces else None)
     if validation_scorer is not None and validation_scorer.coverage < minimum_coverage:
         raise ValueError(
@@ -904,5 +978,8 @@ def optimize_h65_plan(
         maximum_disk_call_increase=maximum_disk_call_increase,
         maximum_layer_call_increase=maximum_layer_call_increase,
         compressed_ram_enabled=enable_compressed_ram,
+        ram_prepare_seconds=dict(ram_prepare_seconds),
+        trace_contract=("whole_layer_prefetch_join_v2" if require_causal_trace
+                        else "unchecked_diagnostic_ablation"),
     )
     return H65PlanningResult(plan, candidate_plan, report)

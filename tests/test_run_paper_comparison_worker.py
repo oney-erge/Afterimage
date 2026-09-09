@@ -14,6 +14,7 @@ import pytest
 
 from scripts import run_paper_comparison_worker as worker
 from scripts.run_bounded_suite import METHODS
+from afterimage.bench.memory import MemoryReport
 
 
 class _FakeCase:
@@ -607,3 +608,45 @@ def test_main_writes_the_result_json_and_exits_nonzero_on_error(tmp_path, monkey
     assert out_path.exists()
     written = json.loads(out_path.read_text(encoding="utf-8"))
     assert written["error"] == "RuntimeError('nope')"
+
+
+@pytest.mark.parametrize("observable", [True, False])
+def test_whole_cell_memory_includes_residency_and_rejects_missing_samples(monkeypatch, observable):
+    class FakeProbe:
+        def __init__(self, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def report(self):
+            return MemoryReport(123, 3072 if observable else None, 1024, 456, 4)
+
+    monkeypatch.setattr(worker, "MemoryProbe", FakeProbe)
+    monkeypatch.setattr(worker, "run_cell", lambda config: {
+        "rows": [{"peak_vram_gb": 0.1, "peak_vram_source": "generation_only"}],
+        "metadata": {}, "error": None,
+    })
+    result = worker.run_measured_cell({})
+    if observable:
+        assert result["error"] is None
+        assert result["rows"][0]["peak_vram_gb"] == pytest.approx(2 * (1 << 30) / 1e9)
+        assert result["rows"][0]["generation_only_peak_vram_gb"] == 0.1
+    else:
+        assert result["error"].startswith("MemoryIntegrityError")
+        assert result["rows"] == []
+        assert len(result["metadata"]["unusable_rows"]) == 1
+
+
+def test_prompt_checkpoint_is_explicitly_partial(tmp_path):
+    path = tmp_path / "cell.json.partial"
+    callback = worker.rows_checkpoint({"checkpoint_output": str(path),
+                                       "method_id": "traffic", "block": 0})
+    callback([{"case_id": "a"}])
+    result = json.loads(path.read_text())
+    assert result["status"] == "partial_unvalidated"
+    assert result["whole_cell_memory_finalized"] is False
+    assert result["rows"] == [{"case_id": "a"}]
