@@ -693,7 +693,14 @@ def main() -> int:
                 vram_safety_margin_gb=args.vram_safety_margin_gb,
                 h2d_memory_mode=str(h2d.get("memory_mode") or "unknown"),
                 enable_compressed_ram=compressed,
-                ram_prepare_seconds=ram_prepare_seconds)
+                ram_prepare_seconds=ram_prepare_seconds,
+                # h65-full optimises over a superset of placement-only's
+                # options, so placement's winner is always feasible for it.
+                # Seeding it there stops the full search returning a worse
+                # objective than the smaller problem it contains.
+                extra_seed_choices=(
+                    planned["h65-placement-only"]["planning"].candidate_plan.choices
+                    if compressed and "h65-placement-only" in planned else None))
             candidate_path = root / (method + "-candidate.json")
             deployment_path = root / (method + "-deployment.json")
             planning.candidate_plan.save(candidate_path)
