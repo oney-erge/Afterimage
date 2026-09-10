@@ -111,10 +111,11 @@ class EngineConfig:
         VRAM-resident is read from disk every token).
 
     vram_cap_gb
-        Hard ceiling passed to torch.cuda.set_per_process_memory_fraction --
-        a safety net independent of vram_budget_gb's residency PLANNING.
-        Planning decides what SHOULD live where; this is what stops the
-        allocator from silently creeping past it. None disables the cap.
+        PyTorch caching-allocator ceiling passed to
+        torch.cuda.set_per_process_memory_fraction -- a safety net independent
+        of vram_budget_gb's residency PLANNING.  It does not include CUDA
+        context, driver, or non-PyTorch allocations, so whole-process memory
+        reported by NVIDIA-SMI can be higher.  None disables the cap.
 
     vram_safety_margin_gb
         Additional non-residency reserve inside vram_budget_gb for allocator

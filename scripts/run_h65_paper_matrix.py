@@ -207,7 +207,7 @@ def common_overrides(args: argparse.Namespace) -> dict:
         "reuse_decode_tables": getattr(args, "reuse_decode_tables", False),
         "vram_budget_gb": args.vram_gb,
         "ram_budget_gb": args.ram_gb,
-        "vram_cap_gb": args.vram_gb,
+        "vram_cap_gb": allocator_cap_gb(args),
         "vram_safety_margin_gb": args.vram_safety_margin_gb,
         "decode_slice_elems": args.decode_slice_elems,
         "io_prefetch_depth": 2,
@@ -223,7 +223,12 @@ def worker_config(*, args: argparse.Namespace, method_id: str,
         "model": args.model,
         "store": str(pathlib.Path(args.store).resolve()),
         "block": block,
-        "budget": {"vram_gb": args.vram_gb, "ram_gb": args.ram_gb},
+        "budget": {
+            "vram_gb": args.vram_gb,
+            "vram_cap_gb": allocator_cap_gb(args),
+            "physical_vram_ceiling_gb": physical_vram_ceiling_gb(args),
+            "ram_gb": args.ram_gb,
+        },
         "method_id": method_id,
         "overrides": overrides,
         "case_split": split,
@@ -274,12 +279,24 @@ def plan_budget_ok(plan) -> bool:
         and plan.ram_bytes <= plan.ram_budget_bytes)
 
 
-def whole_cell_budget_ok(rows: list[dict], budget_gb: float) -> bool:
+def allocator_cap_gb(args: argparse.Namespace) -> float:
+    """Return the PyTorch allocator cap, preserving the historical default."""
+    value = getattr(args, "vram_cap_gb", None)
+    return float(args.vram_gb if value is None else value)
+
+
+def physical_vram_ceiling_gb(args: argparse.Namespace) -> float:
+    """Return the separately measured whole-process admission ceiling."""
+    value = getattr(args, "physical_vram_ceiling_gb", None)
+    return allocator_cap_gb(args) if value is None else float(value)
+
+
+def whole_cell_budget_ok(rows: list[dict], ceiling_gb: float) -> bool:
     """A feasible logical plan is not proof that its physical runtime fits."""
     return bool(rows and all(
         isinstance(row.get("peak_vram_gb"), (int, float))
         and math.isfinite(row["peak_vram_gb"])
-        and 0 <= row["peak_vram_gb"] <= budget_gb
+        and 0 <= row["peak_vram_gb"] <= ceiling_gb
         and row.get("peak_vram_source") in (
             "whole_cell_nvidia_smi_delta", "whole_cell_smi_delta_decimal_gb")
         for row in rows))
@@ -426,6 +443,13 @@ def main() -> int:
     parser.add_argument("--manifest")
     parser.add_argument("--h2d", required=True)
     parser.add_argument("--vram-gb", type=float, default=8.0)
+    parser.add_argument(
+        "--vram-cap-gb", type=float,
+        help="PyTorch allocator cap; defaults to --vram-gb for compatibility")
+    parser.add_argument(
+        "--physical-vram-ceiling-gb", type=float,
+        help="whole-process NVIDIA-SMI admission ceiling; defaults to the "
+             "allocator cap")
     parser.add_argument("--ram-gb", type=float, default=16.0)
     parser.add_argument("--decode-slice-elems", type=int, default=1 << 22)
     parser.add_argument("--vram-safety-margin-gb", type=float, default=0.5)
@@ -472,10 +496,17 @@ def main() -> int:
         parser.error("--blocks must be a positive multiple of %d" % len(METHODS))
     if confirmatory_protocol is not None and args.blocks < 8:
         parser.error("a confirmatory protocol requires at least eight blocks")
+    resolved_allocator_cap = allocator_cap_gb(args)
+    resolved_physical_ceiling = physical_vram_ceiling_gb(args)
     if (args.max_new_tokens < 1 or args.vram_gb <= 0 or args.ram_gb < 0
+            or resolved_allocator_cap <= 0 or resolved_physical_ceiling <= 0
+            or resolved_allocator_cap < args.vram_gb
+            or resolved_physical_ceiling < resolved_allocator_cap
             or args.decode_slice_elems < 1 or args.search_iterations < 0
             or args.cell_timeout_minutes <= 0 or args.warmup_tokens < 0):
-        parser.error("token count, budgets, search, and timeout are invalid")
+        parser.error(
+            "token count, budgets, memory ceilings, search, and timeout are invalid; "
+            "require logical VRAM <= allocator cap <= physical ceiling")
 
     store = pathlib.Path(args.store).resolve()
     ram_prepare_seconds = {}
@@ -541,6 +572,8 @@ def main() -> int:
         "reuse_decode_tables": args.reuse_decode_tables,
         "warmup_tokens": args.warmup_tokens,
         "vram_budget_gb": args.vram_gb,
+        "vram_allocator_cap_gb": resolved_allocator_cap,
+        "physical_vram_ceiling_gb": resolved_physical_ceiling,
         "ram_budget_gb": args.ram_gb,
         "decode_slice_elems": args.decode_slice_elems,
         "vram_safety_margin_gb": args.vram_safety_margin_gb,
@@ -796,7 +829,7 @@ def main() -> int:
                 and whole_cell_budget_ok([
                     row for cell in evaluation_cells
                     if cell.get("method_id") in ("traffic-placement", method)
-                    for row in cell.get("rows", [])], args.vram_gb))
+                    for row in cell.get("rows", [])], resolved_physical_ceiling))
             final = optimize_h65_plan(
                 manifest, traces,
                 vram_budget_gb=args.vram_gb, ram_budget_gb=args.ram_gb,
@@ -862,7 +895,8 @@ def main() -> int:
             "thermal_gate_passed": thermal_clean,
             "whole_cell_vram_measured": bool(rows and all(
                 row.get("peak_vram_gb") is not None for row in rows)),
-            "measured_whole_cell_within_budget": whole_cell_budget_ok(rows, args.vram_gb),
+            "measured_whole_cell_within_physical_ceiling": whole_cell_budget_ok(
+                rows, resolved_physical_ceiling),
             "placement_candidate_within_budget": plan_budget_ok(placement_plan),
             "full_candidate_within_budget": plan_budget_ok(full_plan),
             "placement_candidate_diverged_from_traffic": bool(

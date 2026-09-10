@@ -443,13 +443,13 @@ class StreamingLosslessModel:
         setting ram_budget_gb adds a pinned-host-RAM tier that decoder-layer
         weights can land in instead of disk.
 
-        vram_cap_gb (on the config) is a hard ceiling on this process's GPU
-        memory, independent of the residency PLANNING above: PyTorch's
-        caching allocator never returns freed blocks to the driver, so
-        observed VRAM climbs to the high-water mark and keeps growing until
-        it looks like the model barely fits. Capping makes the allocator
-        reuse its own cache instead of requesting more, and turns a silent
-        creep toward OOM into an immediate, legible error.
+        vram_cap_gb (on the config) is a hard ceiling on PyTorch caching-
+        allocator memory, independent of the residency PLANNING above.
+        PyTorch's caching allocator never returns freed blocks to the driver,
+        so capping makes it reuse its own cache and turns allocator creep into
+        an immediate, legible error.  CUDA context, driver, and non-PyTorch
+        allocations are outside that ceiling; a whole-process NVIDIA-SMI
+        measurement can therefore be higher and must be reported separately.
 
         control: an optional runtime.control.JobControl for pause/resume/
         cancel and structured progress -- what the FastAPI server's job
