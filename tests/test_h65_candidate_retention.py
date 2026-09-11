@@ -140,3 +140,50 @@ def test_retention_does_not_bypass_live_validation():
     assert 'awaits 2 paired live validation blocks' in result.report.fallback_reason
     # Reporting additions remain serializable for old matrix consumers.
     assert dataclasses.asdict(result.report)['seeded_with_external_plan'] is False
+
+
+def test_output_head_seed_is_pinned_before_both_fill_orders():
+    disk = {
+        'lm_head.weight': h65.RepresentationOption(
+            'lm_head.weight', 'compressed_disk'),
+        'layer': h65.RepresentationOption('layer', 'compressed_disk'),
+    }
+    head = h65.RepresentationOption(
+        'lm_head.weight', 'decoded_vram', vram_bytes=10)
+    layer = h65.RepresentationOption('layer', 'decoded_vram', vram_bytes=10)
+    options = {
+        'lm_head.weight': {
+            'compressed_disk': disk['lm_head.weight'],
+            'decoded_vram': head,
+        },
+        'layer': {'compressed_disk': disk['layer'], 'decoded_vram': layer},
+    }
+    seen = []
+
+    def fill(seed, order):
+        seen.append((seed['lm_head.weight'].name, order))
+        return dict(seed)
+
+    def feasible(choices):
+        return sum(option.vram_bytes for option in choices.values()) <= 10
+
+    seeds = h65._critical_endpoint_seeds(
+        options, {'lm_head.weight': disk['lm_head.weight'], 'layer': layer},
+        disk, lambda key, name: 0, fill, feasible)
+    assert seen == [('decoded_vram', 'vram-first'),
+                    ('decoded_vram', 'ram-first')]
+    assert all(seed['lm_head.weight'].name == 'decoded_vram' for seed in seeds)
+    assert all(seed['layer'].name == 'compressed_disk' for seed in seeds)
+
+
+def test_output_head_seed_is_omitted_when_it_cannot_fit():
+    disk = {'lm_head.weight': h65.RepresentationOption(
+        'lm_head.weight', 'compressed_disk')}
+    options = {'lm_head.weight': {
+        'compressed_disk': disk['lm_head.weight'],
+        'decoded_vram': h65.RepresentationOption(
+            'lm_head.weight', 'decoded_vram', vram_bytes=10),
+    }}
+    assert h65._critical_endpoint_seeds(
+        options, disk, disk, lambda key, name: 0,
+        lambda seed, order: seed, lambda choices: False) == []

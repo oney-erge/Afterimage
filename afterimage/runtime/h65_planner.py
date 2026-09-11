@@ -530,6 +530,39 @@ def _validate_ram_prepare_profile(manifest: dict, profile: dict | None) -> dict[
     return result
 
 
+def _critical_endpoint_seeds(options, control, disk, density, fill, feasible):
+    """Seed schedule-critical output tensors before density-based filling.
+
+    A large output head can have mediocre isolated benefit per byte while
+    still determining the end-to-end critical path.  Starting exclusively
+    from traffic and density-greedy fills can therefore leave the stochastic
+    search trapped in a near-traffic basin.  Pin the exact output head first,
+    then let both ordinary fill orders spend the remaining budgets.  The
+    resulting complete plans still pass the same feasibility, locality,
+    training, held-out, and live gates as every other seed.
+    """
+    key = "lm_head.weight"
+    option = options.get(key, {}).get("decoded_vram")
+    if option is None:
+        return []
+    # Promote from the strong traffic incumbent, not from all-disk. A large
+    # head needs several small residents to move together; the ordinary local
+    # search and one-for-one swaps cannot cross that temporary infeasibility.
+    seed = dict(control)
+    seed[key] = option
+    residents = sorted(
+        (resident for resident, choice in control.items()
+         if resident != key and choice.name == "decoded_vram"),
+        key=lambda resident: density(resident, "decoded_vram"))
+    for resident in residents:
+        if feasible(seed):
+            break
+        seed[resident] = disk[resident]
+    if not feasible(seed):
+        return []
+    return [dict(seed), fill(seed, "vram-first"), fill(seed, "ram-first")]
+
+
 def optimize_h65_plan(
         manifest: dict, traces: list[list[TraceEvent]], *,
         vram_budget_gb: float, ram_budget_gb: float, h2d_gbps: float,
@@ -792,6 +825,13 @@ def optimize_h65_plan(
         extra_seed_choices = placement.candidate_plan.choices
 
     seeds = [dict(control), fill(disk, "vram-first"), fill(disk, "ram-first")]
+    # Density-first initialization missed the GPU-head basin on Llama-70B:
+    # a previously validated head-resident plan was a substantially better
+    # starting point, even though the same local search could not reach it
+    # from traffic. Generate that schedule-aware seed from the manifest rather
+    # than requiring a historical/external plan.
+    seeds.extend(_critical_endpoint_seeds(
+        options, control, disk, density, fill, feasible))
     # A caller that has already solved a strictly smaller option space (the
     # placement-only search, whose options are a subset of the full search's)
     # can hand that winner in here. Without it the full search starts only
