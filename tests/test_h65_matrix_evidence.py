@@ -2,7 +2,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from scripts.run_h65_paper_matrix import representation_ablation_status, whole_cell_budget_ok
+from scripts.run_h65_paper_matrix import (
+    allocator_cap_gb,
+    physical_vram_ceiling_gb,
+    representation_ablation_status,
+    whole_cell_budget_ok,
+)
 
 
 @pytest.mark.parametrize("peak,source,expected", [
@@ -36,14 +41,38 @@ def test_identical_choices_do_not_identify_full_representation_gain():
 def test_worker_and_calibration_share_explicit_execution_settings():
     from scripts.run_h65_paper_matrix import common_overrides, worker_config
 
-    args = SimpleNamespace(vram_gb=26, ram_gb=16, vram_safety_margin_gb=4,
+    args = SimpleNamespace(vram_gb=26, vram_cap_gb=28,
+                           physical_vram_ceiling_gb=30, ram_gb=16,
+                           vram_safety_margin_gb=4,
                            decode_slice_elems=1024, reuse_decode_tables=True, warmup_tokens=1,
                            model="model", store="store", cooldown_seconds=10,
                            cooldown_max_temp_c=75, cell_timeout_minutes=6)
     overrides = common_overrides(args)
     assert overrides["reuse_decode_tables"] is True
+    assert overrides["vram_budget_gb"] == 26
+    assert overrides["vram_cap_gb"] == 28
     for split in ("calibration", "evaluation"):
         config = worker_config(args=args, method_id="test", overrides=overrides,
                                block=0, split=split, case_ids=("case",), max_new_tokens=1)
         assert config["warmup_tokens"] == 1
         assert config["overrides"]["reuse_decode_tables"] is True
+        assert config["budget"] == {
+            "vram_gb": 26,
+            "vram_cap_gb": 28,
+            "physical_vram_ceiling_gb": 30,
+            "ram_gb": 16,
+        }
+
+
+def test_memory_limit_defaults_preserve_historical_behavior():
+    args = SimpleNamespace(vram_gb=8, vram_cap_gb=None,
+                           physical_vram_ceiling_gb=None)
+    assert allocator_cap_gb(args) == 8
+    assert physical_vram_ceiling_gb(args) == 8
+
+
+def test_physical_ceiling_defaults_to_explicit_allocator_cap():
+    args = SimpleNamespace(vram_gb=8, vram_cap_gb=10,
+                           physical_vram_ceiling_gb=None)
+    assert allocator_cap_gb(args) == 10
+    assert physical_vram_ceiling_gb(args) == 10

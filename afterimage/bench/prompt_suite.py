@@ -28,7 +28,7 @@ def _normalise(value: str) -> str:
     return re.sub(r"\s+", " ", value.casefold()).strip()
 
 
-PROMPT_SUITE_VERSION = "bounded-chat-v2"
+PROMPT_SUITE_VERSION = "bounded-chat-v3"
 
 # split="paper_generation" is what the paper plan calls "paper-generation-v1":
 # four realistic ~120-180-word-eliciting prompts (explanation, summarization,
@@ -90,6 +90,69 @@ PAPER_GENERATION_CASES = (
         "structure for an in-memory key-value store. Cover average-case "
         "lookup time, memory overhead, and whether ordered iteration over "
         "keys is supported.",
+        (),
+    ),
+)
+
+# Frozen before the endpoint-seed pilot produced any live result. These cases
+# are reserved for the independent H6.5 confirmation and intentionally do not
+# overlap calibration, evaluation, or paper-generation cases. Exactness is
+# checked by comparing token IDs within each adjacent method pair.
+H65_CONFIRMATION_CASES = (
+    PromptCase(
+        "confirm-explain-tides", "explanation", "h65_confirmation",
+        "In two concise sentences, explain why most coastlines experience "
+        "two high tides per lunar day. Mention the role of both the near-side "
+        "and far-side tidal bulges.",
+        (),
+    ),
+    PromptCase(
+        "confirm-arithmetic-boxes", "arithmetic", "h65_confirmation",
+        "A warehouse has 17 shelves. Each shelf holds 24 boxes, and 39 boxes "
+        "are removed. State the number of boxes remaining, then give one "
+        "short sentence showing the calculation.",
+        (),
+    ),
+    PromptCase(
+        "confirm-code-deduplicate", "code", "h65_confirmation",
+        "Write a short Python function named `stable_unique` that removes "
+        "duplicates from a list while preserving first-occurrence order. "
+        "Do not use third-party packages.",
+        (),
+    ),
+    PromptCase(
+        "confirm-compare-indexes", "analytical", "h65_confirmation",
+        "Briefly compare a database B-tree index with a hash index for exact "
+        "lookups, range scans, and ordered results. Use three bullet points.",
+        (),
+    ),
+    PromptCase(
+        "confirm-summarize-wetlands", "summarization", "h65_confirmation",
+        "Wetlands slow floodwater, trap sediment, store carbon, and provide "
+        "nursery habitat for many species. Draining or paving them removes "
+        "these services and can increase downstream flood peaks. Summarize "
+        "the main point in one sentence.",
+        (),
+    ),
+    PromptCase(
+        "confirm-reasoning-switches", "logic", "h65_confirmation",
+        "Switch A is on exactly when switch B is off. Switch B is currently "
+        "on. Is switch A on or off? Answer first, then justify in one sentence.",
+        (),
+    ),
+    PromptCase(
+        "confirm-retrieval-quartz", "long_context_retrieval", "h65_confirmation",
+        "The archive assigns 4821 to basalt, 7734 to quartz, and 1960 to "
+        "slate. A shipping note later lists weights 77, 34, and 19, which are "
+        "not archive identifiers. Report the quartz identifier and explain "
+        "which sentence supplied it.",
+        (),
+    ),
+    PromptCase(
+        "confirm-procedure-firewall", "procedural", "h65_confirmation",
+        "Give a four-step checklist for changing a production firewall rule "
+        "safely. Include review, rollback preparation, validation, and "
+        "monitoring, with one brief line per step.",
         (),
     ),
 )
@@ -175,13 +238,19 @@ PROMPT_CASES = (
 
 
 def prompt_cases(split: str = "evaluation") -> tuple[PromptCase, ...]:
-    if split not in {"evaluation", "calibration", "all", "paper_generation"}:
+    if split not in {
+        "evaluation", "calibration", "all", "paper_generation",
+        "h65_confirmation",
+    }:
         raise ValueError(
-            "split must be evaluation, calibration, paper_generation, or all")
+            "split must be evaluation, calibration, paper_generation, "
+            "h65_confirmation, or all")
     if split == "paper_generation":
         return PAPER_GENERATION_CASES
+    if split == "h65_confirmation":
+        return H65_CONFIRMATION_CASES
     if split == "all":
-        return PROMPT_CASES + PAPER_GENERATION_CASES
+        return PROMPT_CASES + PAPER_GENERATION_CASES + H65_CONFIRMATION_CASES
     return tuple(case for case in PROMPT_CASES if case.split == split)
 
 

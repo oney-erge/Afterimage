@@ -1,6 +1,7 @@
 import pytest
 
 from afterimage.bench.prompt_suite import (
+    H65_CONFIRMATION_CASES,
     PAPER_GENERATION_CASES,
     PROMPT_CASES,
     prompt_cases,
@@ -40,10 +41,26 @@ def test_paper_generation_cases_elicit_long_form_answers_not_short_facts():
         assert len(case.user_text) > 80, f"{case.id} reads like a short-answer prompt"
 
 
+def test_h65_confirmation_split_has_eight_unique_reserved_cases():
+    confirmation = prompt_cases("h65_confirmation")
+    assert len(confirmation) == 8
+    assert len({case.id for case in confirmation}) == 8
+    assert all(case.split == "h65_confirmation" for case in confirmation)
+    existing = {
+        case.id
+        for split in ("evaluation", "calibration", "paper_generation")
+        for case in prompt_cases(split)
+    }
+    assert not existing.intersection(case.id for case in confirmation)
+    assert all(case.expected_any == () for case in confirmation)
+
+
 def test_prompt_cases_all_includes_every_split():
     every_id = {case.id for case in prompt_cases("all")}
     assert every_id == (
-        {case.id for case in PROMPT_CASES} | {case.id for case in PAPER_GENERATION_CASES})
+        {case.id for case in PROMPT_CASES}
+        | {case.id for case in PAPER_GENERATION_CASES}
+        | {case.id for case in H65_CONFIRMATION_CASES})
 
 
 def test_prompt_cases_rejects_an_unknown_split():
