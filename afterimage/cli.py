@@ -993,7 +993,7 @@ def cmd_quickstart(args: argparse.Namespace) -> int:
         print()
         print("Measured on this machine, right now:")
         print("  %d tokens in %.1fs (%.2f s/token)" % (n_tokens, gen_s, gen_s / max(n_tokens, 1)))
-        print("  peak I/O    : %.2fs   peak decode: %.2fs" %
+        print("  total I/O   : %.2fs   total decode: %.2fs" %
               (sm.stats.io_seconds, sm.stats.decode_seconds))
         if torch.cuda.is_available():
             print("  peak VRAM   : %.2f GB" % (torch.cuda.max_memory_allocated() / 1e9))
@@ -1003,6 +1003,8 @@ def cmd_quickstart(args: argparse.Namespace) -> int:
     print("It works. For a real model:")
     print("  afterimage compress Qwen/Qwen3-14B   # ~30 min download, ~6 min compress")
     print("  afterimage run Qwen/Qwen3-14B \"...\" --auto")
+    print()
+    print("Here for the H6.5 paper? See docs/H65.md and evidence/h65-paper1/.")
     return 0
 
 
