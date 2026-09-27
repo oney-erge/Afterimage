@@ -631,6 +631,8 @@ def cmd_run(args: argparse.Namespace) -> int:
                        placement_policy=args.placement_policy,
                        critical_path_profile=args.critical_path_profile,
                        replay_plan_state=args.replay_plan_state,
+                       representation_policy=args.representation_policy,
+                       representation_plan_state=args.representation_plan_state,
                        prefetch_policy=args.prefetch_policy,
                        io_prefetch_max_depth=args.io_prefetch_max_depth,
                        lm_head_policy=args.lm_head_policy,
@@ -830,6 +832,56 @@ def cmd_optimize_residency(args: argparse.Namespace) -> int:
     print("Calibration replay: %.3fs -> %.3fs (%.3fx), %d evaluations" %
           (plan.report.baseline_s, plan.report.optimized_s,
            plan.report.predicted_speedup, plan.report.evaluations))
+    return 0
+
+
+def cmd_h65_plan(args: argparse.Namespace) -> int:
+    """H6.5: build a whole-trace, schedule-replay-scored representation plan.
+
+    Offline only -- this calls the same `optimize_h65_plan` the paper's
+    campaign scripts use, but with live paired-block validation disabled
+    (there is no live measurement to require from a bare CLI invocation).
+    The resulting plan is a replay-validated candidate, not a paper-eligible
+    confirmed plan; see docs/H65.md for how those are produced.
+    """
+    from afterimage.runtime.critical_path import TraceRecorder
+    from afterimage.runtime.h65_planner import optimize_h65_plan
+
+    manifest = json.loads(pathlib.Path(args.manifest).read_text(encoding="utf-8"))
+    h2d = json.loads(pathlib.Path(args.h2d).read_text(encoding="utf-8"))
+    traces = [TraceRecorder.load(path) for path in args.traces]
+    result = optimize_h65_plan(
+        manifest, traces,
+        vram_budget_gb=args.vram_budget_gb, ram_budget_gb=args.ram_budget_gb,
+        h2d_gbps=float(h2d["median_stable_gbps"]),
+        h2d_memory_mode=str(h2d.get("memory_mode") or "unknown"),
+        decode_slice_elems=args.decode_slice_elems,
+        search_iterations=args.search_iterations, seed=args.seed,
+        vram_safety_margin_gb=args.vram_safety_margin_gb,
+        minimum_trace_count=args.minimum_trace_count,
+        enable_compressed_ram=args.enable_compressed_ram,
+        require_live_validation=False, live_validation_eligible=False)
+
+    report = result.report
+    print("H6.5 offline search: %d candidates scored, predicted improvement "
+          "%.1f%% (conservative %.1f%%)" % (
+              report.candidates_scored,
+              report.predicted_improvement * 100,
+              report.conservative_predicted_improvement * 100))
+    if report.fallback_to_control:
+        print("Guarded plan falls back to the traffic-density control: %s"
+              % report.fallback_reason, file=sys.stderr)
+        if not args.emit_candidate:
+            print("Writing the safe (control) plan. Pass --emit-candidate to "
+                  "inspect the best candidate found instead.", file=sys.stderr)
+
+    chosen = result.candidate_plan if args.emit_candidate else result.plan
+    chosen.save(args.out)
+    print("Wrote %s plan to %s" %
+          ("candidate" if args.emit_candidate else "guarded", args.out))
+    print("Load it with: afterimage run MODEL PROMPT "
+          "--representation-policy per_tensor --representation-plan-state %s"
+          % args.out)
     return 0
 
 
@@ -1119,6 +1171,16 @@ def build_parser() -> argparse.ArgumentParser:
     r_adv.add_argument("--critical-path-profile", default=None)
     r_adv.add_argument("--replay-plan-state", default=None,
                        help="frozen plan produced by `afterimage optimize-residency`")
+    r_adv.add_argument("--representation-policy", default="uniform",
+                       choices=["uniform", "per_tensor", "multi_state"],
+                       help="uniform (default) keeps every tensor in one representation; "
+                            "per_tensor/multi_state load one exact representation+tier "
+                            "choice per tensor from --representation-plan-state, e.g. a "
+                            "plan produced by `afterimage research h65-plan` (H6.5) or "
+                            "`afterimage research optimize-residency`")
+    r_adv.add_argument("--representation-plan-state", default=None,
+                       help="frozen per-tensor plan required by a non-uniform "
+                            "--representation-policy -- see docs/H65.md")
     r_adv.add_argument("--lm-head-policy", default="full",
                        choices=["full", "certified_mips", "ram_overlay"])
     r_adv.add_argument("--require-pinned-ram", action="store_true",
@@ -1231,6 +1293,49 @@ def build_parser() -> argparse.ArgumentParser:
     o.add_argument("--max-tensors-per-extent", type=int, default=8)
     o.add_argument("--seed", type=int, default=0)
     o.set_defaults(func=cmd_optimize_residency)
+
+    h65 = research_sub.add_parser(
+        "h65-plan",
+        help="H6.5: replay-score a schedule-aware per-tensor representation/tier "
+             "plan from calibration traces -- see docs/H65.md")
+    h65.add_argument("traces", nargs="+",
+                     help="event-DAG calibration traces, e.g. from "
+                          "`afterimage run --trace-events --trace-output ...`")
+    h65.add_argument("--manifest", required=True, help="compressed store's manifest.json")
+    h65.add_argument("--h2d", required=True,
+                     help="pinned H2D bandwidth artifact from "
+                          "scripts/benchmark_pinned_h2d.py")
+    h65.add_argument("--vram-budget-gb", type=float, required=True)
+    h65.add_argument("--ram-budget-gb", type=float, required=True)
+    h65.add_argument("--vram-safety-margin-gb", type=float, default=0.5)
+    h65.add_argument("--decode-slice-elems", type=int, default=1 << 22)
+    h65.add_argument("--search-iterations", type=int, default=256)
+    h65.add_argument("--minimum-trace-count", type=int, default=3,
+                     help="the paper's protocol used at least 3 disjoint calibration "
+                          "traces and held one out for validation; this floor exists "
+                          "so a single SSD timing excursion cannot become a frozen "
+                          "placement")
+    h65.add_argument("--enable-compressed-ram", action=argparse.BooleanOptionalAction,
+                     default=True,
+                     help="allow the encoded-in-RAM representation (full H6.5); "
+                          "--no-enable-compressed-ram restricts the search to "
+                          "placement only, matching the paper's placement-only arm")
+    h65.add_argument("--seed", type=int, default=0)
+    h65.add_argument("--emit-candidate", action="store_true",
+                     help="save the best candidate found even if it fails the "
+                          "predicted-improvement gate, instead of the safe plan "
+                          "(which falls back to the traffic-density control on a "
+                          "failed gate). Useful for inspecting what the search found; "
+                          "do not deploy this plan without separately measuring it, "
+                          "since this offline mode never runs the paper's paired live "
+                          "validation blocks (--require-live-validation is always off "
+                          "here; see the confirmatory protocols under docs/PAPER1_5090_"
+                          "LLAMA_H65_*.md for how a paper-eligible plan is validated)")
+    h65.add_argument("--out", required=True,
+                     help="where to write the RepresentationPlan; load it with "
+                          "`afterimage run --representation-policy per_tensor "
+                          "--representation-plan-state OUT`")
+    h65.set_defaults(func=cmd_h65_plan)
 
     return p
 
