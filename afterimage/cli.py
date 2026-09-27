@@ -180,9 +180,13 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
     try:
         import triton  # noqa: F401
+        triton_ok = True
         print("triton           : available")
     except ImportError:
-        print("triton           : NOT installed -- GPU decode kernels will not run")
+        triton_ok = False
+        print("triton           : NOT installed -- GPU decode kernels will not run "
+              "(falls back to a slower CPU decoder; Triton has no native Windows "
+              "wheel -- WSL2 is the better-verified route there, see README)")
 
     if gpu["vendor"] == "amd":
         print()
@@ -232,17 +236,35 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
     ok = cuda_ok or gpu["vendor"] == "amd"
     print()
-    print("Overall: %s" % ("ready" if ok else "no usable GPU found -- CPU fallback only, will be slow"))
+    if not ok:
+        summary = "no usable GPU found -- CPU fallback only, will be slow"
+    elif cuda_ok and not triton_ok:
+        summary = "ready, but GPU decode kernels need triton (see the note above) -- CPU decoder fallback will be used and is slower"
+    else:
+        summary = "ready"
+    print("Overall: %s" % summary)
 
     print()
     if not stores:
         print("Next: nothing compressed yet. Try the ~10-minute quickstart first:")
         print("  afterimage quickstart")
     elif ok:
+        example = stores[0].name.replace("__", "/")
+        # --profile fast / --auto's draft model is hardcoded to Qwen/Qwen3-0.6B
+        # (RUN_PROFILES below); it only shares a vocabulary with a Qwen3
+        # target. Suggesting it for any other family would recommend a
+        # combination generate_adaptive now refuses at runtime.
+        is_qwen3 = example.lower().startswith("qwen/qwen3")
         print("Next: run something -- profiles are measured operating points, not guesses:")
-        print("  afterimage run %s \"your prompt\" --profile fast" % stores[0].name.replace("__", "/"))
+        if is_qwen3:
+            print("  afterimage run %s \"your prompt\" --profile fast" % example)
+        else:
+            print("  afterimage run %s \"your prompt\" --profile balanced" % example)
+            print("(--profile fast's draft model only matches a Qwen3 target; for "
+                  "speculative decoding on %s, pass --draft-model explicitly with a "
+                  "small model from the SAME family)" % example)
         print("or let it pick one from your detected hardware:")
-        print("  afterimage run %s \"your prompt\" --auto" % stores[0].name.replace("__", "/"))
+        print("  afterimage run %s \"your prompt\" --auto" % example)
     return 0 if ok else 1
 
 
@@ -514,12 +536,24 @@ RUN_PROFILES = {
 }
 
 
-def automatic_run_profile(vram_gib: float | None) -> tuple[str, str]:
-    """Return the automatic profile shared by the CLI and web server."""
+def automatic_run_profile(vram_gib: float | None,
+                          model_id: str | None = None) -> tuple[str, str]:
+    """Return the automatic profile shared by the CLI and web server.
 
+    model_id, when given, downgrades 'fast' to 'balanced' for any target
+    outside the Qwen3 family: RUN_PROFILES["fast"]["draft_model"] is a fixed
+    Qwen/Qwen3-0.6B, which only shares a vocabulary with a Qwen3 target (see
+    StreamingLosslessModel.generate_adaptive's vocabulary guard). Guessing a
+    same-family draft for other targets risked more than it was worth, so
+    --auto downgrades instead of guessing; pass --draft-model explicitly for
+    speculative decoding on a non-Qwen3 model.
+    """
     if vram_gib is None:
         return "min-memory", "no GPU detected"
     if vram_gib >= 6.0:
+        if model_id is not None and not model_id.lower().startswith("qwen/qwen3"):
+            return "balanced", ("%.1f GiB VRAM detected, but the fast profile's "
+                                "draft model only matches a Qwen3 target" % vram_gib)
         return "fast", "%.1f GiB VRAM detected" % vram_gib
     if vram_gib >= 3.0:
         return "balanced", "%.1f GiB VRAM detected" % vram_gib
@@ -534,7 +568,7 @@ def _resolve_run_profile(args: argparse.Namespace) -> None:
     name = args.profile
     if args.auto and name is None:
         vram_gb = _detect_gpu().get("vram_gb")
-        name, reason = automatic_run_profile(vram_gb)
+        name, reason = automatic_run_profile(vram_gb, model_id=args.model)
         print("[auto] picked --profile %s (%s)" % (name, reason), file=sys.stderr)
     if name is None:
         return
@@ -891,9 +925,12 @@ def cmd_h65_plan(args: argparse.Namespace) -> int:
     chosen.save(args.out)
     print("Wrote %s plan to %s" %
           ("candidate" if args.emit_candidate else "guarded", args.out))
-    print("Load it with: afterimage run MODEL PROMPT "
-          "--representation-policy per_tensor --representation-plan-state %s"
-          % args.out)
+    print("Load it with (the run's --vram-budget-gb/--ram-budget-gb must match "
+          "exactly what built this plan, or the load fails closed):")
+    print("  afterimage run MODEL PROMPT --representation-policy per_tensor "
+          "--representation-plan-state %s \\" % args.out)
+    print("    --vram-budget-gb %s --ram-budget-gb %s"
+          % (args.vram_budget_gb, args.ram_budget_gb))
     return 0
 
 
@@ -1312,7 +1349,8 @@ def build_parser() -> argparse.ArgumentParser:
              "plan from calibration traces -- see docs/H65.md")
     h65.add_argument("traces", nargs="+",
                      help="event-DAG calibration traces, e.g. from "
-                          "`afterimage run --trace-events --trace-output ...`")
+                          "`afterimage run MODEL PROMPT --trace-output FILE.json` "
+                          "(at least 3 disjoint prompts; see docs/H65.md)")
     h65.add_argument("--manifest", required=True, help="compressed store's manifest.json")
     h65.add_argument("--h2d", required=True,
                      help="pinned H2D bandwidth artifact from "

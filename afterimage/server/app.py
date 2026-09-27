@@ -1510,7 +1510,8 @@ def _generation_config(
     draft_model = req.draft_model
     vram_budget = req.vram_budget_gb
     if profile == "auto" and vram_budget is None and draft_model is None:
-        profile, _reason = automatic_run_profile(_detect_gpu().get("vram_gb"))
+        profile, _reason = automatic_run_profile(
+            _detect_gpu().get("vram_gb"), model_id=req.model)
         if vision and profile == "fast":
             profile = "balanced"
         preset = RUN_PROFILES[profile]

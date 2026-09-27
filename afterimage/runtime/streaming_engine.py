@@ -1347,6 +1347,25 @@ class StreamingLosslessModel:
                             # Pageable RAM preserves correctness and lifetime
                             # semantics but can transfer more slowly, so the
                             # degradation must remain observable.
+                            if "accelerator" in str(exc).lower():
+                                # pin_memory() itself probes CUDA even though
+                                # it is pinning host memory, so on a machine
+                                # with no accelerator visible at all (not a
+                                # WSL2 memlock ceiling) it raises this same
+                                # RuntimeError class with an unrelated
+                                # message. Give the real cause instead of
+                                # letting a RAM-tier config silently require
+                                # a GPU with no explanation.
+                                raise RuntimeError(
+                                    "a decoded RAM-tier tensor (ram_budget_gb, "
+                                    "or a loaded representation plan with a "
+                                    "decoded_ram choice) is materialized "
+                                    "through a transient GPU tensor even "
+                                    "though its resting place is host RAM, "
+                                    "and this process has no CUDA-capable "
+                                    "GPU visible (%s). Drop ram_budget_gb / "
+                                    "the representation plan, or run "
+                                    "somewhere with CUDA." % exc) from exc
                             if "out of memory" not in str(exc).lower():
                                 raise
                             if self.config.require_pinned_ram:
@@ -2497,6 +2516,15 @@ class StreamingLosslessModel:
         """
         from .verify import sample_categorical, speculative_sample_step
 
+        draft_vocab = getattr(draft_model.config, "vocab_size", None)
+        target_vocab = self.adapter.output_head.weight.shape[0]
+        if draft_vocab is not None and draft_vocab != target_vocab:
+            raise ValueError(
+                "draft_model's vocabulary (%d) does not match this model's "
+                "(%d) -- speculative decoding requires the same tokenizer/"
+                "vocabulary (see load_draft_model's docstring)"
+                % (draft_vocab, target_vocab))
+
         seq = input_ids
         self._tok_total = max_new_tokens
         self._gen_t0 = time.perf_counter()
@@ -2599,6 +2627,18 @@ class StreamingLosslessModel:
                 "regime, not this method's")
         if cfg.draft_mode == "model" and draft_model is None:
             raise ValueError("draft_mode='model' requires a draft_model argument")
+        if cfg.draft_mode == "model":
+            draft_vocab = getattr(draft_model.config, "vocab_size", None)
+            target_vocab = self.adapter.output_head.weight.shape[0]
+            if draft_vocab is not None and draft_vocab != target_vocab:
+                raise ValueError(
+                    "draft_model's vocabulary (%d) does not match this "
+                    "model's (%d) -- speculative decoding requires the "
+                    "same tokenizer/vocabulary (see load_draft_model's "
+                    "docstring); --profile fast / --auto's Qwen3-0.6B "
+                    "default draft only matches a Qwen3 target, pass "
+                    "--draft-model explicitly for any other model family"
+                    % (draft_vocab, target_vocab))
 
         policy = build_policy(cfg.spec_k_policy, cfg.spec_k)
         if cfg.spec_policy_state:
