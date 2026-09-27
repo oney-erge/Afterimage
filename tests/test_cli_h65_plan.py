@@ -97,3 +97,20 @@ def test_run_exposes_representation_plan_flags():
          "--representation-plan-state", "plan.json"])
     assert parser_args.representation_policy == "per_tensor"
     assert parser_args.representation_plan_state == "plan.json"
+
+
+def test_run_exposes_the_paper_execution_settings():
+    # The paper's Llama confirmations ran with reuse_decode_tables=True and a
+    # 0.5 GB vram_safety_margin_gb on an 8 GB budget; docs/H65.md tells
+    # readers to reach for these two flags to match that protocol.
+    parser_args = main.__globals__["build_parser"]().parse_args(
+        ["run", "some/model", "prompt",
+         "--vram-budget-gb", "8", "--vram-safety-margin-gb", "0.5",
+         "--reuse-decode-tables"])
+    assert parser_args.vram_safety_margin_gb == 0.5
+    assert parser_args.reuse_decode_tables is True
+
+    default_args = main.__globals__["build_parser"]().parse_args(
+        ["run", "some/model", "prompt"])
+    assert default_args.vram_safety_margin_gb == 0.0
+    assert default_args.reuse_decode_tables is False

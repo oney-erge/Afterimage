@@ -672,6 +672,8 @@ def cmd_run(args: argparse.Namespace) -> int:
                        storage_extent_max_bytes=args.storage_extent_max_bytes,
                        storage_extent_max_gap_bytes=args.storage_extent_max_gap_bytes,
                        decode_slice_elems=args.decode_slice_elems,
+                       vram_safety_margin_gb=args.vram_safety_margin_gb,
+                       reuse_decode_tables=args.reuse_decode_tables,
                        ram_tier_format=args.ram_tier_format,
                        lm_head_slice_rows=args.lm_head_slice_rows,
                        placement_policy=args.placement_policy,
@@ -1247,6 +1249,15 @@ def build_parser() -> argparse.ArgumentParser:
                             "transient decode scratch, which is what lowers the floor "
                             "on --vram-budget-gb (1<<22 gets a 14B under 1.7 GB); the "
                             "cost is more kernel launches. Cannot change decoded values.")
+    r_adv.add_argument("--vram-safety-margin-gb", type=float, default=0.0,
+                       help="reserve this much of --vram-budget-gb unused as a runtime "
+                            "margin (requires --vram-budget-gb); the H6.5 paper's Llama "
+                            "confirmations used 0.5 GB on an 8 GB budget")
+    r_adv.add_argument("--reuse-decode-tables", action=argparse.BooleanOptionalAction,
+                       default=False,
+                       help="cache decode Huffman tables across tokens instead of "
+                            "rebuilding them each time; the H6.5 paper's Llama "
+                            "confirmations ran with this on")
     r_adv.add_argument("--no-kv-cache", action="store_true")
     r_adv.add_argument("--ram-tier-format", default="decoded", choices=["decoded", "compressed"],
                        help="'decoded' pins bf16 tensors (needs a real ulimit -l -- see "
