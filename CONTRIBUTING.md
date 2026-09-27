@@ -31,14 +31,32 @@ separate jobs (`.github/workflows/ci.yml`) **on CPU only**, so the GPU decode
 kernels, the streaming engine, and the chunked LM head are not covered by any
 automated run. Before a release, run the suite on a CUDA host as well; on
 Windows that means WSL2, because Triton publishes no native Windows wheel
-(see `docs/TROUBLESHOOTING.md`). Reference counts: 366 passed / 0 skipped on
-WSL2+CUDA, 300 passed / 66 skipped on native Windows CPU.
+(see `docs/TROUBLESHOOTING.md`). The suite grows over time, so don't trust a
+specific pass/skip count in prose here -- run `python -m pytest -q` yourself
+and read its final summary line; `-rs` names every skip's reason. Reference
+point (this file's date, native Windows, CPU-only torch, `[dev,server]`
+extras): 741 passed / 76 skipped, 2026-09-27.
 
 ```bash
 python -m compileall -q afterimage           # what CI checks before tests
 python -m ruff check afterimage scripts tests  # narrow ruleset: F + E9
 python scripts/check_prose.py                # zero-em-dash docs check
 ```
+
+### Before tagging a release
+
+CI never touches a GPU, so nothing above proves the engine actually runs.
+Before a release:
+
+1. The CPU checks above, clean.
+2. The GPU test suite on a CUDA host (see above).
+3. `python evidence/h65-paper1/verify_llama_confirmations.py` -- proves the
+   H6.5 evidence bundle itself is internally consistent (no GPU needed).
+4. One real `afterimage compress` + `afterimage run` on a small model
+   (`afterimage quickstart`), on the platform you're about to claim support
+   for. Attach that log to the release.
+5. If the install scripts changed: `./run.sh repair` (or `.\run.ps1 repair`)
+   on a clean checkout, on at least one NVIDIA machine.
 
 ## Code style
 

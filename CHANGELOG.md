@@ -5,6 +5,24 @@ No tagged releases yet. Everything below is `main`.
 
 ## [Unreleased]
 
+### H6.5 arXiv readiness
+
+- Published the H6.5 Paper 1 evidence (`evidence/h65-paper1/`): the
+  confirmatory/secondary Llama-3.3-70B artifacts, three previously-private
+  protocol documents, and a script that recomputes the paper's headline
+  numbers from the raw paired data.
+- Added `afterimage research h65-plan` and `afterimage run
+  --representation-policy/--representation-plan-state`: H6.5 had no CLI
+  entry point before this.
+- `afterimage doctor` now recognizes an NVIDIA GPU paired with a CPU-only
+  torch build and prints the fix, instead of just reporting no usable GPU.
+- The native installers (`run.sh`, `run.ps1`, `install.sh`, `install.ps1`)
+  detect the driver's supported CUDA version and pick a cu128 PyTorch
+  wheel on RTX 50-series (Blackwell) hosts instead of always installing
+  cu124, which cannot use that hardware.
+- Aligned several stale documented numbers (README/CLI-help speculation
+  ratios, `docs/REPRODUCE.md`'s test count) with current measurements.
+
 ### 0.3.0 product workspace
 
 - Replaced the monolithic developer-console UI with responsive Home, Models,
