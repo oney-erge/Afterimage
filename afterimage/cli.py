@@ -165,6 +165,18 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     print("CUDA available   : %s" % cuda_ok)
     if cuda_ok:
         print("CUDA device      : %s" % torch.cuda.get_device_name(0))
+    elif gpu["vendor"] == "nvidia":
+        print()
+        print("NOTE: an NVIDIA GPU was detected, but this torch build has no CUDA")
+        print("      support (%s). The installer picked a CPU-only wheel, most often"
+              % torch.__version__)
+        print("      because no NVIDIA driver/nvidia-smi was visible when it ran, or")
+        print("      because this environment was set up by hand. Fix it with:")
+        print("        ./run.sh repair             (Linux/macOS)")
+        print("        .\\run.ps1 repair            (Windows PowerShell)")
+        print("      or reinstall torch directly: uv pip install --reinstall torch \\")
+        print("        --index-url https://download.pytorch.org/whl/cu124")
+        print("      (use /cu128 instead of /cu124 for an RTX 50-series/Blackwell GPU)")
 
     try:
         import triton  # noqa: F401
@@ -1105,8 +1117,8 @@ def build_parser() -> argparse.ArgumentParser:
                         choices=["min-memory", "balanced", "fast"],
                         help="apply a measured operating point (see README's benchmark "
                              "table): min-memory = lowest VRAM, exact, slowest; "
-                             "balanced = +4GB residency, 1.66x; fast = +speculation, "
-                             "3.15x. Explicit flags below still override it.")
+                             "balanced = +4GB residency, 1.55x; fast = +speculation, "
+                             "2.93x. Explicit flags below still override it.")
     r_core.add_argument("--auto", action="store_true",
                         help="detect available VRAM and pick a profile automatically; "
                              "prints the decision before running. Explicit flags win.")
@@ -1125,7 +1137,7 @@ def build_parser() -> argparse.ArgumentParser:
     r_core.add_argument("--draft-model", default=None,
                         help="HuggingFace id of a small resident draft model (e.g. "
                              "Qwen/Qwen3-0.6B) -- enables speculative decoding, the "
-                             "engine's largest lossless speedup (3.15x measured)")
+                             "engine's largest lossless speedup (2.93x measured)")
     r_core.add_argument("--spec-k", type=int, default=8,
                         help="draft chain length when --draft-model is set")
     r_core.add_argument("--spec-temperature", type=float, default=0.0,

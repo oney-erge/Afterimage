@@ -25,6 +25,26 @@ detect_gpu() {
   fi
 }
 
+# cu124 silently can't use an RTX 50-series (Blackwell) card, whose driver
+# needs cu128+. $AFTERIMAGE_TORCH_INDEX_URL always overrides this.
+cuda_torch_index() {
+  if [ -n "${AFTERIMAGE_TORCH_INDEX_URL:-}" ]; then
+    echo "$AFTERIMAGE_TORCH_INDEX_URL"
+    return 0
+  fi
+  local reported major minor
+  reported=$(nvidia-smi 2>/dev/null | grep -o 'CUDA Version: [0-9]*\.[0-9]*' | head -1 | grep -o '[0-9.]*$')
+  if [ -n "$reported" ]; then
+    major=${reported%%.*}
+    minor=${reported#*.}
+    if [ "$major" -gt 12 ] || { [ "$major" -eq 12 ] && [ "$minor" -ge 8 ]; }; then
+      echo "https://download.pytorch.org/whl/cu128"
+      return 0
+    fi
+  fi
+  echo "https://download.pytorch.org/whl/cu124"
+}
+
 if [ -x "$VENV_DIR/bin/afterimage" ]; then
   if [ "${1:-}" = "--reinstall" ]; then
     log "rebuilding from scratch"
@@ -46,8 +66,9 @@ pip install --upgrade pip wheel >/dev/null
 
 case "$GPU_VENDOR" in
   nvidia)
-    log "installing CUDA torch build"
-    pip install torch --index-url https://download.pytorch.org/whl/cu124
+    TORCH_INDEX="$(cuda_torch_index)"
+    log "installing CUDA torch build ($TORCH_INDEX)"
+    pip install torch --index-url "$TORCH_INDEX"
     pip install -e "$REPO_DIR[gpu,server]"
     ;;
   amd)

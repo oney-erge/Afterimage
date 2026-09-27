@@ -39,7 +39,7 @@ token, 10 s cooldown. Memory contract: 8 GB logical VRAM budget, 10 GB allocator
 
 Six blocks, each on one of the reserved confirmation prompts (`confirm-explain-tides`,
 `confirm-arithmetic-boxes`, `confirm-code-deduplicate`, `confirm-compare-indexes`,
-`confirm-summarize-wetlands`, `confirm-reasoning-switches`) — 18 one-token cells. Arm
+`confirm-summarize-wetlands`, `confirm-reasoning-switches`), 18 one-token cells total. Arm
 orders T-E-K, E-K-T, K-T-E, T-K-E, K-E-T, E-T-K put each arm twice in every position
 and each ordered pair of arms adjacent equally often. These prompts were reused from
 the first endpoint confirmation, so this control is secondary and supports no primary
@@ -53,7 +53,7 @@ on its first `knapsack` cell with
 cell's own config held the correct profile path. The frozen matrix worker was calling
 `run_afterimage(..., critical_profile=None)`, and the engine's `engine_for` helper
 replaced the configured profile path with that `None` argument whenever the placement
-policy needed a profile — so every `profiled_knapsack` cell run through that worker
+policy needed a profile, so every `profiled_knapsack` cell run through that worker
 failed the same way. v2 runs every cell through a small wrapper that loads the frozen
 worker unchanged and forwards the cell's own `critical_path_profile` only when the
 worker itself passes none; cells that need no profile (`traffic`, `h65-endpoint`) take

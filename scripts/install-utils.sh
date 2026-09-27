@@ -132,3 +132,28 @@ install_complete() {
   install_note "bootstrap complete"
   install_unlock
 }
+
+# Picks the PyTorch CUDA wheel index for the driver actually on this
+# machine, instead of a fixed cu124 that silently fails to use the GPU on
+# an RTX 50-series (Blackwell, needs cu128+) card whose driver postdates
+# cu124's support window. $AFTERIMAGE_TORCH_INDEX_URL always wins if set.
+# Falls back to cu124 (the long-standing default) if nvidia-smi is missing
+# or its "CUDA Version:" header can't be parsed -- never fails the install
+# over this.
+install_cuda_torch_index() {
+  if [ -n "${AFTERIMAGE_TORCH_INDEX_URL:-}" ]; then
+    echo "$AFTERIMAGE_TORCH_INDEX_URL"
+    return 0
+  fi
+  local reported major minor
+  reported=$(nvidia-smi 2>/dev/null | grep -o 'CUDA Version: [0-9]*\.[0-9]*' | head -1 | grep -o '[0-9.]*$')
+  if [ -n "$reported" ]; then
+    major=${reported%%.*}
+    minor=${reported#*.}
+    if [ "$major" -gt 12 ] || { [ "$major" -eq 12 ] && [ "$minor" -ge 8 ]; }; then
+      echo "https://download.pytorch.org/whl/cu128"
+      return 0
+    fi
+  fi
+  echo "https://download.pytorch.org/whl/cu124"
+}

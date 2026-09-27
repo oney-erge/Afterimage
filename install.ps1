@@ -21,6 +21,24 @@ function Detect-Gpu {
     return "none"  # ROCm has no supported native-Windows PyTorch build today
 }
 
+# cu124 silently can't use an RTX 50-series (Blackwell) card, whose driver
+# needs cu128+. $env:AFTERIMAGE_TORCH_INDEX_URL always overrides this.
+function Get-CudaTorchIndex {
+    if ($env:AFTERIMAGE_TORCH_INDEX_URL) { return $env:AFTERIMAGE_TORCH_INDEX_URL }
+    try {
+        $smi = & nvidia-smi 2>$null
+        $match = ($smi | Select-String -Pattern 'CUDA Version:\s*([0-9]+)\.([0-9]+)').Matches
+        if ($match.Count -gt 0) {
+            $major = [int]$match[0].Groups[1].Value
+            $minor = [int]$match[0].Groups[2].Value
+            if ($major -gt 12 -or ($major -eq 12 -and $minor -ge 8)) {
+                return "https://download.pytorch.org/whl/cu128"
+            }
+        }
+    } catch {}
+    return "https://download.pytorch.org/whl/cu124"
+}
+
 $AfterimageExe = Join-Path $VenvDir "Scripts\afterimage.exe"
 $Reinstall = $args -contains "--reinstall"
 
@@ -42,8 +60,9 @@ python -m venv $VenvDir
 python -m pip install --upgrade pip wheel | Out-Null
 
 if ($GpuVendor -eq "nvidia") {
-    Log "installing CUDA torch build"
-    pip install torch --index-url https://download.pytorch.org/whl/cu124
+    $torchIndex = Get-CudaTorchIndex
+    Log "installing CUDA torch build ($torchIndex)"
+    pip install torch --index-url $torchIndex
     pip install -e "$RepoDir[gpu,server]"
 } else {
     Log "no supported GPU detected -- installing CPU-only torch (inference will be slow;"

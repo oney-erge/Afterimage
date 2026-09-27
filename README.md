@@ -18,12 +18,20 @@
   <a href="docs/USAGE.md">Usage</a> ·
   <a href="docs/FAQ.md">FAQ</a> ·
   <a href="docs/TROUBLESHOOTING.md">Troubleshooting</a> ·
-  <a href="#results">Results</a>
+  <a href="#results">Results</a> ·
+  <a href="docs/H65.md">H6.5 paper</a>
 </p>
 
 Afterimage compresses your model's weights losslessly and streams them through
 your GPU a layer at a time. A 29.5 GB model runs on an 8 GB card, bit-for-bit
 identical to the original. No quantization, no accuracy loss.
+
+**Arrived here from "Schedule-Aware Exact Weight Placement for Large Language
+Models with Limited GPU Memory"?** [docs/H65.md](docs/H65.md) is your entry
+point: what H6.5 does, the headline numbers, how to run it, and
+[`evidence/h65-paper1/`](evidence/h65-paper1/README.md) holds the frozen
+measurement artifacts behind every number in the paper, plus a script that
+recomputes them from scratch.
 
 Turn on speculative decoding with a small draft model and it's nearly 3x
 faster than streaming alone, and faster than Hugging Face's own Accelerate
@@ -282,6 +290,8 @@ tokens, policy = model.generate_adaptive(
     input_ids,
     max_new_tokens=64,
     draft_model=draft,
+    temperature=0.0,  # greedy-token exact vs. the target; generate_adaptive's
+                      # own default is 1.0 (samples), unlike the CLI's --spec-temperature
 )
 ```
 
@@ -330,6 +340,9 @@ Current research summary:
 No H1-H18 candidate has L3 confirmatory superiority evidence. Fixed speculation
 is a stable core configuration, not one of the failed adaptive candidates, and
 is the web UI's default profile.
+
+**H6.5**, a separate whole-schedule-replay successor to H6, does have L3
+confirmatory live evidence on Llama-3.3-70B: see [docs/H65.md](docs/H65.md).
 
 ## Documentation
 

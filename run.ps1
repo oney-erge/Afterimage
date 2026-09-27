@@ -109,7 +109,7 @@ $installed = if (Test-Path -LiteralPath $marker) { (Get-Content -LiteralPath $ma
 if ($Action -eq "repair" -or $installed -ne $fingerprint -or -not (Test-Path -LiteralPath $exe)) {
   $reinstall = @()
   if ($Action -eq "repair") { $reinstall = @("--reinstall") }
-  $torchIndex = if ($gpu -eq "nvidia") { "https://download.pytorch.org/whl/cu124" } else { "https://download.pytorch.org/whl/cpu" }
+  $torchIndex = if ($gpu -eq "nvidia") { Get-CudaTorchIndex } else { "https://download.pytorch.org/whl/cpu" }
   Invoke-InstallRetry "PyTorch installation" {
     $previousErrorActionPreference = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
