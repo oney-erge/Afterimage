@@ -14,11 +14,20 @@ this folder was recomputed, filtered, or reweighted before being copied here.
 python evidence/h65-paper1/verify_llama_confirmations.py
 ```
 
-It recomputes the paper's Table 7, Table 8, and pooled-20-pair numbers directly from
-the paired per-block data in this folder and checks every one against the value
-printed in the draft. It prints `ALL CHECKS PASSED` or a list of exactly which number
-did not match. This is the fastest way to check this paper's headline claims without
-a GPU.
+It recomputes the paper's Table 7, Table 8, and pooled-20-pair numbers, the
+four-token ablation, and the two earlier (pre-head-seed) method-history
+confirmations, directly from the paired per-block data in this folder, and checks
+every one against the value printed in the draft or documented in
+[`docs/H65.md`](../../docs/H65.md#method-history). It prints `ALL CHECKS PASSED` or
+a list of exactly which number did not match. This is the fastest way to check this
+paper's headline claims without a GPU.
+
+That checks the *measurements*. To check the *method* -- whether the H6.5 search
+actually finds the published placement from its calibration traces, rather than the
+plan having been hand-tuned -- see
+[`llama-rtx5090/plan-rederivation/`](llama-rtx5090/plan-rederivation/README.md).
+Also no GPU needed, though it does need one file this repository doesn't have (a
+store metadata file, not model weights).
 
 ## Index: paper claim -> artifact -> protocol
 
@@ -31,6 +40,7 @@ a GPU.
 | Not currently in the draft's body; appendix candidate | Four-token ablation: placement-only vs. traffic 1.041x | [`llama-rtx5090/four-token-ablation/status.json`](llama-rtx5090/four-token-ablation/status.json) | [PAPER1_5090_LLAMA_H65_4TOKEN_ABLATION.md](../../docs/PAPER1_5090_LLAMA_H65_4TOKEN_ABLATION.md) | secondary |
 | Not cited in the 2026-09-26 draft | Llama external-framework comparison (Accelerate/AirLLM/exact-8GB) | [`llama-rtx5090/external-comparison/status.json`](llama-rtx5090/external-comparison/status.json) (v5) | [PAPER1_5090_LLAMA_H65_EXTERNAL_COMPARISON.md](../../docs/PAPER1_5090_LLAMA_H65_EXTERNAL_COMPARISON.md) | **descriptive only -- trips its own probe-confound gate; v6 correction never ran** |
 | Section 5.4 / Figure 7, Table 9 | Qwen3-14B and Gemma 2 27B on RTX 3080, one-token, "regulated exploratory" | not yet located with certainty -- see [`laptop-rtx3080/UNRESOLVED.md`](laptop-rtx3080/UNRESOLVED.md) | none published yet | **unresolved** |
+| Not cited; disclosed in [docs/H65.md](../../docs/H65.md#method-history) | Two earlier Llama confirmations (2026-08-31 8-block, 2026-09-02 12-pair) of the same causal claim, on a plan built before the 2026-09-09/09-10 planner fixes -- both completed and passed their own protocol's gates | [`llama-rtx5090/method-history/`](llama-rtx5090/method-history/) | [PAPER1_5090_LLAMA_CONFIRMATION.md](../../docs/PAPER1_5090_LLAMA_CONFIRMATION.md), [PAPER1_5090_LLAMA_DIRECT_PAIR.md](../../docs/PAPER1_5090_LLAMA_DIRECT_PAIR.md) | method history, not confirmatory for the current plan |
 
 ## Frozen plans
 
@@ -42,19 +52,27 @@ immutable placement plans every Llama study above replays against:
 - `h65-full-plan.json` -- full H6.5 endpoint/representation plan (four-token ablation only), SHA-256 `99d0869e6be6b0e2e55249a3a2a189d8ef24889581b951163dd39e0bbe762f67`
 
 These match the hashes printed in the protocol docs above; `verify_llama_confirmations.py`
-does not independently re-derive a plan from calibration traces (that requires the
-original model checkpoint and GPU), but it does confirm the *result* artifacts are
-paired against the plan the protocol committed to before any measurement ran.
+confirms the *result* artifacts are paired against the plan the protocol committed to
+before any measurement ran. To independently re-derive the placement-only endpoint
+plan itself from its calibration traces (no GPU needed, one input file missing --
+see below), use [`llama-rtx5090/plan-rederivation/`](llama-rtx5090/plan-rederivation/README.md).
 
 ## What this folder deliberately leaves out
 
-- The multi-gigabyte raw calibration traces, controller logs, and per-cell source
-  snapshots the original campaign wrote. Those live in the author's private
-  `paper1-5090-bundle-20260911/`; this folder carries only the frozen `status.json`
-  result for each study, which is what the paper's numbers are computed from.
+- The controller logs and per-cell source snapshots the original campaign wrote.
+  Those live in the author's private `paper1-5090-bundle-20260911/`; most studies
+  here carry only the frozen `status.json` result, which is what the paper's
+  numbers are computed from. The exception is
+  [`llama-rtx5090/plan-rederivation/`](llama-rtx5090/plan-rederivation/README.md),
+  which does publish the three raw calibration traces behind the endpoint plan
+  (small, event-DAGs only, no model weights) specifically so the placement
+  decision itself, not only the measurements, can be checked.
 - Anything graded `invalid`, `superseded`, or `diagnostic_only` by the campaign's own
   validity ledger. The full grading history (what ran, what failed, and why) is
   summarized in each protocol doc; ask the author if you want the discarded runs too.
+  (The two `method-history/` runs above are the exception: both are genuinely
+  *completed, passing* runs of an earlier plan, not invalid or superseded artifacts,
+  so they are published rather than left out.)
 - The RTX 3080 laptop (Qwen3-14B, Gemma 2 27B) result files -- see the unresolved
   note below.
 

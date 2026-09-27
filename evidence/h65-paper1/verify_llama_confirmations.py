@@ -161,6 +161,33 @@ def run_four_token_ablation() -> None:
     print("  before citing this contrast in a table.")
 
 
+def run_method_history_confirmation(name: str, path: pathlib.Path,
+                                     paper_geomean: float,
+                                     paper_ci: tuple[float, float]) -> None:
+    """Recompute an earlier (pre-head-seed) confirmation, not cited by the
+    2026-09-26 arXiv draft. These are disclosed in docs/H65.md's method-history
+    section: both completed and passed their own frozen protocol's gates on an
+    earlier plan, built before the 2026-09-09 candidate-retention fix
+    (commit cb9e320) and the 2026-09-10 output-head search seed (commit
+    1c6a02c). Kept here, not deleted, per this evidence folder's own policy of
+    keeping invalid/superseded runs visible.
+    """
+    print(f"\n=== {name} (method history, not in the arXiv draft) ===")
+    status = load(path)
+    methods = status["live_comparison"]["methods"]
+    control_s = methods["traffic-placement"]["block_median_seconds_per_token"]
+    h65_s = methods["h65-placement-only"]["block_median_seconds_per_token"]
+    ratios = [c / h for c, h in zip(control_s, h65_s)]
+    check(f"{name}: n blocks", len(ratios), len(ratios), 0)
+    gm, lo, hi = paired_log_ratio_ci(ratios)
+    check(f"{name}: geometric speedup", gm, paper_geomean, 0.002)
+    check(f"{name}: 95% CI lower", lo, paper_ci[0], 0.01)
+    check(f"{name}: 95% CI upper", hi, paper_ci[1], 0.01)
+    print("  peak VRAM (median whole-cell): traffic %.2f GB, H6.5 %.2f GB" % (
+        methods["traffic-placement"]["median_whole_cell_peak_vram_gb"],
+        methods["h65-placement-only"]["median_whole_cell_peak_vram_gb"]))
+
+
 def main() -> int:
     d1 = run_confirmation(
         "D1: Llama confirmation 1 (n=8)",
@@ -173,6 +200,14 @@ def main() -> int:
     run_pooled(d1, d2, paper_geomean=1.145, paper_ci=(1.052, 1.247))
     run_d4_greedy_mechanism()
     run_four_token_ablation()
+    run_method_history_confirmation(
+        "2026-08-31, 8 blocks, before the output-head seed",
+        LLAMA / "method-history" / "2026-08-31-8block-before-head-seed.json",
+        paper_geomean=1.066, paper_ci=(0.949, 1.198))
+    run_method_history_confirmation(
+        "2026-09-02, 12 pairs, before the output-head seed",
+        LLAMA / "method-history" / "2026-09-02-12pair-before-head-seed.json",
+        paper_geomean=1.052, paper_ci=(1.000, 1.107))
 
     print()
     if FAILURES:
