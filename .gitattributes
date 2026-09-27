@@ -27,6 +27,12 @@ Dockerfile    text eol=lf
 *.cmd         text eol=crlf
 *.ps1         text eol=crlf
 
+# H6.5 evidence artifacts: each file's SHA-256 is cited by a protocol doc,
+# a validity sidecar, or evidence/h65-paper1/MANIFEST.sha256. Any line-ending
+# normalization silently breaks that hash chain, so these are binary
+# regardless of platform even though they are JSON text.
+evidence/h65-paper1/**/*.json           binary
+
 # Never touched: conversion corrupts these.
 *.png         binary
 *.gif         binary

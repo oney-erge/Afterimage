@@ -25,6 +25,15 @@ here in full, including the things that did not work.
 | [HOW_IT_WORKS.md](HOW_IT_WORKS.md) | What each method actually does, measured next to AirLLM. Start here if you want the results narrative. |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Where the code lives and what the module boundaries are. Start here if you want to change it. |
 
+## H6.5 (schedule-aware exact weight placement)
+
+Arrived from the paper? Start here.
+
+| Document | What it answers |
+|---|---|
+| [H65.md](H65.md) | What H6.5 is, the headline numbers, how to run it, and an index of every protocol document and evidence file below. |
+| [`../evidence/h65-paper1/`](../evidence/h65-paper1/README.md) | The frozen measurement artifacts the paper's numbers were computed from, plus a script that recomputes them from scratch. |
+
 ## The research record
 
 Every performance claim in the top-level README traces into these. They are
