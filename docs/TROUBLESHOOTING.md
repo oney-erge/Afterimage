@@ -63,7 +63,7 @@ and `torch.cuda.is_available()` can both report success on native Windows
 because the two have entirely different platform requirements. There is no
 native-Windows workaround; run under WSL2, where the identical NVIDIA driver
 already exposes the same GPU (`wsl -d <distro> -- nvidia-smi` should show it)
-and Triton installs normally. This is why `./run.sh` inside WSL2, not `.un.ps1` on
+and Triton installs normally. This is why `./run.sh` inside WSL2, not `.\run.ps1` on
 native Windows, is the validated path for the GPU decode kernels on Windows.
 
 ## WSL2: pinned-RAM / `pin_memory()` failures
