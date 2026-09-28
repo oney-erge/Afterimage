@@ -30,4 +30,4 @@ The published value and its source file.
 
 **Anything else**
 Hardware, OS, or protocol differences from
-[`docs/H65.md`](../../docs/H65.md)'s protocol table that might explain a gap.
+[`docs/h65/README.md`](../../docs/h65/README.md)'s protocol table that might explain a gap.

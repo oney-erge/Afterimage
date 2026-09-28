@@ -18,7 +18,7 @@ It recomputes the paper's Table 7, Table 8, and pooled-20-pair numbers, the
 four-token ablation, and the two earlier (pre-head-seed) method-history
 confirmations, directly from the paired per-block data in this folder, and checks
 every one against the value printed in the draft or documented in
-[`docs/H65.md`](../../docs/H65.md#method-history). It prints `ALL CHECKS PASSED` or
+[`docs/h65/README.md`](../../docs/h65/README.md#method-history). It prints `ALL CHECKS PASSED` or
 a list of exactly which number did not match. This is the fastest way to check this
 paper's headline claims without a GPU.
 
@@ -29,18 +29,23 @@ plan having been hand-tuned -- see
 Also no GPU needed, though it does need one file this repository doesn't have (a
 store metadata file, not model weights).
 
+To rerun a measurement rather than recheck one, match the software environment
+first: [`ENVIRONMENT.md`](ENVIRONMENT.md) records the exact package versions
+behind the RTX 5090 numbers, with a pinned
+[`constraints-rtx5090.txt`](constraints-rtx5090.txt).
+
 ## Index: paper claim -> artifact -> protocol
 
 | Paper reference | Claim | Artifact | Protocol | Status |
 |---|---|---|---|---|
-| Abstract; Table 7, row "1" | D1: 8 pairs, 1.018x [0.884, 1.173] | [`llama-rtx5090/D1-confirmation-1/status.json`](llama-rtx5090/D1-confirmation-1/status.json) | [PAPER1_5090_LLAMA_H65_ENDPOINT_CONFIRMATION.md](../../docs/PAPER1_5090_LLAMA_H65_ENDPOINT_CONFIRMATION.md) | confirmatory |
-| Abstract; Table 7, row "2" | D2: 12 pairs, 1.239x [1.128, 1.361] | [`llama-rtx5090/D2-confirmation-2/status.json`](llama-rtx5090/D2-confirmation-2/status.json) | [PAPER1_5090_LLAMA_H65_ENDPOINT_CONFIRMATION2.md](../../docs/PAPER1_5090_LLAMA_H65_ENDPOINT_CONFIRMATION2.md) | confirmatory |
+| Abstract; Table 7, row "1" | D1: 8 pairs, 1.018x [0.884, 1.173] | [`llama-rtx5090/D1-confirmation-1/status.json`](llama-rtx5090/D1-confirmation-1/status.json) | [PAPER1_5090_LLAMA_H65_ENDPOINT_CONFIRMATION.md](../../docs/h65/protocols/PAPER1_5090_LLAMA_H65_ENDPOINT_CONFIRMATION.md) | confirmatory |
+| Abstract; Table 7, row "2" | D2: 12 pairs, 1.239x [1.128, 1.361] | [`llama-rtx5090/D2-confirmation-2/status.json`](llama-rtx5090/D2-confirmation-2/status.json), prompts [`h65-confirmation2-prompts-20260911.json`](llama-rtx5090/D2-confirmation-2/h65-confirmation2-prompts-20260911.json) | [PROTOCOL-h65-endpoint-confirmation2-20260911.md](../../docs/h65/protocols/PROTOCOL-h65-endpoint-confirmation2-20260911.md) | confirmatory |
 | Abstract; Table 7, row "All" | Pooled 20 pairs, 1.145x [1.052, 1.247]; ~23% lower peak GPU | derived from D1 + D2 above | pooling rule fixed in the D2 protocol before D2 ran | confirmatory |
-| Section 5.3 / Table 8 | H6.5 vs. greedy-rule control: ~16% lower latency, ~20% lower peak GPU | [`llama-rtx5090/D4-greedy-mechanism/status.json`](llama-rtx5090/D4-greedy-mechanism/status.json) | [PAPER1_5090_LLAMA_H65_MECHANISM_CONTROL.md](../../docs/PAPER1_5090_LLAMA_H65_MECHANISM_CONTROL.md) | secondary |
-| Not currently in the draft's body; appendix candidate | Four-token ablation: placement-only vs. traffic 1.041x | [`llama-rtx5090/four-token-ablation/status.json`](llama-rtx5090/four-token-ablation/status.json) | [PAPER1_5090_LLAMA_H65_4TOKEN_ABLATION.md](../../docs/PAPER1_5090_LLAMA_H65_4TOKEN_ABLATION.md) | secondary |
-| Not cited in the 2026-09-26 draft | Llama external-framework comparison (Accelerate/AirLLM/exact-8GB) | [`llama-rtx5090/external-comparison/status.json`](llama-rtx5090/external-comparison/status.json) (v5) | [PAPER1_5090_LLAMA_H65_EXTERNAL_COMPARISON.md](../../docs/PAPER1_5090_LLAMA_H65_EXTERNAL_COMPARISON.md) | **descriptive only -- trips its own probe-confound gate; v6 correction never ran** |
+| Section 5.3 / Table 8 | H6.5 vs. greedy-rule control: ~16% lower latency, ~20% lower peak GPU | [`llama-rtx5090/D4-greedy-mechanism/status.json`](llama-rtx5090/D4-greedy-mechanism/status.json) | [PROTOCOL-h65-mechanism-control-20260911.md](../../docs/h65/protocols/PROTOCOL-h65-mechanism-control-20260911.md) | secondary |
+| Not currently in the draft's body; appendix candidate | Four-token ablation: placement-only vs. traffic 1.041x | [`llama-rtx5090/four-token-ablation/status.json`](llama-rtx5090/four-token-ablation/status.json) | [PAPER1_5090_LLAMA_H65_4TOKEN_ABLATION.md](../../docs/h65/protocols/PAPER1_5090_LLAMA_H65_4TOKEN_ABLATION.md) | secondary |
+| Not cited in the 2026-09-26 draft | Llama external-framework comparison (Accelerate/AirLLM/exact-8GB) | [`llama-rtx5090/external-comparison/status.json`](llama-rtx5090/external-comparison/status.json) (v5) | [PROTOCOL-external-comparison-v4-20260911.md](../../docs/h65/protocols/PROTOCOL-external-comparison-v4-20260911.md) | **descriptive only -- trips its own probe-confound gate; v6 correction never ran** |
 | Section 5.4 / Figure 7, Table 9 | Qwen3-14B and Gemma 2 27B on RTX 3080, one-token, "regulated exploratory" | not yet located with certainty -- see [`laptop-rtx3080/UNRESOLVED.md`](laptop-rtx3080/UNRESOLVED.md) | none published yet | **unresolved** |
-| Not cited; disclosed in [docs/H65.md](../../docs/H65.md#method-history) | Two earlier Llama confirmations (2026-08-31 8-block, 2026-09-02 12-pair) of the same causal claim, on a plan built before the 2026-09-09/09-10 planner fixes -- both completed and passed their own protocol's gates | [`llama-rtx5090/method-history/`](llama-rtx5090/method-history/) | [PAPER1_5090_LLAMA_CONFIRMATION.md](../../docs/PAPER1_5090_LLAMA_CONFIRMATION.md), [PAPER1_5090_LLAMA_DIRECT_PAIR.md](../../docs/PAPER1_5090_LLAMA_DIRECT_PAIR.md) | method history, not confirmatory for the current plan |
+| Not cited; disclosed in [docs/h65/README.md](../../docs/h65/README.md#method-history) | Two earlier Llama confirmations (2026-08-31 8-block, 2026-09-02 12-pair) of the same causal claim, on a plan built before the 2026-09-09/09-10 planner fixes -- both completed and passed their own protocol's gates | [`llama-rtx5090/method-history/`](llama-rtx5090/method-history/) | [PAPER1_5090_LLAMA_CONFIRMATION.md](../../docs/h65/protocols/PAPER1_5090_LLAMA_CONFIRMATION.md), [PAPER1_5090_LLAMA_DIRECT_PAIR.md](../../docs/h65/protocols/PAPER1_5090_LLAMA_DIRECT_PAIR.md) | method history, not confirmatory for the current plan |
 
 ## Frozen plans
 

@@ -1,7 +1,7 @@
 """End-to-end smoke test for `afterimage research h65-plan` and the matching
 `afterimage run --representation-policy/--representation-plan-state` flags.
 
-This exercises the CLI wiring added for H6.5 discoverability (docs/H65.md), not
+This exercises the CLI wiring added for H6.5 discoverability (docs/h65/README.md), not
 the planner's search or replay math, which tests/test_h65_planner.py already
 covers directly. It uses a small hand-built but genuinely scheduler-causal
 trace (the same shape as tests/test_h65_planner.py's `_batch_join_fixture`)
@@ -101,7 +101,7 @@ def test_run_exposes_representation_plan_flags():
 
 def test_run_exposes_the_paper_execution_settings():
     # The paper's Llama confirmations ran with reuse_decode_tables=True and a
-    # 0.5 GB vram_safety_margin_gb on an 8 GB budget; docs/H65.md tells
+    # 0.5 GB vram_safety_margin_gb on an 8 GB budget; docs/h65/README.md tells
     # readers to reach for these two flags to match that protocol.
     parser_args = main.__globals__["build_parser"]().parse_args(
         ["run", "some/model", "prompt",

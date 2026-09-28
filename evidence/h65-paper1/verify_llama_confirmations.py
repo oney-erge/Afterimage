@@ -8,8 +8,8 @@ Every artifact this script reads is copied verbatim from the private
 Paper 1 evidence bundle; nothing here recomputes or edits a measurement.
 `MANIFEST.sha256` in this directory records the exact bytes, and those
 hashes match the sidecar `*.status.json.validity.json` files and the
-frozen-plan hashes recorded in docs/PAPER1_5090_LLAMA_H65_ENDPOINT_CONFIRMATION.md
-and docs/PAPER1_5090_LLAMA_H65_4TOKEN_ABLATION.md.
+frozen-plan hashes recorded in the protocols under docs/h65/protocols/. It also
+checks each published protocol against the SHA-256 its run recorded.
 
 Run:
     python evidence/h65-paper1/verify_llama_confirmations.py
@@ -19,20 +19,89 @@ within its stated tolerance of the paper's printed value.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import pathlib
 import statistics
-import sys
 
 HERE = pathlib.Path(__file__).resolve().parent
 LLAMA = HERE / "llama-rtx5090"
+PROTOCOLS = HERE.parents[1] / "docs" / "h65" / "protocols"
 
 FAILURES: list[str] = []
 
 
 def load(path: pathlib.Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _sha256(path: pathlib.Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def check_manifest() -> None:
+    """Every artifact in llama-rtx5090/ must match MANIFEST.sha256, and every
+    artifact there must be listed -- an unlisted file is unverified evidence."""
+    print("=== MANIFEST.sha256 ===")
+    listed = {}
+    for line in (HERE / "MANIFEST.sha256").read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            digest, name = line.split(maxsplit=1)
+            listed[name.lstrip("*")] = digest
+    present = {p.relative_to(LLAMA).as_posix()
+               for p in LLAMA.glob("*/*.json")}
+    bad = [name for name, digest in listed.items()
+           if not (LLAMA / name).exists() or _sha256(LLAMA / name) != digest]
+    unlisted = sorted(present - set(listed))
+    print("  %d listed, %d mismatched, %d unlisted" % (len(listed), len(bad), len(unlisted)))
+    for name in bad:
+        FAILURES.append("MANIFEST mismatch: %s" % name)
+    for name in unlisted:
+        FAILURES.append("artifact not in MANIFEST.sha256: %s" % name)
+
+
+def check_frozen_inputs() -> None:
+    """Every run artifact recorded the SHA-256 of the exact protocol document
+    (and, for D2, the prompt file) it ran under, before any measurement. The
+    published copies in docs/h65/protocols/ must be those exact bytes, or the
+    'frozen before measurement' claim cannot be checked by a reader.
+    """
+    print("\n=== Frozen protocols and inputs vs. the hashes each run recorded ===")
+    artifacts = {
+        "D1": LLAMA / "D1-confirmation-1" / "status.json",
+        "D2": LLAMA / "D2-confirmation-2" / "status.json",
+        "D4": LLAMA / "D4-greedy-mechanism" / "status.json",
+        "4-token": LLAMA / "four-token-ablation" / "status.json",
+        "2026-08-31": LLAMA / "method-history" / "2026-08-31-8block-before-head-seed.json",
+        "2026-09-02": LLAMA / "method-history" / "2026-09-02-12pair-before-head-seed.json",
+    }
+    for label, path in artifacts.items():
+        status = load(path)
+        pinned = []
+        if status.get("protocol_sha256"):
+            pinned.append((status["protocol"], status["protocol_sha256"]))
+        if status.get("confirmatory_protocol_sha256"):
+            pinned.append((status["confirmatory_protocol"],
+                           status["confirmatory_protocol_sha256"]))
+        for amendment in status.get("protocol_amendments") or []:
+            pinned.append((amendment["path"], amendment["sha256"]))
+        for recorded_path, recorded_sha in pinned:
+            name = pathlib.PurePosixPath(str(recorded_path)).name
+            local = PROTOCOLS / name
+            ok = local.exists() and _sha256(local) == recorded_sha
+            print("  [%s] %s: %s" % ("OK  " if ok else "FAIL", label, name))
+            if not ok:
+                FAILURES.append("%s protocol %s does not match its recorded "
+                                "SHA-256 %s" % (label, name, recorded_sha))
+    d2 = load(artifacts["D2"])
+    prompts = LLAMA / "D2-confirmation-2" / "h65-confirmation2-prompts-20260911.json"
+    recorded = [sha for key, sha in (d2.get("immutable_input_sha256") or {}).items()
+                if key.endswith(prompts.name)]
+    ok = bool(recorded) and _sha256(prompts) == recorded[0]
+    print("  [%s] D2: %s" % ("OK  " if ok else "FAIL", prompts.name))
+    if not ok:
+        FAILURES.append("D2 prompt file does not match its recorded SHA-256")
 
 
 def paired_log_ratio_ci(ratios: list[float]) -> tuple[float, float, float]:
@@ -150,7 +219,7 @@ def run_four_token_ablation() -> None:
     speedups = status["geometric_speedups"]
     # Bundle README's "Benefit at four tokens": 1.041x, placement-only vs.
     # traffic (the primary secondary contrast declared in the frozen
-    # protocol, docs/PAPER1_5090_LLAMA_H65_4TOKEN_ABLATION.md).
+    # protocol, docs/h65/protocols/PAPER1_5090_LLAMA_H65_4TOKEN_ABLATION.md).
     check("4-token: placement-only vs traffic",
           speedups["placement_speedup_vs_traffic"], 1.041, 0.002)
     print("  full_speedup_vs_traffic:", speedups["full_speedup_vs_traffic"])
@@ -165,7 +234,7 @@ def run_method_history_confirmation(name: str, path: pathlib.Path,
                                      paper_geomean: float,
                                      paper_ci: tuple[float, float]) -> None:
     """Recompute an earlier (pre-head-seed) confirmation, not cited by the
-    2026-09-26 arXiv draft. These are disclosed in docs/H65.md's method-history
+    2026-09-26 arXiv draft. These are disclosed in docs/h65/README.md's method-history
     section: both completed and passed their own frozen protocol's gates on an
     earlier plan, built before the 2026-09-09 candidate-retention fix
     (commit cb9e320) and the 2026-09-10 output-head search seed (commit
@@ -189,6 +258,8 @@ def run_method_history_confirmation(name: str, path: pathlib.Path,
 
 
 def main() -> int:
+    check_manifest()
+    check_frozen_inputs()
     d1 = run_confirmation(
         "D1: Llama confirmation 1 (n=8)",
         LLAMA / "D1-confirmation-1" / "status.json",

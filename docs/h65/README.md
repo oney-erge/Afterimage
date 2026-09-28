@@ -15,11 +15,11 @@ recorded execution schedule** for a complete candidate placement and scores it b
 predicted request latency, so it can see when a tensor's preparation overlaps GPU
 compute (free) versus sits on the critical path (costly) -- something no
 independently-scored tensor cost can see. See
-[`afterimage/runtime/h65_planner.py`](../afterimage/runtime/h65_planner.py) for the
+[`afterimage/runtime/h65_planner.py`](../../afterimage/runtime/h65_planner.py) for the
 implementation and its own module docstring for the one-paragraph technical summary.
 
 H6.5 is part of the same opt-in research layer as H0-H18
-([RESEARCH_METHODS.md](RESEARCH_METHODS.md)); it is not part of the stable default
+([RESEARCH_METHODS.md](../RESEARCH_METHODS.md)); it is not part of the stable default
 `afterimage run` path, and using it never changes ordinary use of the engine.
 
 ## Headline results
@@ -32,12 +32,12 @@ H6.5 is part of the same opt-in research layer as H0-H18
 | Qwen3-14B / Gemma 2 27B, one token | RTX 3080 Laptop, 4 GB | ~13% lower peak GPU on both; ~4% / ~11% lower latency | regulated exploratory |
 
 The Llama rows are not paraphrased from memory: each traces to a specific frozen
-artifact in [`evidence/h65-paper1/`](../evidence/h65-paper1/README.md), and
-[`evidence/h65-paper1/verify_llama_confirmations.py`](../evidence/h65-paper1/verify_llama_confirmations.py)
+artifact in [`evidence/h65-paper1/`](../../evidence/h65-paper1/README.md), and
+[`evidence/h65-paper1/verify_llama_confirmations.py`](../../evidence/h65-paper1/verify_llama_confirmations.py)
 recomputes every one of them directly from that artifact's paired per-block data --
 run it yourself rather than trusting this table. The laptop row's source artifact is
 not yet identified with certainty; see
-[`evidence/h65-paper1/laptop-rtx3080/UNRESOLVED.md`](../evidence/h65-paper1/laptop-rtx3080/UNRESOLVED.md).
+[`evidence/h65-paper1/laptop-rtx3080/UNRESOLVED.md`](../../evidence/h65-paper1/laptop-rtx3080/UNRESOLVED.md).
 
 ## Try it yourself
 
@@ -79,26 +79,34 @@ afterimage run MODEL "your prompt" --representation-policy per_tensor \
 For the exact matched-budget, counterbalanced, cold-cache, live-validated
 protocol the paper's confirmatory numbers came from (not the offline walkthrough
 above, which skips the paired live blocks a paper-eligible plan needs), see
-[`scripts/run_h65_paper_matrix.py`](../scripts/run_h65_paper_matrix.py) and the
+[`scripts/run_h65_paper_matrix.py`](../../scripts/run_h65_paper_matrix.py) and the
 protocol docs indexed below.
 
 ## Every H6.5 protocol document
 
+Every file in [`protocols/`](protocols/) is the exact frozen text a run ran
+under, byte for byte: each run artifact recorded the SHA-256 of its protocol
+before any measurement, and
+[`verify_llama_confirmations.py`](../../evidence/h65-paper1/verify_llama_confirmations.py)
+checks every published copy against that recorded hash. Some were written with
+CRLF line endings; `.gitattributes` keeps them byte-exact on every platform. Do
+not edit these files -- add a new document instead.
+
 | Document | Study | What it covers |
 |---|---|---|
-| [PAPER1_5090_TEST_PLAN.md](PAPER1_5090_TEST_PLAN.md) | -- | The overall RTX 5090 test plan; start here for context. |
-| [PAPER1_5090_LLAMA_H65_FIXED_PILOT.md](PAPER1_5090_LLAMA_H65_FIXED_PILOT.md), [_V2](PAPER1_5090_LLAMA_H65_FIXED_PILOT_V2.md), [_V3](PAPER1_5090_LLAMA_H65_FIXED_PILOT_V3.md) | pilot | Three iterations of the corrected-placement viability pilot, kept in order for traceability. |
-| [PAPER1_5090_LLAMA_H65_ENDPOINT_SEED_PILOT.md](PAPER1_5090_LLAMA_H65_ENDPOINT_SEED_PILOT.md) | pilot | Seeding the search with the resident output head. |
-| [PAPER1_5090_LLAMA_H65_ENDPOINT_CONFIRMATION.md](PAPER1_5090_LLAMA_H65_ENDPOINT_CONFIRMATION.md) | **D1** | First frozen confirmation (8 pairs). |
-| [PAPER1_5090_LLAMA_H65_ENDPOINT_CONFIRMATION2.md](PAPER1_5090_LLAMA_H65_ENDPOINT_CONFIRMATION2.md) | **D2** | Second frozen confirmation, fresh prompts (12 pairs); the paper's pooled 20-pair claim is D1+D2. |
-| [PAPER1_5090_LLAMA_H65_MECHANISM_CONTROL.md](PAPER1_5090_LLAMA_H65_MECHANISM_CONTROL.md) | **D4** | Schedule-aware search vs. an isolated-cost greedy rule. |
-| [PAPER1_5090_LLAMA_H65_4TOKEN_ABLATION.md](PAPER1_5090_LLAMA_H65_4TOKEN_ABLATION.md) | secondary | Does the one-token result hold at 4 tokens? |
-| [PAPER1_5090_LLAMA_CONFIRMATION.md](PAPER1_5090_LLAMA_CONFIRMATION.md), [PAPER1_5090_LLAMA_DIRECT_PAIR.md](PAPER1_5090_LLAMA_DIRECT_PAIR.md) | method history | Both **completed and passed** their own frozen protocol's gates, on an earlier version of the H6.5 plan -- see "Method history" below. Not cited by the 2026-09-26 draft. |
-| [PAPER1_5090_LLAMA_H65_EXTERNAL_COMPARISON.md](PAPER1_5090_LLAMA_H65_EXTERNAL_COMPARISON.md) | descriptive only | Accelerate/AirLLM/exact-8GB comparison; **not cited by the 2026-09-26 draft** and trips its own probe-confound validity gate. |
+| [PAPER1_5090_TEST_PLAN.md](protocols/PAPER1_5090_TEST_PLAN.md) | -- | The overall RTX 5090 test plan; start here for context. Not hash-pinned by any run. |
+| [PAPER1_5090_LLAMA_H65_FIXED_PILOT.md](protocols/PAPER1_5090_LLAMA_H65_FIXED_PILOT.md), [_V2](protocols/PAPER1_5090_LLAMA_H65_FIXED_PILOT_V2.md), [_V3](protocols/PAPER1_5090_LLAMA_H65_FIXED_PILOT_V3.md) | pilot | Three iterations of the corrected-placement viability pilot. |
+| [PAPER1_5090_LLAMA_H65_ENDPOINT_SEED_PILOT.md](protocols/PAPER1_5090_LLAMA_H65_ENDPOINT_SEED_PILOT.md) | pilot | Seeding the search with the resident output head; built the frozen plans D1, D2, and D4 use. |
+| [PAPER1_5090_LLAMA_H65_ENDPOINT_CONFIRMATION.md](protocols/PAPER1_5090_LLAMA_H65_ENDPOINT_CONFIRMATION.md) | **D1** | First frozen confirmation (8 pairs). |
+| [PROTOCOL-h65-endpoint-confirmation2-20260911.md](protocols/PROTOCOL-h65-endpoint-confirmation2-20260911.md) | **D2** | Second frozen confirmation on 12 fresh prompts, and the pooling rule for the paper's 20-pair claim, fixed before D2 ran. Its prompts are [`h65-confirmation2-prompts-20260911.json`](../../evidence/h65-paper1/llama-rtx5090/D2-confirmation-2/h65-confirmation2-prompts-20260911.json). |
+| [PROTOCOL-h65-mechanism-control-20260911.md](protocols/PROTOCOL-h65-mechanism-control-20260911.md), [amendment 1](protocols/PROTOCOL-h65-mechanism-control-20260911-amendment1.md) | **D4** | Schedule-aware search vs. an isolated-cost greedy rule. The amendment records a harness bug (the worker dropped the knapsack's profile) found and fixed before any v2 measurement; the same fix is now in `scripts/run_bounded_suite.py`. |
+| [PAPER1_5090_LLAMA_H65_4TOKEN_ABLATION.md](protocols/PAPER1_5090_LLAMA_H65_4TOKEN_ABLATION.md) | secondary | Does the one-token result hold at 4 tokens? |
+| [PAPER1_5090_LLAMA_CONFIRMATION.md](protocols/PAPER1_5090_LLAMA_CONFIRMATION.md), [PAPER1_5090_LLAMA_DIRECT_PAIR.md](protocols/PAPER1_5090_LLAMA_DIRECT_PAIR.md) | method history | Both **completed and passed** their own frozen protocol's gates, on an earlier version of the H6.5 plan -- see "Method history" below. Not cited by the 2026-09-26 draft. |
+| [PROTOCOL-external-comparison-v4-20260911.md](protocols/PROTOCOL-external-comparison-v4-20260911.md), [v6](protocols/PROTOCOL-external-comparison-v6-20260911.md) | descriptive only | Accelerate/AirLLM/exact-8GB comparison on Llama. The published run (v5, under the v4 protocol) trips its own probe-confound validity rule and supports no comparative claim; v6 fixed the probe but never ran. **Not cited by the 2026-09-26 draft.** Kept because it is the only artifact that records the RTX 5090 software environment (see [`ENVIRONMENT.md`](../../evidence/h65-paper1/ENVIRONMENT.md)). |
 
 The RTX 3080 laptop side (Qwen3-14B, Gemma 2 27B -- the paper's D6-D10 and Table 9)
 has no protocol docs published yet; see
-[`evidence/h65-paper1/laptop-rtx3080/UNRESOLVED.md`](../evidence/h65-paper1/laptop-rtx3080/UNRESOLVED.md)
+[`evidence/h65-paper1/laptop-rtx3080/UNRESOLVED.md`](../../evidence/h65-paper1/laptop-rtx3080/UNRESOLVED.md)
 for why, and what is needed to close that gap.
 
 ## Method history
@@ -108,7 +116,7 @@ control vs. H6.5) ran and completed before D1/D2, on a Llama-3.3-70B plan built
 before two later fixes: 2026-09-09's candidate-retention fix (commit `cb9e320`)
 and 2026-09-10's output-head search seed (commit `1c6a02c`, which pins the exact
 output head into decoded VRAM before the rest of the search runs -- see
-[`h65_planner.py`'s `_critical_endpoint_seeds`](../afterimage/runtime/h65_planner.py)).
+[`h65_planner.py`'s `_critical_endpoint_seeds`](../../afterimage/runtime/h65_planner.py)).
 Both runs completed and their own frozen protocol's gates all passed; they are
 not cited by the 2026-09-26 arXiv draft.
 
@@ -120,9 +128,9 @@ not cited by the 2026-09-26 arXiv draft.
 | **D2 (2026-09-11, current plan)** | **12** | **1.239x [1.128, 1.361]** | **--** | **10.25 to 7.93 GB** |
 
 Both rows are recomputed from their raw artifacts (not paraphrased) by
-[`evidence/h65-paper1/verify_llama_confirmations.py`](../evidence/h65-paper1/verify_llama_confirmations.py),
+[`evidence/h65-paper1/verify_llama_confirmations.py`](../../evidence/h65-paper1/verify_llama_confirmations.py),
 which also copies the two underlying result files into
-[`evidence/h65-paper1/llama-rtx5090/method-history/`](../evidence/h65-paper1/llama-rtx5090/method-history/).
+[`evidence/h65-paper1/llama-rtx5090/method-history/`](../../evidence/h65-paper1/llama-rtx5090/method-history/).
 The earlier runs' 95% intervals cross or nearly touch 1.0 on the older plan; the
 peak-VRAM reduction (8.00-8.02 GB down to 7.33 GB) is consistent across every
 run in this table, current plan included, and is the more stable of the two

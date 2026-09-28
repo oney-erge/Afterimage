@@ -65,4 +65,4 @@ two later-dated directories whose numbers are close but not exact matches:
    outside its snapshot, or fold the D6-D10 artifacts into a future bundle revision,
    so the "what's public" story is consistent in one place.
 4. Write the missing protocol docs for D6-D10 and the 32-token boundary study
-   (`docs/PAPER1_5090_*` currently only covers the Llama/RTX 5090 side).
+   (`docs/h65/protocols/` currently only covers the Llama/RTX 5090 side).
