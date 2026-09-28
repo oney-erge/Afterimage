@@ -627,7 +627,7 @@ def cool_down(seconds: float, max_temperature_c: float | None) -> dict:
 
     Thermal-clear is therefore mandatory and unconditional: even the fully
     default call ``cool_down(0.0, None)`` -- what every timed cell got
-    whenever a caller (canonical benchmark.sh included) passed neither
+    whenever a caller (canonical scripts/benchmark.sh included) passed neither
     --cooldown-seconds nor --cooldown-max-temp-c -- waits out
     ``thermal_throttled() is True`` up to the 600 s hard ceiling before
     proceeding. This used to be gated behind ``max_temperature_c`` being
@@ -1244,22 +1244,41 @@ def run_deepspeed_zero_inference(method: Method, rendered: list[dict], n_tokens:
                   "pin_memory": pin_memory}
 
 
+def engine_config_for(method: Method, *, critical_profile: str | None = None,
+                      replay_plan: str | None = None, spec_state: str | None = None,
+                      learning: bool | None = None) -> EngineConfig:
+    """Build a method's EngineConfig, filling suite-level artifacts in.
+
+    A caller's critical_profile / replay_plan replaces the method's own value
+    only when one is actually passed. Overwriting it with None made every
+    profiled_knapsack cell fail when a worker called this with
+    critical_profile=None but a cell config that already named its profile --
+    the bug recorded in the H6.5 D4 mechanism control's amendment 1
+    (docs/h65/protocols/PROTOCOL-h65-mechanism-control-20260911-amendment1.md).
+    """
+    values = dict(method.overrides)
+    if values.get("placement_policy") in {"profiled_knapsack", "critical_path"}:
+        if critical_profile is not None:
+            values["critical_path_profile"] = critical_profile
+    if values.get("placement_policy") in {
+            "replay_cem", "replay_qubo", "replay_extent_qubo"}:
+        if replay_plan is not None:
+            values["replay_plan_state"] = replay_plan
+    if method.id in {"spec-hazard", "spec-neural"}:
+        values["spec_policy_state"] = spec_state
+        if learning is not None:
+            values["spec_policy_learn"] = learning
+    return EngineConfig(**values)
+
+
 def engine_for(method: Method, *, critical_profile: str | None = None,
                replay_plan: str | None = None, spec_state: str | None = None,
                learning: bool | None = None):
     from afterimage.runtime.streaming_engine import StreamingLosslessModel
 
-    values = dict(method.overrides)
-    if values.get("placement_policy") in {"profiled_knapsack", "critical_path"}:
-        values["critical_path_profile"] = critical_profile
-    if values.get("placement_policy") in {
-            "replay_cem", "replay_qubo", "replay_extent_qubo"}:
-        values["replay_plan_state"] = replay_plan
-    if method.id in {"spec-hazard", "spec-neural"}:
-        values["spec_policy_state"] = spec_state
-        if learning is not None:
-            values["spec_policy_learn"] = learning
-    cfg = EngineConfig(**values)
+    cfg = engine_config_for(method, critical_profile=critical_profile,
+                            replay_plan=replay_plan, spec_state=spec_state,
+                            learning=learning)
     return StreamingLosslessModel(MODEL, STORE, device="cuda", config=cfg), cfg
 
 
