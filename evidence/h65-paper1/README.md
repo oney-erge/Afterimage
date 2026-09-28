@@ -3,20 +3,21 @@
 Raw, immutable measurement artifacts behind the numbers in "Schedule-Aware Exact
 Weight Placement for Large Language Models with Limited GPU Memory" (Oney Erge,
 arXiv draft frozen 2026-09-26). Every JSON file here is copied byte-for-byte from
-the original private campaign output; `MANIFEST.sha256` records the exact bytes, and
+the original campaign output; `MANIFEST.sha256` records the exact bytes, and
 those hashes match both each artifact's own `.validity.json` sidecar and the frozen
 plan hashes recorded in the protocol docs under [`docs/`](../../docs). Nothing in
 this folder was recomputed, filtered, or reweighted before being copied here.
 
-**Run [`verify_llama_confirmations.py`](verify_llama_confirmations.py) yourself:**
+**Run [`verify_paper_evidence.py`](verify_paper_evidence.py) yourself:**
 
 ```bash
-python evidence/h65-paper1/verify_llama_confirmations.py
+python evidence/h65-paper1/verify_paper_evidence.py
 ```
 
-It recomputes the paper's Table 7, Table 8, and pooled-20-pair numbers, the
-four-token ablation, and the two earlier (pre-head-seed) method-history
-confirmations, directly from the paired per-block data in this folder, and checks
+It recomputes every number in the paper's Tables 7 to 10 (Llama on the RTX 5090;
+Qwen3-14B and Gemma 2 27B on the RTX 3080 Laptop), the four-token ablation, the
+external-package claims, and the two earlier (pre-head-seed) method-history
+confirmations, directly from the per-block data in this folder, and checks
 every one against the value printed in the draft or documented in
 [`docs/h65/README.md`](../../docs/h65/README.md#method-history). It prints `ALL CHECKS PASSED` or
 a list of exactly which number did not match. This is the fastest way to check this
@@ -44,7 +45,9 @@ behind the RTX 5090 numbers, with a pinned
 | Section 5.3 / Table 8 | H6.5 vs. greedy-rule control: ~16% lower latency, ~20% lower peak GPU | [`llama-rtx5090/D4-greedy-mechanism/status.json`](llama-rtx5090/D4-greedy-mechanism/status.json) | [PROTOCOL-h65-mechanism-control-20260911.md](../../docs/h65/protocols/PROTOCOL-h65-mechanism-control-20260911.md) | secondary |
 | Not currently in the draft's body; appendix candidate | Four-token ablation: placement-only vs. traffic 1.041x | [`llama-rtx5090/four-token-ablation/status.json`](llama-rtx5090/four-token-ablation/status.json) | [PAPER1_5090_LLAMA_H65_4TOKEN_ABLATION.md](../../docs/h65/protocols/PAPER1_5090_LLAMA_H65_4TOKEN_ABLATION.md) | secondary |
 | Not cited in the 2026-09-26 draft | Llama external-framework comparison (Accelerate/AirLLM/exact-8GB) | [`llama-rtx5090/external-comparison/status.json`](llama-rtx5090/external-comparison/status.json) (v5) | [PROTOCOL-external-comparison-v4-20260911.md](../../docs/h65/protocols/PROTOCOL-external-comparison-v4-20260911.md) | **descriptive only -- trips its own probe-confound gate; v6 correction never ran** |
-| Section 5.4 / Figure 7, Table 9 | Qwen3-14B and Gemma 2 27B on RTX 3080, one-token, "regulated exploratory" | not yet located with certainty -- see [`laptop-rtx3080/UNRESOLVED.md`](laptop-rtx3080/UNRESOLVED.md) | none published yet | **unresolved** |
+| Table 9 | Qwen3-14B (D6) and Gemma 2 27B (D9) on the RTX 3080 Laptop: H6.5 vs. traffic, disk, and minimum-memory controls | [`laptop-rtx3080/D6-qwen-matched/`](laptop-rtx3080/D6-qwen-matched/), [`laptop-rtx3080/D9-gemma-matched/`](laptop-rtx3080/D9-gemma-matched/) | no separate frozen document; see [`laptop-rtx3080/`](laptop-rtx3080/README.md) | regulated exploratory |
+| Section 5.4 / Figure 7 | External packages on the laptop (D7 Qwen, D10 Gemma) | [`laptop-rtx3080/D7-qwen-external/`](laptop-rtx3080/D7-qwen-external/), [`laptop-rtx3080/D10-gemma-external/`](laptop-rtx3080/D10-gemma-external/) | as above | regulated exploratory |
+| Section 5.5 / Table 10 / Figure 8 | Qwen3-14B at 32 output tokens (D8) | [`laptop-rtx3080/D8-qwen-32token/`](laptop-rtx3080/D8-qwen-32token/) | as above | regulated exploratory |
 | Not cited; disclosed in [docs/h65/README.md](../../docs/h65/README.md#method-history) | Two earlier Llama confirmations (2026-08-31 8-block, 2026-09-02 12-pair) of the same causal claim, on a plan built before the 2026-09-09/09-10 planner fixes -- both completed and passed their own protocol's gates | [`llama-rtx5090/method-history/`](llama-rtx5090/method-history/) | [PAPER1_5090_LLAMA_CONFIRMATION.md](../../docs/h65/protocols/PAPER1_5090_LLAMA_CONFIRMATION.md), [PAPER1_5090_LLAMA_DIRECT_PAIR.md](../../docs/h65/protocols/PAPER1_5090_LLAMA_DIRECT_PAIR.md) | method history, not confirmatory for the current plan |
 
 ## Frozen plans
@@ -56,7 +59,7 @@ immutable placement plans every Llama study above replays against:
 - `h65-endpoint-plan.json` -- H6.5 placement-only endpoint plan, SHA-256 `a31a0d4bbe2309998514c70182a04bce2024c2a385dc99bfd1c0585f0aa3ebb4`
 - `h65-full-plan.json` -- full H6.5 endpoint/representation plan (four-token ablation only), SHA-256 `99d0869e6be6b0e2e55249a3a2a189d8ef24889581b951163dd39e0bbe762f67`
 
-These match the hashes printed in the protocol docs above; `verify_llama_confirmations.py`
+These match the hashes printed in the protocol docs above; `verify_paper_evidence.py`
 confirms the *result* artifacts are paired against the plan the protocol committed to
 before any measurement ran. To independently re-derive the placement-only endpoint
 plan itself from its calibration traces (no GPU needed, one input file missing --
@@ -78,17 +81,12 @@ see below), use [`llama-rtx5090/plan-rederivation/`](llama-rtx5090/plan-rederiva
   (The two `method-history/` runs above are the exception: both are genuinely
   *completed, passing* runs of an earlier plan, not invalid or superseded artifacts,
   so they are published rather than left out.)
-- The RTX 3080 laptop (Qwen3-14B, Gemma 2 27B) result files -- see the unresolved
-  note below.
 
-## Known open item: laptop (RTX 3080) evidence
+## Re-deriving the laptop H6.5 plans
 
-See [`laptop-rtx3080/UNRESOLVED.md`](laptop-rtx3080/UNRESOLVED.md). Short version:
-during this audit, the numeric search that located every Llama artifact above could
-not identify a single, unambiguous source directory for the paper's Table 9
-(Qwen3-14B, Gemma 2 27B on RTX 3080). The paper's own numbers point most strongly at
-a `paper-h65-gemma-practical-20260909-r2b` / `paper-h65-qwen-practical-20260909-r2`
-pair of campaign directories (both post-date the private evidence bundle's own
-`corpus-3080/` snapshot, which the bundle's README says has **no Gemma runs at all**
--- a direct contradiction with the paper that needs the author's confirmation before
-publishing this half of the evidence).
+The laptop plans can be rebuilt from scratch, not just checked:
+[`laptop-rtx3080/plan-rederivation/rederive_laptop_plans.py`](laptop-rtx3080/plan-rederivation/rederive_laptop_plans.py)
+reruns the H6.5 search on a CPU from the published store manifests and
+calibration traces, using the planner from the commit those plans were built
+with, and reproduces both plans byte for byte. See
+[`laptop-rtx3080/README.md`](laptop-rtx3080/README.md).

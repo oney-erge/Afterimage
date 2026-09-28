@@ -50,7 +50,7 @@ Before a release:
 
 1. The CPU checks above, clean.
 2. The GPU test suite on a CUDA host (see above).
-3. `python evidence/h65-paper1/verify_llama_confirmations.py` -- proves the
+3. `python evidence/h65-paper1/verify_paper_evidence.py` -- proves the
    H6.5 evidence bundle itself is internally consistent (no GPU needed).
 4. One real `afterimage compress` + `afterimage run` on a small model
    (`afterimage quickstart`), on the platform you're about to claim support

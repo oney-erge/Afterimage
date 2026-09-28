@@ -5,6 +5,23 @@ No tagged releases yet. Everything below is `main`.
 
 ## [Unreleased]
 
+### RTX 3080 Laptop evidence and full plan re-derivation
+
+- Published the laptop studies behind the paper's Tables 9-10 and Figures 7-8
+  (D6-D10), identified from the paper's own analysis code, with their frozen
+  plans. `verify_paper_evidence.py` (renamed from `verify_llama_confirmations.py`)
+  now recomputes every laptop number too, and checks each study's clean-tree,
+  paper-eligible, and Table 4 environment records.
+- `laptop-rtx3080/plan-rederivation/rederive_laptop_plans.py` rebuilds both laptop
+  H6.5 plans on a CPU from published manifests and traces, with the planner from
+  the recorded commit, and matches them byte for byte. CI runs it.
+- Documented that the laptop plans came from an earlier planner version than the
+  Llama plans, and added `constraints-rtx3080.txt`.
+- Plans, traces, profiles, manifests, and other JSON artifacts are now written with
+  LF on every platform; they hashed differently on Windows and Linux before.
+- Fixed a stray carriage return that corrupted `.\run.ps1` in
+  `docs/TROUBLESHOOTING.md`; `tests/test_repo_hygiene.py` now catches that class.
+
 ### Evidence integrity, structure, and drift guards
 
 - Frozen protocols now live in `docs/h65/protocols/` as the exact bytes each
@@ -16,7 +33,7 @@ No tagged releases yet. Everything below is `main`.
 - Published D2's twelve prompts, which were private, and a pinned
   `evidence/h65-paper1/constraints-rtx5090.txt` + `ENVIRONMENT.md` recording
   the RTX 5090 software versions.
-- `verify_llama_confirmations.py` now also checks the evidence manifest and
+- `verify_paper_evidence.py` (renamed from `verify_llama_confirmations.py`) now also checks the evidence manifest and
   every frozen protocol and input against its recorded hash; CI runs it, and a
   new `scripts/check_links.py`, on every PR.
 - Fixed `scripts/run_bounded_suite.py` overwriting a cell's own knapsack

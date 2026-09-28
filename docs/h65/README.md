@@ -29,15 +29,13 @@ H6.5 is part of the same opt-in research layer as H0-H18
 | H6.5 vs. traffic-density control, pooled 20 pairs | Llama-3.3-70B, RTX 5090, 8 GB | 1.145x latency [1.052, 1.247]; ~23% lower peak GPU | confirmatory |
 | H6.5 vs. isolated-cost greedy control, 6 blocks | Llama-3.3-70B, RTX 5090, 8 GB | ~16% lower latency, ~20% lower peak GPU | secondary |
 | H6.5 at 4 generated tokens vs. traffic, 3 blocks | Llama-3.3-70B, RTX 5090, 8 GB | 1.041x (placement-only arm) | secondary |
-| Qwen3-14B / Gemma 2 27B, one token | RTX 3080 Laptop, 4 GB | ~13% lower peak GPU on both; ~4% / ~11% lower latency | regulated exploratory |
+| H6.5 vs. traffic-density control, Qwen3-14B / Gemma 2 27B, one token, 8 blocks x 4 prompts | RTX 3080 Laptop, 4 GB | 4.4% / 11.4% lower latency; 12.7% / 12.3% lower peak GPU | regulated exploratory |
 
-The Llama rows are not paraphrased from memory: each traces to a specific frozen
-artifact in [`evidence/h65-paper1/`](../../evidence/h65-paper1/README.md), and
-[`evidence/h65-paper1/verify_llama_confirmations.py`](../../evidence/h65-paper1/verify_llama_confirmations.py)
-recomputes every one of them directly from that artifact's paired per-block data --
-run it yourself rather than trusting this table. The laptop row's source artifact is
-not yet identified with certainty; see
-[`evidence/h65-paper1/laptop-rtx3080/UNRESOLVED.md`](../../evidence/h65-paper1/laptop-rtx3080/UNRESOLVED.md).
+Every row traces to a specific frozen artifact in
+[`evidence/h65-paper1/`](../../evidence/h65-paper1/README.md), and
+[`evidence/h65-paper1/verify_paper_evidence.py`](../../evidence/h65-paper1/verify_paper_evidence.py)
+recomputes each one from that artifact's per-block data -- run it yourself rather
+than trusting this table.
 
 ## Try it yourself
 
@@ -87,7 +85,7 @@ protocol docs indexed below.
 Every file in [`protocols/`](protocols/) is the exact frozen text a run ran
 under, byte for byte: each run artifact recorded the SHA-256 of its protocol
 before any measurement, and
-[`verify_llama_confirmations.py`](../../evidence/h65-paper1/verify_llama_confirmations.py)
+[`verify_paper_evidence.py`](../../evidence/h65-paper1/verify_paper_evidence.py)
 checks every published copy against that recorded hash. Some were written with
 CRLF line endings; `.gitattributes` keeps them byte-exact on every platform. Do
 not edit these files -- add a new document instead.
@@ -104,10 +102,11 @@ not edit these files -- add a new document instead.
 | [PAPER1_5090_LLAMA_CONFIRMATION.md](protocols/PAPER1_5090_LLAMA_CONFIRMATION.md), [PAPER1_5090_LLAMA_DIRECT_PAIR.md](protocols/PAPER1_5090_LLAMA_DIRECT_PAIR.md) | method history | Both **completed and passed** their own frozen protocol's gates, on an earlier version of the H6.5 plan -- see "Method history" below. Not cited by the 2026-09-26 draft. |
 | [PROTOCOL-external-comparison-v4-20260911.md](protocols/PROTOCOL-external-comparison-v4-20260911.md), [v6](protocols/PROTOCOL-external-comparison-v6-20260911.md) | descriptive only | Accelerate/AirLLM/exact-8GB comparison on Llama. The published run (v5, under the v4 protocol) trips its own probe-confound validity rule and supports no comparative claim; v6 fixed the probe but never ran. **Not cited by the 2026-09-26 draft.** Kept because it is the only artifact that records the RTX 5090 software environment (see [`ENVIRONMENT.md`](../../evidence/h65-paper1/ENVIRONMENT.md)). |
 
-The RTX 3080 laptop side (Qwen3-14B, Gemma 2 27B -- the paper's D6-D10 and Table 9)
-has no protocol docs published yet; see
-[`evidence/h65-paper1/laptop-rtx3080/UNRESOLVED.md`](../../evidence/h65-paper1/laptop-rtx3080/UNRESOLVED.md)
-for why, and what is needed to close that gap.
+The RTX 3080 Laptop studies (Qwen3-14B and Gemma 2 27B: the paper's D6-D10,
+Tables 9-10, Figures 7-8) are regulated exploratory runs, not governed by a
+separately frozen protocol document. Their design, gates, provenance, and
+environment are recorded inside each artifact; see
+[`evidence/h65-paper1/laptop-rtx3080/`](../../evidence/h65-paper1/laptop-rtx3080/README.md).
 
 ## Method history
 
@@ -128,7 +127,7 @@ not cited by the 2026-09-26 arXiv draft.
 | **D2 (2026-09-11, current plan)** | **12** | **1.239x [1.128, 1.361]** | **--** | **10.25 to 7.93 GB** |
 
 Both rows are recomputed from their raw artifacts (not paraphrased) by
-[`evidence/h65-paper1/verify_llama_confirmations.py`](../../evidence/h65-paper1/verify_llama_confirmations.py),
+[`evidence/h65-paper1/verify_paper_evidence.py`](../../evidence/h65-paper1/verify_paper_evidence.py),
 which also copies the two underlying result files into
 [`evidence/h65-paper1/llama-rtx5090/method-history/`](../../evidence/h65-paper1/llama-rtx5090/method-history/).
 The earlier runs' 95% intervals cross or nearly touch 1.0 on the older plan; the
@@ -137,6 +136,18 @@ run in this table, current plan included, and is the more stable of the two
 measured effects. If the paper or a reader wants a methods-development
 narrative rather than only the final confirmed numbers, this table and its
 underlying artifacts are the source for it.
+
+## Which planner built which plan
+
+The paper calls every placement below "H6.5", but two versions of the planner
+built them. Both versions are public commits, and each plan re-derives from its
+recorded inputs with its own version.
+
+| Plans | Studies | Planner commit | Differences from the later version |
+|---|---|---|---|
+| Qwen3-14B and Gemma 2 27B, RTX 3080 Laptop | D6-D10 (Tables 9-10, Figures 7-8) | `6c37700` | Before the 2026-09-09 candidate-retention fix and the 2026-09-10 output-head search seed. Re-derived byte for byte by [`rederive_laptop_plans.py`](../../evidence/h65-paper1/laptop-rtx3080/plan-rederivation/rederive_laptop_plans.py). |
+| Llama-3.3-70B, RTX 5090 | D1, D2, D4, four-token ablation (Tables 7-8) | `1c6a02c` | Includes both changes; the planner code has not changed since. Re-derivable with [`rederive_plan.py`](../../evidence/h65-paper1/llama-rtx5090/plan-rederivation/rederive_plan.py) given the Llama store manifest (see its README). |
+| Llama-3.3-70B, RTX 5090 | 2026-08-31 and 2026-09-02 confirmations (method history above) | before both changes | Not cited by the paper. |
 
 ## Honest limits, carried over from the paper's own scope section
 

@@ -40,10 +40,28 @@ been installed and run end to end outside the original machine.
 
 ## System A: RTX 3080 Laptop (Qwen3-14B, Gemma 2 27B)
 
-Per the paper's Table 4: PyTorch 2.6.0+cu124 / CUDA 12.4, driver 596.49,
-Transformers 5.12.1, Accelerate 1.14.0, AirLLM 3.2.0, DeepSpeed 0.19.5, WSL2.
-**Not verified against a run artifact**: the laptop evidence is not yet
-published (see [`laptop-rtx3080/UNRESOLVED.md`](laptop-rtx3080/UNRESOLVED.md)).
+Recorded by every laptop study itself (the `environment` block of each file in
+[`laptop-rtx3080/`](laptop-rtx3080/README.md)), and checked by
+`verify_paper_evidence.py`:
+
+| Item | Version |
+|---|---|
+| GPU / driver / CUDA | RTX 3080 Laptop GPU (8.59 GB) / 596.49 / 12.4 |
+| OS | WSL2, Linux 6.18.33.2 |
+| CPU | AMD Ryzen 9 5900HS |
+| Python | 3.12.3 |
+| torch | 2.6.0+cu124 |
+| transformers / accelerate | 5.12.1 / 1.14.0 |
+| safetensors / numpy | 0.8.0 / 2.5.2 |
+| airllm / deepspeed / dfloat11 (baselines) | 3.2.0 / 0.19.5 / 0.5.0 |
+
+```bash
+pip install torch==2.6.0 --index-url https://download.pytorch.org/whl/cu124
+pip install -e ".[gpu,server,bench]" -c evidence/h65-paper1/constraints-rtx3080.txt
+```
+
+[`constraints-rtx3080.txt`](constraints-rtx3080.txt) was checked the same way as
+the RTX 5090 file.
 
 ## Why this matters for the numbers
 

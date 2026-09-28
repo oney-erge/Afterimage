@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
-"""Recompute the Llama-3.3-70B / RTX 5090 headline numbers from the frozen
-artifacts in this folder and check them against the numbers printed in the
-arXiv draft (Oney Erge, "Schedule-Aware Exact Weight Placement for Large
-Language Models with Limited GPU Memory", draft frozen 2026-09-26).
+"""Recompute every number the H6.5 paper reports from the raw artifacts in
+this folder and check each against the value printed in the arXiv draft
+(Oney Erge, "Schedule-Aware Exact Weight Placement for Large Language Models
+with Limited GPU Memory", draft frozen 2026-09-26): the Llama-3.3-70B / RTX
+5090 confirmations (Tables 7-8) and the Qwen3-14B / Gemma 2 27B / RTX 3080
+Laptop studies (Tables 9-10 and the external-package comparisons).
 
-Every artifact this script reads is copied verbatim from the private
-Paper 1 evidence bundle; nothing here recomputes or edits a measurement.
-`MANIFEST.sha256` in this directory records the exact bytes, and those
-hashes match the sidecar `*.status.json.validity.json` files and the
-frozen-plan hashes recorded in the protocols under docs/h65/protocols/. It also
-checks each published protocol against the SHA-256 its run recorded.
+Every artifact here is copied verbatim from the original campaign output;
+nothing recomputes or edits a measurement. The script also checks
+MANIFEST.sha256, every frozen protocol against the SHA-256 its run recorded,
+every frozen laptop plan against the hash its run recorded, and that each
+laptop study ran from a clean tree and was marked paper-eligible.
 
-Run:
-    python evidence/h65-paper1/verify_llama_confirmations.py
+Run (stdlib only, no GPU, a few seconds):
+    python evidence/h65-paper1/verify_paper_evidence.py
 
-Exits 0 and prints "ALL CHECKS PASSED" only if every recomputed number is
-within its stated tolerance of the paper's printed value.
+Exits 0 and prints "ALL CHECKS PASSED" only if every check passes.
 """
 from __future__ import annotations
 
@@ -27,6 +27,7 @@ import statistics
 
 HERE = pathlib.Path(__file__).resolve().parent
 LLAMA = HERE / "llama-rtx5090"
+LAPTOP = HERE / "laptop-rtx3080"
 PROTOCOLS = HERE.parents[1] / "docs" / "h65" / "protocols"
 
 FAILURES: list[str] = []
@@ -41,18 +42,17 @@ def _sha256(path: pathlib.Path) -> str:
 
 
 def check_manifest() -> None:
-    """Every artifact in llama-rtx5090/ must match MANIFEST.sha256, and every
-    artifact there must be listed -- an unlisted file is unverified evidence."""
+    """Every JSON artifact in this folder must match MANIFEST.sha256, and every
+    one must be listed -- an unlisted file is unverified evidence."""
     print("=== MANIFEST.sha256 ===")
     listed = {}
     for line in (HERE / "MANIFEST.sha256").read_text(encoding="utf-8").splitlines():
         if line.strip():
             digest, name = line.split(maxsplit=1)
             listed[name.lstrip("*")] = digest
-    present = {p.relative_to(LLAMA).as_posix()
-               for p in LLAMA.glob("*/*.json")}
+    present = {p.relative_to(HERE).as_posix() for p in HERE.rglob("*.json")}
     bad = [name for name, digest in listed.items()
-           if not (LLAMA / name).exists() or _sha256(LLAMA / name) != digest]
+           if not (HERE / name).exists() or _sha256(HERE / name) != digest]
     unlisted = sorted(present - set(listed))
     print("  %d listed, %d mismatched, %d unlisted" % (len(listed), len(bad), len(unlisted)))
     for name in bad:
@@ -257,9 +257,120 @@ def run_method_history_confirmation(name: str, path: pathlib.Path,
         methods["h65-placement-only"]["median_whole_cell_peak_vram_gb"]))
 
 
+LAPTOP_STUDIES = {
+    "D6": "D6-qwen-matched/qwen3-14b-h65-matched-ttft-practical-20260909-r2-1tok.json",
+    "D7": "D7-qwen-external/qwen3-14b-h65-external-ttft-practical-20260909-r2-1tok.json",
+    "D8": "D8-qwen-32token/qwen3-14b-h65-matched-decode-practical-20260909-r2-32tok.json",
+    "D9": "D9-gemma-matched/gemma2-27b-h65-matched-ttft-practical-20260909-r2b-1tok.json",
+    "D10": "D10-gemma-external/gemma2-27b-h65-external-ttft-practical-20260909-r2b-1tok.json",
+}
+# Paper Table 4, System A. Checked against each artifact's own environment block.
+SYSTEM_A = {"torch": "2.6.0+cu124", "cuda": "12.4", "driver": "596.49"}
+SYSTEM_A_PACKAGES = {"transformers": "5.12.1", "accelerate": "1.14.0",
+                     "airllm": "3.2.0", "deepspeed": "0.19.5"}
+# Artifact method ids -> the paper's names.
+ARMS = {"exact-min": "minimum-memory control", "simple-v4-r8": "traffic control",
+        "disk-frozen": "disk control", "h65-selected": "H6.5"}
+
+
+def _laptop(label: str) -> dict:
+    return load(LAPTOP / LAPTOP_STUDIES[label])
+
+
+def _rows(status: dict) -> dict[str, list[dict]]:
+    return {method["method_id"]: method["rows"] for method in status["methods"]}
+
+
+def check_laptop_provenance() -> None:
+    print("\n=== RTX 3080 Laptop studies: provenance and frozen plans ===")
+    for label in LAPTOP_STUDIES:
+        status = _laptop(label)
+        env = status["environment"]
+        clean = (status.get("paper_eligible") is True and status.get("status") == "complete"
+                 and not env.get("git_status") and bool(env.get("git_commit")))
+        matches = (all(env.get(k) == v for k, v in SYSTEM_A.items())
+                   and all(env.get("packages", {}).get(k) == v
+                           for k, v in SYSTEM_A_PACKAGES.items()))
+        ok = clean and matches
+        print("  [%s] %s: clean tree at %s, paper-eligible, Table 4 environment"
+              % ("OK  " if ok else "FAIL", label, str(env.get("git_commit"))[:7]))
+        if not ok:
+            FAILURES.append("%s provenance or environment does not match" % label)
+    for label, model in (("D6", "qwen3-14b"), ("D9", "gemma2-27b")):
+        for plan in _laptop(label).get("afterimage_plan_methods") or []:
+            name = "%s-%s" % (model, pathlib.PurePosixPath(plan["snapshot_path"]).name)
+            local = LAPTOP / "frozen-plans" / name
+            ok = local.exists() and _sha256(local) == plan["source_sha256"]
+            print("  [%s] %s: frozen plan %s" % ("OK  " if ok else "FAIL", label, name))
+            if not ok:
+                FAILURES.append("%s frozen plan %s does not match its recorded hash"
+                                % (label, name))
+
+
+def check_laptop_tables() -> None:
+    print("\n=== Table 9: laptop same-engine comparisons (D6 Qwen3-14B, D9 Gemma 2 27B) ===")
+    table9 = {
+        "D6": {"exact-min": (29.00, 1.928), "simple-v4-r8": (14.87, 4.136),
+               "disk-frozen": (19.27, 2.300), "h65-selected": (14.21, 3.611)},
+        "D9": {"exact-min": (89.04, 2.884), "simple-v4-r8": (41.58, 4.171),
+               "disk-frozen": (43.97, 2.713), "h65-selected": (36.84, 3.660)},
+    }
+    for label, expected in table9.items():
+        rows = _rows(_laptop(label))
+        for method, (seconds, peak) in expected.items():
+            got_s = geomean([r["wall_seconds"] for r in rows[method]])
+            got_p = max(r["peak_vram_gb"] for r in rows[method])
+            check("%s %s geomean request time (s)" % (label, ARMS[method]), got_s, seconds, 0.005)
+            check("%s %s max peak incremental GPU (GB)" % (label, ARMS[method]), got_p, peak, 0.0005)
+        traffic = expected["simple-v4-r8"]
+        h65 = expected["h65-selected"]
+        print("  %s H6.5 vs traffic: %.1f%% lower latency, %.1f%% lower peak GPU"
+              % (label, 100 * (1 - h65[0] / traffic[0]), 100 * (1 - h65[1] / traffic[1])))
+
+    print("\n=== Table 10 and Section 5.5: Qwen3-14B at 32 output tokens (D8) ===")
+    rows = _rows(_laptop("D8"))
+    table10 = {"exact-min": (28.83, 18.71, 2.8, 14.1), "disk-frozen": (17.93, 18.77, 6.6, 17.8),
+               "simple-v4-r8": (26.02, 11.81, 23.7, 47.2), "h65-selected": (22.95, 12.22, 19.2, 51.7)}
+    for method, (wall, read, miss, wait) in table10.items():
+        r = rows[method]
+        hits = sum(x.get("prefetch_hits", 0) for x in r)
+        misses = sum(x.get("prefetch_misses", 0) for x in r)
+        check("D8 %s wall/output-token (s)" % ARMS[method],
+              statistics.fmean(x["wall_seconds"] / x["output_tokens"] for x in r), wall, 0.005)
+        check("D8 %s read/output-token (GB)" % ARMS[method],
+              statistics.fmean(x["gb_read_per_token"] for x in r), read, 0.005)
+        check("D8 %s host-prefetch miss rate (%%)" % ARMS[method],
+              100 * misses / (hits + misses), miss, 0.05)
+        check("D8 %s host-prefetch wait (s)" % ARMS[method],
+              statistics.fmean(x["prefetch_wait_seconds"] for x in r), wait, 0.05)
+    check("D8 disk control geomean request time (s), paper 'about 574'",
+          geomean([x["wall_seconds"] for x in rows["disk-frozen"]]), 574, 0.5)
+    check("D8 H6.5 geomean request time (s), paper 'about 734'",
+          geomean([x["wall_seconds"] for x in rows["h65-selected"]]), 734, 0.5)
+
+    print("\n=== Section 5.4 / Figure 7: external package operating points (D7, D10) ===")
+    for label in ("D7", "D10"):
+        rows = _rows(_laptop(label))
+        times = {m: geomean([x["wall_seconds"] for x in r]) for m, r in rows.items()}
+        fastest = min(times, key=times.get)
+        ok = fastest == "h65-selected"
+        print("  [%s] %s: H6.5 has the shortest one-token request time (%s)"
+              % ("OK  " if ok else "FAIL", label,
+                 ", ".join("%s %.2fs" % (m, t) for m, t in sorted(times.items(), key=lambda kv: kv[1]))))
+        if not ok:
+            FAILURES.append("%s: fastest configuration is %s, not H6.5" % (label, fastest))
+    rows = _rows(_laptop("D10"))
+    check("D10 H6.5 max peak incremental GPU (GB), paper 'about 3.7'",
+          max(x["peak_vram_gb"] for x in rows["h65-selected"]), 3.7, 0.05)
+    check("D10 DeepSpeed max peak incremental GPU (GB), paper '7.4'",
+          max(x["peak_vram_gb"] for x in rows["deepspeed-zero-inference"]), 7.4, 0.05)
+
+
 def main() -> int:
     check_manifest()
     check_frozen_inputs()
+    check_laptop_provenance()
+    check_laptop_tables()
     d1 = run_confirmation(
         "D1: Llama confirmation 1 (n=8)",
         LLAMA / "D1-confirmation-1" / "status.json",

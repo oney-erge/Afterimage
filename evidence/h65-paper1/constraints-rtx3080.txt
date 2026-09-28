@@ -1,0 +1,16 @@
+# Package versions recorded on the RTX 3080 Laptop (System A) that ran the
+# Qwen3-14B and Gemma 2 27B studies (paper Tables 9-10, D6-D10). Source: the
+# "environment" block that every one of those five artifacts records itself.
+# See ENVIRONMENT.md.
+#
+# Linux or WSL2, Python 3.12, NVIDIA driver 596.49, CUDA 12.4:
+#   pip install torch==2.6.0 --index-url https://download.pytorch.org/whl/cu124
+#   pip install -e ".[gpu,server,bench]" -c evidence/h65-paper1/constraints-rtx3080.txt
+torch==2.6.0
+transformers==5.12.1
+accelerate==1.14.0
+safetensors==0.8.0
+numpy==2.5.2
+airllm==3.2.0
+deepspeed==0.19.5
+dfloat11==0.5.0

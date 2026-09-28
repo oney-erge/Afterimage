@@ -10,7 +10,7 @@ Point at the exact paper table/figure, or the row in
 
 **What you ran**
 ```
-python evidence/h65-paper1/verify_llama_confirmations.py
+python evidence/h65-paper1/verify_paper_evidence.py
 # or: afterimage research h65-plan ...
 # or: your own command
 ```

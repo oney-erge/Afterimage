@@ -17,7 +17,7 @@ RTX 3080 Laptop, with Llama-3.3-70B-Instruct at an 8 GB logical VRAM / 16 GB RAM
 placement budget, cold page cache, one timed token after one warm-up token.
 Frozen plans, protocols, and raw artifacts are in
 [`evidence/h65-paper1/`](../evidence/h65-paper1/README.md), and
-`python evidence/h65-paper1/verify_llama_confirmations.py` recomputes every row
+`python evidence/h65-paper1/verify_paper_evidence.py` recomputes every row
 below from them.
 
 | Run | Pairs | Traffic / H6.5 latency, 95% CI | Peak VRAM, traffic to H6.5 | Grade |
@@ -34,6 +34,27 @@ passed their own gates with smaller effects: 1.066x [0.949, 1.198] (8 blocks,
 2026-08-31) and 1.052x [1.000, 1.107] (12 pairs, 2026-09-02), each 8.0 to 7.33
 GB peak VRAM. They stay in this log; see
 [h65/README.md](h65/README.md#method-history).
+
+## 2026-09-09 H6.5 on Qwen3-14B and Gemma 2 27B (this RTX 3080 Laptop)
+
+Regulated exploratory runs at a 4 GB VRAM / 8 GB RAM placement budget, 8 blocks x
+4 prompts, one token, cold page cache, clean tree at commit `6c37700`. Raw
+artifacts, frozen plans, and a script that rebuilds both H6.5 plans byte for byte
+are in [`evidence/h65-paper1/laptop-rtx3080/`](../evidence/h65-paper1/laptop-rtx3080/README.md).
+Geometric-mean request time, then maximum peak incremental GPU memory:
+
+| Arm | Qwen3-14B | Gemma 2 27B |
+|---|---|---|
+| minimum-memory control | 29.00 s, 1.928 GB | 89.04 s, 2.884 GB |
+| traffic control | 14.87 s, 4.136 GB | 41.58 s, 4.171 GB |
+| disk control | 19.27 s, 2.300 GB | 43.97 s, 2.713 GB |
+| H6.5 | 14.21 s, 3.611 GB | 36.84 s, 3.660 GB |
+
+H6.5 vs. traffic: 4.4% / 11.4% lower latency, 12.7% / 12.3% lower peak GPU memory.
+At 32 output tokens (Qwen3-14B, 3 blocks) the preference reverses: the disk
+control finishes in 574 s against H6.5's 734 s. These plans came from the planner
+before the 2026-09-09 candidate-retention fix and the 2026-09-10 output-head seed;
+see [h65/README.md](h65/README.md#which-planner-built-which-plan).
 
 ## 2026-08-26 AirLLM baseline refresh to 3.2.0
 

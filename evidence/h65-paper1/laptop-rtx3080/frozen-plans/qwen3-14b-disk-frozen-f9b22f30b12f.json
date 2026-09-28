@@ -1,0 +1,4444 @@
+{
+  "choices": {
+    "model.embed_tokens.weight": {
+      "tensor_key": "model.embed_tokens.weight",
+      "name": "row_gather",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 1555824640,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "lm_head.weight": {
+      "tensor_key": "lm_head.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 1036023836,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.0.input_layernorm.weight": {
+      "tensor_key": "model.layers.0.input_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.0.mlp.down_proj.weight": {
+      "tensor_key": "model.layers.0.mlp.down_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118962840,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.0.mlp.gate_proj.weight": {
+      "tensor_key": "model.layers.0.mlp.gate_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 119092518,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.0.mlp.up_proj.weight": {
+      "tensor_key": "model.layers.0.mlp.up_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118884263,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.0.post_attention_layernorm.weight": {
+      "tensor_key": "model.layers.0.post_attention_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.0.self_attn.k_norm.weight": {
+      "tensor_key": "model.layers.0.self_attn.k_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.0.self_attn.k_proj.weight": {
+      "tensor_key": "model.layers.0.self_attn.k_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7282559,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.0.self_attn.o_proj.weight": {
+      "tensor_key": "model.layers.0.self_attn.o_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35192233,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.0.self_attn.q_norm.weight": {
+      "tensor_key": "model.layers.0.self_attn.q_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.0.self_attn.q_proj.weight": {
+      "tensor_key": "model.layers.0.self_attn.q_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35269670,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.0.self_attn.v_proj.weight": {
+      "tensor_key": "model.layers.0.self_attn.v_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7290211,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.1.input_layernorm.weight": {
+      "tensor_key": "model.layers.1.input_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.1.mlp.down_proj.weight": {
+      "tensor_key": "model.layers.1.mlp.down_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 127126312,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.1.mlp.gate_proj.weight": {
+      "tensor_key": "model.layers.1.mlp.gate_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 130828042,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.1.mlp.up_proj.weight": {
+      "tensor_key": "model.layers.1.mlp.up_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 127598960,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.1.post_attention_layernorm.weight": {
+      "tensor_key": "model.layers.1.post_attention_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.1.self_attn.k_norm.weight": {
+      "tensor_key": "model.layers.1.self_attn.k_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.1.self_attn.k_proj.weight": {
+      "tensor_key": "model.layers.1.self_attn.k_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7409028,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.1.self_attn.o_proj.weight": {
+      "tensor_key": "model.layers.1.self_attn.o_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35189967,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.1.self_attn.q_norm.weight": {
+      "tensor_key": "model.layers.1.self_attn.q_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.1.self_attn.q_proj.weight": {
+      "tensor_key": "model.layers.1.self_attn.q_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 36197691,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.1.self_attn.v_proj.weight": {
+      "tensor_key": "model.layers.1.self_attn.v_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7382234,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.2.input_layernorm.weight": {
+      "tensor_key": "model.layers.2.input_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.2.mlp.down_proj.weight": {
+      "tensor_key": "model.layers.2.mlp.down_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 127534852,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.2.mlp.gate_proj.weight": {
+      "tensor_key": "model.layers.2.mlp.gate_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 130819310,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.2.mlp.up_proj.weight": {
+      "tensor_key": "model.layers.2.mlp.up_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 127838216,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.2.post_attention_layernorm.weight": {
+      "tensor_key": "model.layers.2.post_attention_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.2.self_attn.k_norm.weight": {
+      "tensor_key": "model.layers.2.self_attn.k_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.2.self_attn.k_proj.weight": {
+      "tensor_key": "model.layers.2.self_attn.k_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7297956,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.2.self_attn.o_proj.weight": {
+      "tensor_key": "model.layers.2.self_attn.o_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35096805,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.2.self_attn.q_norm.weight": {
+      "tensor_key": "model.layers.2.self_attn.q_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.2.self_attn.q_proj.weight": {
+      "tensor_key": "model.layers.2.self_attn.q_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35180831,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.2.self_attn.v_proj.weight": {
+      "tensor_key": "model.layers.2.self_attn.v_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7286995,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.3.mlp.gate_proj.weight": {
+      "tensor_key": "model.layers.3.mlp.gate_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 129088604,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.3.self_attn.k_norm.weight": {
+      "tensor_key": "model.layers.3.self_attn.k_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.3.self_attn.k_proj.weight": {
+      "tensor_key": "model.layers.3.self_attn.k_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7299473,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.3.self_attn.o_proj.weight": {
+      "tensor_key": "model.layers.3.self_attn.o_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35073668,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.3.self_attn.q_norm.weight": {
+      "tensor_key": "model.layers.3.self_attn.q_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.3.self_attn.q_proj.weight": {
+      "tensor_key": "model.layers.3.self_attn.q_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35168135,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.3.self_attn.v_proj.weight": {
+      "tensor_key": "model.layers.3.self_attn.v_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7284190,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.3.input_layernorm.weight": {
+      "tensor_key": "model.layers.3.input_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.3.mlp.down_proj.weight": {
+      "tensor_key": "model.layers.3.mlp.down_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 125941998,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.3.mlp.up_proj.weight": {
+      "tensor_key": "model.layers.3.mlp.up_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 125929598,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.3.post_attention_layernorm.weight": {
+      "tensor_key": "model.layers.3.post_attention_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.4.input_layernorm.weight": {
+      "tensor_key": "model.layers.4.input_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.4.mlp.down_proj.weight": {
+      "tensor_key": "model.layers.4.mlp.down_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 124061015,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.4.mlp.gate_proj.weight": {
+      "tensor_key": "model.layers.4.mlp.gate_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 126513197,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.4.mlp.up_proj.weight": {
+      "tensor_key": "model.layers.4.mlp.up_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 124790960,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.4.post_attention_layernorm.weight": {
+      "tensor_key": "model.layers.4.post_attention_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.4.self_attn.k_norm.weight": {
+      "tensor_key": "model.layers.4.self_attn.k_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.4.self_attn.k_proj.weight": {
+      "tensor_key": "model.layers.4.self_attn.k_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7289599,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.4.self_attn.o_proj.weight": {
+      "tensor_key": "model.layers.4.self_attn.o_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35127305,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.4.self_attn.q_norm.weight": {
+      "tensor_key": "model.layers.4.self_attn.q_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.4.self_attn.q_proj.weight": {
+      "tensor_key": "model.layers.4.self_attn.q_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35166973,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.4.self_attn.v_proj.weight": {
+      "tensor_key": "model.layers.4.self_attn.v_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7294136,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.5.input_layernorm.weight": {
+      "tensor_key": "model.layers.5.input_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.5.mlp.down_proj.weight": {
+      "tensor_key": "model.layers.5.mlp.down_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 120681743,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.5.mlp.gate_proj.weight": {
+      "tensor_key": "model.layers.5.mlp.gate_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 123306549,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.5.mlp.up_proj.weight": {
+      "tensor_key": "model.layers.5.mlp.up_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 120972536,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.5.post_attention_layernorm.weight": {
+      "tensor_key": "model.layers.5.post_attention_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.5.self_attn.k_norm.weight": {
+      "tensor_key": "model.layers.5.self_attn.k_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.5.self_attn.k_proj.weight": {
+      "tensor_key": "model.layers.5.self_attn.k_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7303462,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.5.self_attn.o_proj.weight": {
+      "tensor_key": "model.layers.5.self_attn.o_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35211342,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.5.self_attn.q_norm.weight": {
+      "tensor_key": "model.layers.5.self_attn.q_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.5.self_attn.q_proj.weight": {
+      "tensor_key": "model.layers.5.self_attn.q_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35232665,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.5.self_attn.v_proj.weight": {
+      "tensor_key": "model.layers.5.self_attn.v_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7303090,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.6.input_layernorm.weight": {
+      "tensor_key": "model.layers.6.input_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.6.mlp.down_proj.weight": {
+      "tensor_key": "model.layers.6.mlp.down_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118826283,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.6.mlp.gate_proj.weight": {
+      "tensor_key": "model.layers.6.mlp.gate_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118895422,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.6.mlp.up_proj.weight": {
+      "tensor_key": "model.layers.6.mlp.up_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 119241977,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.6.post_attention_layernorm.weight": {
+      "tensor_key": "model.layers.6.post_attention_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.6.self_attn.k_norm.weight": {
+      "tensor_key": "model.layers.6.self_attn.k_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.6.self_attn.k_proj.weight": {
+      "tensor_key": "model.layers.6.self_attn.k_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7311293,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.6.self_attn.o_proj.weight": {
+      "tensor_key": "model.layers.6.self_attn.o_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35192486,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.6.self_attn.q_norm.weight": {
+      "tensor_key": "model.layers.6.self_attn.q_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.6.self_attn.q_proj.weight": {
+      "tensor_key": "model.layers.6.self_attn.q_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35178343,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.6.self_attn.v_proj.weight": {
+      "tensor_key": "model.layers.6.self_attn.v_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7295579,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.7.input_layernorm.weight": {
+      "tensor_key": "model.layers.7.input_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.7.mlp.down_proj.weight": {
+      "tensor_key": "model.layers.7.mlp.down_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118696339,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.7.mlp.gate_proj.weight": {
+      "tensor_key": "model.layers.7.mlp.gate_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118530032,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.7.mlp.up_proj.weight": {
+      "tensor_key": "model.layers.7.mlp.up_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118712705,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.7.post_attention_layernorm.weight": {
+      "tensor_key": "model.layers.7.post_attention_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.7.self_attn.k_norm.weight": {
+      "tensor_key": "model.layers.7.self_attn.k_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.7.self_attn.k_proj.weight": {
+      "tensor_key": "model.layers.7.self_attn.k_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7302298,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.7.self_attn.o_proj.weight": {
+      "tensor_key": "model.layers.7.self_attn.o_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35093304,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.7.self_attn.q_norm.weight": {
+      "tensor_key": "model.layers.7.self_attn.q_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.7.self_attn.q_proj.weight": {
+      "tensor_key": "model.layers.7.self_attn.q_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35201536,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.7.self_attn.v_proj.weight": {
+      "tensor_key": "model.layers.7.self_attn.v_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7287110,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.8.input_layernorm.weight": {
+      "tensor_key": "model.layers.8.input_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.8.mlp.down_proj.weight": {
+      "tensor_key": "model.layers.8.mlp.down_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118495737,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.8.mlp.gate_proj.weight": {
+      "tensor_key": "model.layers.8.mlp.gate_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118651489,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.8.mlp.up_proj.weight": {
+      "tensor_key": "model.layers.8.mlp.up_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118499269,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.8.post_attention_layernorm.weight": {
+      "tensor_key": "model.layers.8.post_attention_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.8.self_attn.k_norm.weight": {
+      "tensor_key": "model.layers.8.self_attn.k_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.8.self_attn.k_proj.weight": {
+      "tensor_key": "model.layers.8.self_attn.k_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7298061,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.8.self_attn.o_proj.weight": {
+      "tensor_key": "model.layers.8.self_attn.o_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35083708,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.8.self_attn.q_norm.weight": {
+      "tensor_key": "model.layers.8.self_attn.q_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.8.self_attn.q_proj.weight": {
+      "tensor_key": "model.layers.8.self_attn.q_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35194379,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.8.self_attn.v_proj.weight": {
+      "tensor_key": "model.layers.8.self_attn.v_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7280650,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.9.mlp.gate_proj.weight": {
+      "tensor_key": "model.layers.9.mlp.gate_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118317111,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.9.self_attn.k_norm.weight": {
+      "tensor_key": "model.layers.9.self_attn.k_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.9.self_attn.k_proj.weight": {
+      "tensor_key": "model.layers.9.self_attn.k_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7300356,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.9.self_attn.o_proj.weight": {
+      "tensor_key": "model.layers.9.self_attn.o_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35096372,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.9.self_attn.q_norm.weight": {
+      "tensor_key": "model.layers.9.self_attn.q_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.9.self_attn.q_proj.weight": {
+      "tensor_key": "model.layers.9.self_attn.q_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35210304,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.9.self_attn.v_proj.weight": {
+      "tensor_key": "model.layers.9.self_attn.v_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7281141,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.10.input_layernorm.weight": {
+      "tensor_key": "model.layers.10.input_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.10.mlp.down_proj.weight": {
+      "tensor_key": "model.layers.10.mlp.down_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118314598,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.10.mlp.gate_proj.weight": {
+      "tensor_key": "model.layers.10.mlp.gate_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118242245,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.10.mlp.up_proj.weight": {
+      "tensor_key": "model.layers.10.mlp.up_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118287241,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.10.post_attention_layernorm.weight": {
+      "tensor_key": "model.layers.10.post_attention_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.10.self_attn.k_norm.weight": {
+      "tensor_key": "model.layers.10.self_attn.k_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.10.self_attn.k_proj.weight": {
+      "tensor_key": "model.layers.10.self_attn.k_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7292997,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.10.self_attn.o_proj.weight": {
+      "tensor_key": "model.layers.10.self_attn.o_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35047707,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.10.self_attn.q_norm.weight": {
+      "tensor_key": "model.layers.10.self_attn.q_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.10.self_attn.q_proj.weight": {
+      "tensor_key": "model.layers.10.self_attn.q_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35135179,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.10.self_attn.v_proj.weight": {
+      "tensor_key": "model.layers.10.self_attn.v_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7273303,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.11.input_layernorm.weight": {
+      "tensor_key": "model.layers.11.input_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.11.mlp.down_proj.weight": {
+      "tensor_key": "model.layers.11.mlp.down_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118342834,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.11.mlp.gate_proj.weight": {
+      "tensor_key": "model.layers.11.mlp.gate_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118267317,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.11.mlp.up_proj.weight": {
+      "tensor_key": "model.layers.11.mlp.up_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118303119,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.11.post_attention_layernorm.weight": {
+      "tensor_key": "model.layers.11.post_attention_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.11.self_attn.k_norm.weight": {
+      "tensor_key": "model.layers.11.self_attn.k_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.11.self_attn.k_proj.weight": {
+      "tensor_key": "model.layers.11.self_attn.k_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7286518,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.11.self_attn.o_proj.weight": {
+      "tensor_key": "model.layers.11.self_attn.o_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35082810,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.11.self_attn.q_norm.weight": {
+      "tensor_key": "model.layers.11.self_attn.q_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.11.self_attn.q_proj.weight": {
+      "tensor_key": "model.layers.11.self_attn.q_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35130107,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.11.self_attn.v_proj.weight": {
+      "tensor_key": "model.layers.11.self_attn.v_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7280663,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.12.input_layernorm.weight": {
+      "tensor_key": "model.layers.12.input_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.12.mlp.down_proj.weight": {
+      "tensor_key": "model.layers.12.mlp.down_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118430440,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.12.mlp.gate_proj.weight": {
+      "tensor_key": "model.layers.12.mlp.gate_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118336850,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.12.mlp.up_proj.weight": {
+      "tensor_key": "model.layers.12.mlp.up_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118363662,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.12.post_attention_layernorm.weight": {
+      "tensor_key": "model.layers.12.post_attention_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.12.self_attn.k_norm.weight": {
+      "tensor_key": "model.layers.12.self_attn.k_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.12.self_attn.k_proj.weight": {
+      "tensor_key": "model.layers.12.self_attn.k_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7316813,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.12.self_attn.o_proj.weight": {
+      "tensor_key": "model.layers.12.self_attn.o_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35103966,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.12.self_attn.q_norm.weight": {
+      "tensor_key": "model.layers.12.self_attn.q_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.12.self_attn.q_proj.weight": {
+      "tensor_key": "model.layers.12.self_attn.q_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35182525,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.12.self_attn.v_proj.weight": {
+      "tensor_key": "model.layers.12.self_attn.v_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7286859,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.13.input_layernorm.weight": {
+      "tensor_key": "model.layers.13.input_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.13.mlp.down_proj.weight": {
+      "tensor_key": "model.layers.13.mlp.down_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118491204,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.13.mlp.gate_proj.weight": {
+      "tensor_key": "model.layers.13.mlp.gate_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118432816,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.13.mlp.up_proj.weight": {
+      "tensor_key": "model.layers.13.mlp.up_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118423452,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.13.post_attention_layernorm.weight": {
+      "tensor_key": "model.layers.13.post_attention_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.13.self_attn.k_norm.weight": {
+      "tensor_key": "model.layers.13.self_attn.k_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.13.self_attn.k_proj.weight": {
+      "tensor_key": "model.layers.13.self_attn.k_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7311208,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.13.self_attn.o_proj.weight": {
+      "tensor_key": "model.layers.13.self_attn.o_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35157792,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.13.self_attn.q_norm.weight": {
+      "tensor_key": "model.layers.13.self_attn.q_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.13.self_attn.q_proj.weight": {
+      "tensor_key": "model.layers.13.self_attn.q_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35202731,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.13.self_attn.v_proj.weight": {
+      "tensor_key": "model.layers.13.self_attn.v_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7313314,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.14.input_layernorm.weight": {
+      "tensor_key": "model.layers.14.input_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.14.mlp.down_proj.weight": {
+      "tensor_key": "model.layers.14.mlp.down_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118489052,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.14.mlp.gate_proj.weight": {
+      "tensor_key": "model.layers.14.mlp.gate_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118464117,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.14.mlp.up_proj.weight": {
+      "tensor_key": "model.layers.14.mlp.up_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118435976,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.14.post_attention_layernorm.weight": {
+      "tensor_key": "model.layers.14.post_attention_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.14.self_attn.k_norm.weight": {
+      "tensor_key": "model.layers.14.self_attn.k_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.14.self_attn.k_proj.weight": {
+      "tensor_key": "model.layers.14.self_attn.k_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7314494,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.14.self_attn.o_proj.weight": {
+      "tensor_key": "model.layers.14.self_attn.o_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35169370,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.14.self_attn.q_norm.weight": {
+      "tensor_key": "model.layers.14.self_attn.q_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.14.self_attn.q_proj.weight": {
+      "tensor_key": "model.layers.14.self_attn.q_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35231762,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.14.self_attn.v_proj.weight": {
+      "tensor_key": "model.layers.14.self_attn.v_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7307465,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.15.mlp.gate_proj.weight": {
+      "tensor_key": "model.layers.15.mlp.gate_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118469219,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.15.self_attn.k_norm.weight": {
+      "tensor_key": "model.layers.15.self_attn.k_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.15.self_attn.k_proj.weight": {
+      "tensor_key": "model.layers.15.self_attn.k_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7314809,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.15.self_attn.o_proj.weight": {
+      "tensor_key": "model.layers.15.self_attn.o_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35113451,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.15.self_attn.q_norm.weight": {
+      "tensor_key": "model.layers.15.self_attn.q_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.15.self_attn.q_proj.weight": {
+      "tensor_key": "model.layers.15.self_attn.q_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35210768,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.15.self_attn.v_proj.weight": {
+      "tensor_key": "model.layers.15.self_attn.v_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7288385,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.9.input_layernorm.weight": {
+      "tensor_key": "model.layers.9.input_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.9.mlp.down_proj.weight": {
+      "tensor_key": "model.layers.9.mlp.down_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118436068,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.9.mlp.up_proj.weight": {
+      "tensor_key": "model.layers.9.mlp.up_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118366480,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.9.post_attention_layernorm.weight": {
+      "tensor_key": "model.layers.9.post_attention_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.15.input_layernorm.weight": {
+      "tensor_key": "model.layers.15.input_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.15.mlp.down_proj.weight": {
+      "tensor_key": "model.layers.15.mlp.down_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118514706,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.15.mlp.up_proj.weight": {
+      "tensor_key": "model.layers.15.mlp.up_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118442061,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.15.post_attention_layernorm.weight": {
+      "tensor_key": "model.layers.15.post_attention_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.16.input_layernorm.weight": {
+      "tensor_key": "model.layers.16.input_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.16.mlp.down_proj.weight": {
+      "tensor_key": "model.layers.16.mlp.down_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118554842,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.16.mlp.gate_proj.weight": {
+      "tensor_key": "model.layers.16.mlp.gate_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118556778,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.16.mlp.up_proj.weight": {
+      "tensor_key": "model.layers.16.mlp.up_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118510081,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.16.post_attention_layernorm.weight": {
+      "tensor_key": "model.layers.16.post_attention_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.16.self_attn.k_norm.weight": {
+      "tensor_key": "model.layers.16.self_attn.k_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.16.self_attn.k_proj.weight": {
+      "tensor_key": "model.layers.16.self_attn.k_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7313389,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.16.self_attn.o_proj.weight": {
+      "tensor_key": "model.layers.16.self_attn.o_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35152015,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.16.self_attn.q_norm.weight": {
+      "tensor_key": "model.layers.16.self_attn.q_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.16.self_attn.q_proj.weight": {
+      "tensor_key": "model.layers.16.self_attn.q_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35224407,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.16.self_attn.v_proj.weight": {
+      "tensor_key": "model.layers.16.self_attn.v_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7296132,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.17.input_layernorm.weight": {
+      "tensor_key": "model.layers.17.input_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.17.mlp.down_proj.weight": {
+      "tensor_key": "model.layers.17.mlp.down_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118589407,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.17.mlp.gate_proj.weight": {
+      "tensor_key": "model.layers.17.mlp.gate_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118588719,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.17.mlp.up_proj.weight": {
+      "tensor_key": "model.layers.17.mlp.up_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118517523,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.17.post_attention_layernorm.weight": {
+      "tensor_key": "model.layers.17.post_attention_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.17.self_attn.k_norm.weight": {
+      "tensor_key": "model.layers.17.self_attn.k_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.17.self_attn.k_proj.weight": {
+      "tensor_key": "model.layers.17.self_attn.k_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7327588,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.17.self_attn.o_proj.weight": {
+      "tensor_key": "model.layers.17.self_attn.o_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35188865,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.17.self_attn.q_norm.weight": {
+      "tensor_key": "model.layers.17.self_attn.q_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.17.self_attn.q_proj.weight": {
+      "tensor_key": "model.layers.17.self_attn.q_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35287040,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.17.self_attn.v_proj.weight": {
+      "tensor_key": "model.layers.17.self_attn.v_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7291661,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.18.input_layernorm.weight": {
+      "tensor_key": "model.layers.18.input_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.18.mlp.down_proj.weight": {
+      "tensor_key": "model.layers.18.mlp.down_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118616435,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.18.mlp.gate_proj.weight": {
+      "tensor_key": "model.layers.18.mlp.gate_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118710115,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.18.mlp.up_proj.weight": {
+      "tensor_key": "model.layers.18.mlp.up_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118576152,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.18.post_attention_layernorm.weight": {
+      "tensor_key": "model.layers.18.post_attention_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.18.self_attn.k_norm.weight": {
+      "tensor_key": "model.layers.18.self_attn.k_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.18.self_attn.k_proj.weight": {
+      "tensor_key": "model.layers.18.self_attn.k_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7339394,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.18.self_attn.o_proj.weight": {
+      "tensor_key": "model.layers.18.self_attn.o_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35203978,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.18.self_attn.q_norm.weight": {
+      "tensor_key": "model.layers.18.self_attn.q_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.18.self_attn.q_proj.weight": {
+      "tensor_key": "model.layers.18.self_attn.q_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35291749,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.18.self_attn.v_proj.weight": {
+      "tensor_key": "model.layers.18.self_attn.v_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7292939,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.19.input_layernorm.weight": {
+      "tensor_key": "model.layers.19.input_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.19.mlp.down_proj.weight": {
+      "tensor_key": "model.layers.19.mlp.down_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118639020,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.19.mlp.gate_proj.weight": {
+      "tensor_key": "model.layers.19.mlp.gate_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118748169,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.19.mlp.up_proj.weight": {
+      "tensor_key": "model.layers.19.mlp.up_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118587280,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.19.post_attention_layernorm.weight": {
+      "tensor_key": "model.layers.19.post_attention_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.19.self_attn.k_norm.weight": {
+      "tensor_key": "model.layers.19.self_attn.k_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.19.self_attn.k_proj.weight": {
+      "tensor_key": "model.layers.19.self_attn.k_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7326682,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.19.self_attn.o_proj.weight": {
+      "tensor_key": "model.layers.19.self_attn.o_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35190910,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.19.self_attn.q_norm.weight": {
+      "tensor_key": "model.layers.19.self_attn.q_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.19.self_attn.q_proj.weight": {
+      "tensor_key": "model.layers.19.self_attn.q_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35311454,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.19.self_attn.v_proj.weight": {
+      "tensor_key": "model.layers.19.self_attn.v_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7292340,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.20.input_layernorm.weight": {
+      "tensor_key": "model.layers.20.input_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.20.mlp.down_proj.weight": {
+      "tensor_key": "model.layers.20.mlp.down_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118663530,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.20.mlp.gate_proj.weight": {
+      "tensor_key": "model.layers.20.mlp.gate_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118821912,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.20.mlp.up_proj.weight": {
+      "tensor_key": "model.layers.20.mlp.up_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118598336,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.20.post_attention_layernorm.weight": {
+      "tensor_key": "model.layers.20.post_attention_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.20.self_attn.k_norm.weight": {
+      "tensor_key": "model.layers.20.self_attn.k_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.20.self_attn.k_proj.weight": {
+      "tensor_key": "model.layers.20.self_attn.k_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7328325,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.20.self_attn.o_proj.weight": {
+      "tensor_key": "model.layers.20.self_attn.o_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35214906,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.20.self_attn.q_norm.weight": {
+      "tensor_key": "model.layers.20.self_attn.q_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.20.self_attn.q_proj.weight": {
+      "tensor_key": "model.layers.20.self_attn.q_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35296193,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.20.self_attn.v_proj.weight": {
+      "tensor_key": "model.layers.20.self_attn.v_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7315041,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.21.mlp.gate_proj.weight": {
+      "tensor_key": "model.layers.21.mlp.gate_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118711096,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.21.self_attn.k_norm.weight": {
+      "tensor_key": "model.layers.21.self_attn.k_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.21.self_attn.k_proj.weight": {
+      "tensor_key": "model.layers.21.self_attn.k_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7332740,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.21.self_attn.o_proj.weight": {
+      "tensor_key": "model.layers.21.self_attn.o_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35205677,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.21.self_attn.q_norm.weight": {
+      "tensor_key": "model.layers.21.self_attn.q_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.21.self_attn.q_proj.weight": {
+      "tensor_key": "model.layers.21.self_attn.q_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35309012,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.21.self_attn.v_proj.weight": {
+      "tensor_key": "model.layers.21.self_attn.v_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7302122,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.21.input_layernorm.weight": {
+      "tensor_key": "model.layers.21.input_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.21.mlp.down_proj.weight": {
+      "tensor_key": "model.layers.21.mlp.down_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118597831,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.21.mlp.up_proj.weight": {
+      "tensor_key": "model.layers.21.mlp.up_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118519070,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.21.post_attention_layernorm.weight": {
+      "tensor_key": "model.layers.21.post_attention_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.22.input_layernorm.weight": {
+      "tensor_key": "model.layers.22.input_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.22.mlp.down_proj.weight": {
+      "tensor_key": "model.layers.22.mlp.down_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118586253,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.22.mlp.gate_proj.weight": {
+      "tensor_key": "model.layers.22.mlp.gate_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118704280,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.22.mlp.up_proj.weight": {
+      "tensor_key": "model.layers.22.mlp.up_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118533364,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.22.post_attention_layernorm.weight": {
+      "tensor_key": "model.layers.22.post_attention_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.22.self_attn.k_norm.weight": {
+      "tensor_key": "model.layers.22.self_attn.k_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.22.self_attn.k_proj.weight": {
+      "tensor_key": "model.layers.22.self_attn.k_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7328245,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.22.self_attn.o_proj.weight": {
+      "tensor_key": "model.layers.22.self_attn.o_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35195774,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.22.self_attn.q_norm.weight": {
+      "tensor_key": "model.layers.22.self_attn.q_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.22.self_attn.q_proj.weight": {
+      "tensor_key": "model.layers.22.self_attn.q_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35277212,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.22.self_attn.v_proj.weight": {
+      "tensor_key": "model.layers.22.self_attn.v_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7299167,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.23.input_layernorm.weight": {
+      "tensor_key": "model.layers.23.input_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.23.mlp.down_proj.weight": {
+      "tensor_key": "model.layers.23.mlp.down_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118532226,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.23.mlp.gate_proj.weight": {
+      "tensor_key": "model.layers.23.mlp.gate_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118692245,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.23.mlp.up_proj.weight": {
+      "tensor_key": "model.layers.23.mlp.up_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118489830,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.23.post_attention_layernorm.weight": {
+      "tensor_key": "model.layers.23.post_attention_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.23.self_attn.k_norm.weight": {
+      "tensor_key": "model.layers.23.self_attn.k_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.23.self_attn.k_proj.weight": {
+      "tensor_key": "model.layers.23.self_attn.k_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7328627,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.23.self_attn.o_proj.weight": {
+      "tensor_key": "model.layers.23.self_attn.o_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35156452,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.23.self_attn.q_norm.weight": {
+      "tensor_key": "model.layers.23.self_attn.q_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.23.self_attn.q_proj.weight": {
+      "tensor_key": "model.layers.23.self_attn.q_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35313005,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.23.self_attn.v_proj.weight": {
+      "tensor_key": "model.layers.23.self_attn.v_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7309459,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.24.input_layernorm.weight": {
+      "tensor_key": "model.layers.24.input_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.24.mlp.down_proj.weight": {
+      "tensor_key": "model.layers.24.mlp.down_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118471287,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.24.mlp.gate_proj.weight": {
+      "tensor_key": "model.layers.24.mlp.gate_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118562885,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.24.mlp.up_proj.weight": {
+      "tensor_key": "model.layers.24.mlp.up_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118415181,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.24.post_attention_layernorm.weight": {
+      "tensor_key": "model.layers.24.post_attention_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.24.self_attn.k_norm.weight": {
+      "tensor_key": "model.layers.24.self_attn.k_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.24.self_attn.k_proj.weight": {
+      "tensor_key": "model.layers.24.self_attn.k_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7316735,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.24.self_attn.o_proj.weight": {
+      "tensor_key": "model.layers.24.self_attn.o_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35191560,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.24.self_attn.q_norm.weight": {
+      "tensor_key": "model.layers.24.self_attn.q_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.24.self_attn.q_proj.weight": {
+      "tensor_key": "model.layers.24.self_attn.q_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35289552,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.24.self_attn.v_proj.weight": {
+      "tensor_key": "model.layers.24.self_attn.v_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7302120,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.25.input_layernorm.weight": {
+      "tensor_key": "model.layers.25.input_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.25.mlp.down_proj.weight": {
+      "tensor_key": "model.layers.25.mlp.down_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118467260,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.25.mlp.gate_proj.weight": {
+      "tensor_key": "model.layers.25.mlp.gate_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118583455,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.25.mlp.up_proj.weight": {
+      "tensor_key": "model.layers.25.mlp.up_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118437872,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.25.post_attention_layernorm.weight": {
+      "tensor_key": "model.layers.25.post_attention_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.25.self_attn.k_norm.weight": {
+      "tensor_key": "model.layers.25.self_attn.k_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.25.self_attn.k_proj.weight": {
+      "tensor_key": "model.layers.25.self_attn.k_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7311972,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.25.self_attn.o_proj.weight": {
+      "tensor_key": "model.layers.25.self_attn.o_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35155146,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.25.self_attn.q_norm.weight": {
+      "tensor_key": "model.layers.25.self_attn.q_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.25.self_attn.q_proj.weight": {
+      "tensor_key": "model.layers.25.self_attn.q_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35267782,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.25.self_attn.v_proj.weight": {
+      "tensor_key": "model.layers.25.self_attn.v_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7304838,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.26.input_layernorm.weight": {
+      "tensor_key": "model.layers.26.input_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.26.mlp.down_proj.weight": {
+      "tensor_key": "model.layers.26.mlp.down_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118462444,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.26.mlp.gate_proj.weight": {
+      "tensor_key": "model.layers.26.mlp.gate_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118590973,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.26.mlp.up_proj.weight": {
+      "tensor_key": "model.layers.26.mlp.up_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118438195,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.26.post_attention_layernorm.weight": {
+      "tensor_key": "model.layers.26.post_attention_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.26.self_attn.k_norm.weight": {
+      "tensor_key": "model.layers.26.self_attn.k_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.26.self_attn.k_proj.weight": {
+      "tensor_key": "model.layers.26.self_attn.k_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7314920,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.26.self_attn.o_proj.weight": {
+      "tensor_key": "model.layers.26.self_attn.o_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35134210,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.26.self_attn.q_norm.weight": {
+      "tensor_key": "model.layers.26.self_attn.q_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.26.self_attn.q_proj.weight": {
+      "tensor_key": "model.layers.26.self_attn.q_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35275127,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.26.self_attn.v_proj.weight": {
+      "tensor_key": "model.layers.26.self_attn.v_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7297626,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.27.mlp.gate_proj.weight": {
+      "tensor_key": "model.layers.27.mlp.gate_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118596620,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.27.self_attn.k_norm.weight": {
+      "tensor_key": "model.layers.27.self_attn.k_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.27.self_attn.k_proj.weight": {
+      "tensor_key": "model.layers.27.self_attn.k_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7314520,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.27.self_attn.o_proj.weight": {
+      "tensor_key": "model.layers.27.self_attn.o_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35134609,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.27.self_attn.q_norm.weight": {
+      "tensor_key": "model.layers.27.self_attn.q_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.27.self_attn.q_proj.weight": {
+      "tensor_key": "model.layers.27.self_attn.q_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35287740,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.27.self_attn.v_proj.weight": {
+      "tensor_key": "model.layers.27.self_attn.v_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7310961,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.27.input_layernorm.weight": {
+      "tensor_key": "model.layers.27.input_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.27.mlp.down_proj.weight": {
+      "tensor_key": "model.layers.27.mlp.down_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118463127,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.27.mlp.up_proj.weight": {
+      "tensor_key": "model.layers.27.mlp.up_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118434053,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.27.post_attention_layernorm.weight": {
+      "tensor_key": "model.layers.27.post_attention_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.28.input_layernorm.weight": {
+      "tensor_key": "model.layers.28.input_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.28.mlp.down_proj.weight": {
+      "tensor_key": "model.layers.28.mlp.down_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118415464,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.28.mlp.gate_proj.weight": {
+      "tensor_key": "model.layers.28.mlp.gate_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118475531,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.28.mlp.up_proj.weight": {
+      "tensor_key": "model.layers.28.mlp.up_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118349360,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.28.post_attention_layernorm.weight": {
+      "tensor_key": "model.layers.28.post_attention_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.28.self_attn.k_norm.weight": {
+      "tensor_key": "model.layers.28.self_attn.k_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.28.self_attn.k_proj.weight": {
+      "tensor_key": "model.layers.28.self_attn.k_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7339577,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.28.self_attn.o_proj.weight": {
+      "tensor_key": "model.layers.28.self_attn.o_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35118256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.28.self_attn.q_norm.weight": {
+      "tensor_key": "model.layers.28.self_attn.q_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.28.self_attn.q_proj.weight": {
+      "tensor_key": "model.layers.28.self_attn.q_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35363627,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.28.self_attn.v_proj.weight": {
+      "tensor_key": "model.layers.28.self_attn.v_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7311341,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.29.input_layernorm.weight": {
+      "tensor_key": "model.layers.29.input_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.29.mlp.down_proj.weight": {
+      "tensor_key": "model.layers.29.mlp.down_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118420521,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.29.mlp.gate_proj.weight": {
+      "tensor_key": "model.layers.29.mlp.gate_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118460213,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.29.mlp.up_proj.weight": {
+      "tensor_key": "model.layers.29.mlp.up_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118351067,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.29.post_attention_layernorm.weight": {
+      "tensor_key": "model.layers.29.post_attention_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.29.self_attn.k_norm.weight": {
+      "tensor_key": "model.layers.29.self_attn.k_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.29.self_attn.k_proj.weight": {
+      "tensor_key": "model.layers.29.self_attn.k_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7316216,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.29.self_attn.o_proj.weight": {
+      "tensor_key": "model.layers.29.self_attn.o_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35118707,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.29.self_attn.q_norm.weight": {
+      "tensor_key": "model.layers.29.self_attn.q_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.29.self_attn.q_proj.weight": {
+      "tensor_key": "model.layers.29.self_attn.q_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35292369,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.29.self_attn.v_proj.weight": {
+      "tensor_key": "model.layers.29.self_attn.v_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7296767,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.30.input_layernorm.weight": {
+      "tensor_key": "model.layers.30.input_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.30.mlp.down_proj.weight": {
+      "tensor_key": "model.layers.30.mlp.down_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118393540,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.30.mlp.gate_proj.weight": {
+      "tensor_key": "model.layers.30.mlp.gate_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118385320,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.30.mlp.up_proj.weight": {
+      "tensor_key": "model.layers.30.mlp.up_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118285912,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.30.post_attention_layernorm.weight": {
+      "tensor_key": "model.layers.30.post_attention_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.30.self_attn.k_norm.weight": {
+      "tensor_key": "model.layers.30.self_attn.k_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.30.self_attn.k_proj.weight": {
+      "tensor_key": "model.layers.30.self_attn.k_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7310710,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.30.self_attn.o_proj.weight": {
+      "tensor_key": "model.layers.30.self_attn.o_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35116785,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.30.self_attn.q_norm.weight": {
+      "tensor_key": "model.layers.30.self_attn.q_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.30.self_attn.q_proj.weight": {
+      "tensor_key": "model.layers.30.self_attn.q_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35282090,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.30.self_attn.v_proj.weight": {
+      "tensor_key": "model.layers.30.self_attn.v_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7313995,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.31.input_layernorm.weight": {
+      "tensor_key": "model.layers.31.input_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.31.mlp.down_proj.weight": {
+      "tensor_key": "model.layers.31.mlp.down_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118411258,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.31.mlp.gate_proj.weight": {
+      "tensor_key": "model.layers.31.mlp.gate_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118334981,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.31.mlp.up_proj.weight": {
+      "tensor_key": "model.layers.31.mlp.up_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118262574,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.31.post_attention_layernorm.weight": {
+      "tensor_key": "model.layers.31.post_attention_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.31.self_attn.k_norm.weight": {
+      "tensor_key": "model.layers.31.self_attn.k_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.31.self_attn.k_proj.weight": {
+      "tensor_key": "model.layers.31.self_attn.k_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7319551,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.31.self_attn.o_proj.weight": {
+      "tensor_key": "model.layers.31.self_attn.o_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35139723,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.31.self_attn.q_norm.weight": {
+      "tensor_key": "model.layers.31.self_attn.q_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.31.self_attn.q_proj.weight": {
+      "tensor_key": "model.layers.31.self_attn.q_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35267443,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.31.self_attn.v_proj.weight": {
+      "tensor_key": "model.layers.31.self_attn.v_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7310277,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.32.input_layernorm.weight": {
+      "tensor_key": "model.layers.32.input_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.32.mlp.down_proj.weight": {
+      "tensor_key": "model.layers.32.mlp.down_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118418766,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.32.mlp.gate_proj.weight": {
+      "tensor_key": "model.layers.32.mlp.gate_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118306119,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.32.mlp.up_proj.weight": {
+      "tensor_key": "model.layers.32.mlp.up_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118241963,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.32.post_attention_layernorm.weight": {
+      "tensor_key": "model.layers.32.post_attention_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.32.self_attn.k_norm.weight": {
+      "tensor_key": "model.layers.32.self_attn.k_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.32.self_attn.k_proj.weight": {
+      "tensor_key": "model.layers.32.self_attn.k_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7307481,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.32.self_attn.o_proj.weight": {
+      "tensor_key": "model.layers.32.self_attn.o_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35121364,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.32.self_attn.q_norm.weight": {
+      "tensor_key": "model.layers.32.self_attn.q_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.32.self_attn.q_proj.weight": {
+      "tensor_key": "model.layers.32.self_attn.q_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35239726,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.32.self_attn.v_proj.weight": {
+      "tensor_key": "model.layers.32.self_attn.v_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7302366,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.33.mlp.gate_proj.weight": {
+      "tensor_key": "model.layers.33.mlp.gate_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118278411,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.33.self_attn.k_norm.weight": {
+      "tensor_key": "model.layers.33.self_attn.k_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.33.self_attn.k_proj.weight": {
+      "tensor_key": "model.layers.33.self_attn.k_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7317458,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.33.self_attn.o_proj.weight": {
+      "tensor_key": "model.layers.33.self_attn.o_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35083608,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.33.self_attn.q_norm.weight": {
+      "tensor_key": "model.layers.33.self_attn.q_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.33.self_attn.q_proj.weight": {
+      "tensor_key": "model.layers.33.self_attn.q_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35257792,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.33.self_attn.v_proj.weight": {
+      "tensor_key": "model.layers.33.self_attn.v_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7317963,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.33.input_layernorm.weight": {
+      "tensor_key": "model.layers.33.input_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.33.mlp.down_proj.weight": {
+      "tensor_key": "model.layers.33.mlp.down_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118423279,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.33.mlp.up_proj.weight": {
+      "tensor_key": "model.layers.33.mlp.up_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118229899,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.33.post_attention_layernorm.weight": {
+      "tensor_key": "model.layers.33.post_attention_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.34.input_layernorm.weight": {
+      "tensor_key": "model.layers.34.input_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.34.mlp.down_proj.weight": {
+      "tensor_key": "model.layers.34.mlp.down_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118415336,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.34.mlp.gate_proj.weight": {
+      "tensor_key": "model.layers.34.mlp.gate_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118272441,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.34.mlp.up_proj.weight": {
+      "tensor_key": "model.layers.34.mlp.up_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118224096,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.34.post_attention_layernorm.weight": {
+      "tensor_key": "model.layers.34.post_attention_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.34.self_attn.k_norm.weight": {
+      "tensor_key": "model.layers.34.self_attn.k_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.34.self_attn.k_proj.weight": {
+      "tensor_key": "model.layers.34.self_attn.k_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7321601,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.34.self_attn.o_proj.weight": {
+      "tensor_key": "model.layers.34.self_attn.o_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35073960,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.34.self_attn.q_norm.weight": {
+      "tensor_key": "model.layers.34.self_attn.q_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.34.self_attn.q_proj.weight": {
+      "tensor_key": "model.layers.34.self_attn.q_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35262954,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.34.self_attn.v_proj.weight": {
+      "tensor_key": "model.layers.34.self_attn.v_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7321178,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.35.input_layernorm.weight": {
+      "tensor_key": "model.layers.35.input_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.35.mlp.down_proj.weight": {
+      "tensor_key": "model.layers.35.mlp.down_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118384983,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.35.mlp.gate_proj.weight": {
+      "tensor_key": "model.layers.35.mlp.gate_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118295287,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.35.mlp.up_proj.weight": {
+      "tensor_key": "model.layers.35.mlp.up_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118229221,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.35.post_attention_layernorm.weight": {
+      "tensor_key": "model.layers.35.post_attention_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.35.self_attn.k_norm.weight": {
+      "tensor_key": "model.layers.35.self_attn.k_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.35.self_attn.k_proj.weight": {
+      "tensor_key": "model.layers.35.self_attn.k_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7322660,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.35.self_attn.o_proj.weight": {
+      "tensor_key": "model.layers.35.self_attn.o_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35086734,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.35.self_attn.q_norm.weight": {
+      "tensor_key": "model.layers.35.self_attn.q_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.35.self_attn.q_proj.weight": {
+      "tensor_key": "model.layers.35.self_attn.q_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35277980,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.35.self_attn.v_proj.weight": {
+      "tensor_key": "model.layers.35.self_attn.v_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7300733,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.36.input_layernorm.weight": {
+      "tensor_key": "model.layers.36.input_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.36.mlp.down_proj.weight": {
+      "tensor_key": "model.layers.36.mlp.down_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118377251,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.36.mlp.gate_proj.weight": {
+      "tensor_key": "model.layers.36.mlp.gate_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118332742,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.36.mlp.up_proj.weight": {
+      "tensor_key": "model.layers.36.mlp.up_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118242786,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.36.post_attention_layernorm.weight": {
+      "tensor_key": "model.layers.36.post_attention_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.36.self_attn.k_norm.weight": {
+      "tensor_key": "model.layers.36.self_attn.k_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.36.self_attn.k_proj.weight": {
+      "tensor_key": "model.layers.36.self_attn.k_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7317346,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.36.self_attn.o_proj.weight": {
+      "tensor_key": "model.layers.36.self_attn.o_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35083813,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.36.self_attn.q_norm.weight": {
+      "tensor_key": "model.layers.36.self_attn.q_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.36.self_attn.q_proj.weight": {
+      "tensor_key": "model.layers.36.self_attn.q_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35237323,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.36.self_attn.v_proj.weight": {
+      "tensor_key": "model.layers.36.self_attn.v_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7306311,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.37.input_layernorm.weight": {
+      "tensor_key": "model.layers.37.input_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.37.mlp.down_proj.weight": {
+      "tensor_key": "model.layers.37.mlp.down_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118333452,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.37.mlp.gate_proj.weight": {
+      "tensor_key": "model.layers.37.mlp.gate_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118400483,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.37.mlp.up_proj.weight": {
+      "tensor_key": "model.layers.37.mlp.up_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118268397,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.37.post_attention_layernorm.weight": {
+      "tensor_key": "model.layers.37.post_attention_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.37.self_attn.k_norm.weight": {
+      "tensor_key": "model.layers.37.self_attn.k_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.37.self_attn.k_proj.weight": {
+      "tensor_key": "model.layers.37.self_attn.k_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7335899,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.37.self_attn.o_proj.weight": {
+      "tensor_key": "model.layers.37.self_attn.o_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35112932,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.37.self_attn.q_norm.weight": {
+      "tensor_key": "model.layers.37.self_attn.q_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.37.self_attn.q_proj.weight": {
+      "tensor_key": "model.layers.37.self_attn.q_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35295482,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.37.self_attn.v_proj.weight": {
+      "tensor_key": "model.layers.37.self_attn.v_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7313684,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.38.input_layernorm.weight": {
+      "tensor_key": "model.layers.38.input_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.38.mlp.down_proj.weight": {
+      "tensor_key": "model.layers.38.mlp.down_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118435559,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.38.mlp.gate_proj.weight": {
+      "tensor_key": "model.layers.38.mlp.gate_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118466930,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.38.mlp.up_proj.weight": {
+      "tensor_key": "model.layers.38.mlp.up_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118317867,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.38.post_attention_layernorm.weight": {
+      "tensor_key": "model.layers.38.post_attention_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.38.self_attn.k_norm.weight": {
+      "tensor_key": "model.layers.38.self_attn.k_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.38.self_attn.k_proj.weight": {
+      "tensor_key": "model.layers.38.self_attn.k_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7321463,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.38.self_attn.o_proj.weight": {
+      "tensor_key": "model.layers.38.self_attn.o_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35106475,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.38.self_attn.q_norm.weight": {
+      "tensor_key": "model.layers.38.self_attn.q_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.38.self_attn.q_proj.weight": {
+      "tensor_key": "model.layers.38.self_attn.q_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35234807,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.38.self_attn.v_proj.weight": {
+      "tensor_key": "model.layers.38.self_attn.v_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7313827,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.39.mlp.gate_proj.weight": {
+      "tensor_key": "model.layers.39.mlp.gate_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118447548,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.39.self_attn.k_norm.weight": {
+      "tensor_key": "model.layers.39.self_attn.k_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.39.self_attn.k_proj.weight": {
+      "tensor_key": "model.layers.39.self_attn.k_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7304067,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.39.self_attn.o_proj.weight": {
+      "tensor_key": "model.layers.39.self_attn.o_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35239541,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.39.self_attn.q_norm.weight": {
+      "tensor_key": "model.layers.39.self_attn.q_norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 256,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.39.self_attn.q_proj.weight": {
+      "tensor_key": "model.layers.39.self_attn.q_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 35165441,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.39.self_attn.v_proj.weight": {
+      "tensor_key": "model.layers.39.self_attn.v_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 7312436,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.39.input_layernorm.weight": {
+      "tensor_key": "model.layers.39.input_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.39.mlp.down_proj.weight": {
+      "tensor_key": "model.layers.39.mlp.down_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118952857,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.39.mlp.up_proj.weight": {
+      "tensor_key": "model.layers.39.mlp.up_proj.weight",
+      "name": "compressed_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 118410584,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.layers.39.post_attention_layernorm.weight": {
+      "tensor_key": "model.layers.39.post_attention_layernorm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    },
+    "model.norm.weight": {
+      "tensor_key": "model.norm.weight",
+      "name": "raw_disk",
+      "vram_bytes": 0,
+      "ram_bytes": 0,
+      "storage_bytes": 10240,
+      "prepare_s": 0.0,
+      "exact": true,
+      "artifact": null
+    }
+  },
+  "vram_bytes": 0,
+  "ram_bytes": 0,
+  "storage_bytes": 20328187465,
+  "predicted_prepare_s": 0.0,
+  "feasible": true,
+  "reason": "",
+  "vram_budget_bytes": 4000000000,
+  "ram_budget_bytes": 8000000000,
+  "vram_headroom_bytes": 2231985408,
+  "schema_version": 2
+}

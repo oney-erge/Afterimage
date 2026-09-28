@@ -24,20 +24,25 @@ built (see the git log for `afterimage/runtime/h65_planner.py`).
 ## What you need to supply
 
 The Llama-3.3-70B compressed store's `manifest.json`, SHA-256
-`abb500ea82e7b979f20a32ffd466de639e31773678091ad823586c5a6798ac92`. It is not
-in this repository -- it was not captured in the evidence snapshot this
-folder was built from, and is presumably still on the machine that ran the
-paper's campaigns. It is small (metadata only, not the store's weight
-bytes); if you have it or can regenerate it with `afterimage compress
-meta-llama/Llama-3.3-70B-Instruct`, run:
+`abb500ea82e7b979f20a32ffd466de639e31773678091ad823586c5a6798ac92`. It is not in
+this repository and was not kept from the RTX 5090 campaign, but it can be
+regenerated: compression is deterministic (two independent compressions of
+Qwen3-0.6B produced a byte-identical `manifest.json` and `weights.bin`), and the
+compressor code has not changed since the Llama campaign's commit. So
 
 ```bash
+afterimage compress meta-llama/Llama-3.3-70B-Instruct   # ~141 GB download
 python evidence/h65-paper1/llama-rtx5090/plan-rederivation/rederive_plan.py \
-  --manifest /path/to/manifest.json
+  --manifest ~/.afterimage/stores/meta-llama__Llama-3.3-70B-Instruct/manifest.json
 ```
 
-No GPU needed. Takes a minute or two (256 search iterations over 723
-tensors, offline replay only).
+should reproduce it. This has not been verified for Llama itself; the script
+checks the manifest's hash first and says so if it differs (for example, if the
+Hugging Face checkpoint revision has changed since). The re-derivation itself
+needs no GPU and takes a minute or two (256 search iterations over 723 tensors).
+
+The laptop plans, whose manifests are published, re-derive without any of this:
+see [`../../laptop-rtx3080/`](../../laptop-rtx3080/README.md).
 
 ## Why this matters more than re-checking the numbers
 
