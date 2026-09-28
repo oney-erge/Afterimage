@@ -151,7 +151,7 @@ def write_tensor_raw(path: str | pathlib.Path, tensor: torch.Tensor) -> int:
     path.with_suffix(".json").write_text(json.dumps({
         "dtype": np_dtype,
         "shape": list(arr.shape),
-    }))
+    }), encoding="utf-8", newline="\n")
     return arr.nbytes
 
 

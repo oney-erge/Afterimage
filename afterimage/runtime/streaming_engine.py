@@ -423,7 +423,8 @@ def compress_model_to_disk(model_id: str, out_dir, config: EngineConfig | None =
     manifest["total_orig_bytes"] = total_orig
     manifest["total_comp_bytes"] = total_comp
     manifest["ratio"] = total_orig / max(total_comp, 1)
-    (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
+    (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2),
+                                          encoding="utf-8", newline="\n")
     return manifest
 
 

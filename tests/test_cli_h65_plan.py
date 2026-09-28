@@ -114,3 +114,20 @@ def test_run_exposes_the_paper_execution_settings():
         ["run", "some/model", "prompt"])
     assert default_args.vram_safety_margin_gb == 0.0
     assert default_args.reuse_decode_tables is False
+
+
+def test_saved_plans_and_traces_are_byte_identical_across_platforms(tmp_path):
+    # Frozen plans and traces are pinned by SHA-256 in run artifacts. Written
+    # in text mode they came out CRLF on Windows and LF on Linux, so the same
+    # plan hashed differently depending on the machine that saved it.
+    from afterimage.runtime.critical_path import TraceRecorder
+    from afterimage.runtime.representations import RepresentationOption, RepresentationPlan
+
+    plan = RepresentationPlan(
+        {"a": RepresentationOption("a", "compressed_disk")}, 0, 0, 0, 0.0)
+    plan.save(tmp_path / "plan.json")
+    recorder = TraceRecorder()
+    recorder.record("forward_start", "scheduler", 0.0, 0.0)
+    recorder.save(tmp_path / "trace.json")
+    for name in ("plan.json", "trace.json"):
+        assert b"\r\n" not in (tmp_path / name).read_bytes(), name

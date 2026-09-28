@@ -809,7 +809,7 @@ def cmd_pin_preflight(args: argparse.Namespace) -> int:
             raise FileExistsError("refusing to overwrite immutable result: %s" % out)
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(payload, indent=2, sort_keys=True),
-                       encoding="utf-8")
+                       encoding="utf-8", newline="\n")
     if args.json:
         print(json.dumps(payload, indent=2))
     else:
@@ -1111,7 +1111,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     c = sub.add_parser("compress", help="build a compressed store for a model")
     c.add_argument("model", help="HuggingFace model id, e.g. Qwen/Qwen3-14B")
-    c.add_argument("--out", default=None, help="output store directory (default: ~/.afterimage/stores/<model>)")
+    c.add_argument("--out", "--store", dest="out", default=None,
+                   help="output store directory (default: ~/.afterimage/stores/<model>); "
+                        "--store is accepted too, matching `afterimage run --store`")
     c.add_argument("--chunk-size", type=int, default=1024)
     c.add_argument("--quantize", default=None, choices=[None, "q8"])
     c.add_argument(
