@@ -1,19 +1,11 @@
-.git/
-.github/
-.pytest_cache/
-__pycache__/
-*.pyc
-*.egg-info/
-build/
-dist/
-.venv/
-venv/
-.env
-.env.*
-tests/
-scripts/
-results/
-docs/
-configs/
-*.md
+# Allowlist, not denylist: the image needs only what the Dockerfile COPYs.
+# A denylist sent everything else to the Docker daemon on every local build,
+# including gitignored model checkpoints and campaign output that can sit in a
+# working copy (a DFloat11 checkpoint alone is ~19 GB; see .gitignore).
+*
+!pyproject.toml
 !README.md
+!LICENSE
+!afterimage/
+**/__pycache__
+**/*.pyc

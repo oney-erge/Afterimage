@@ -5,6 +5,33 @@ No tagged releases yet. Everything below is `main`.
 
 ## [Unreleased]
 
+### Evidence integrity, structure, and drift guards
+
+- Frozen protocols now live in `docs/h65/protocols/` as the exact bytes each
+  run recorded a SHA-256 for. The D2 and D4 protocols (and D4's amendment)
+  were previously published only as rewritten summaries that matched no
+  recorded hash; the verbatim originals replace them. `.gitattributes` keeps
+  every protocol byte-exact on every platform (a Windows checkout used to
+  convert them to CRLF, so a reader's own `sha256sum` reported a mismatch).
+- Published D2's twelve prompts, which were private, and a pinned
+  `evidence/h65-paper1/constraints-rtx5090.txt` + `ENVIRONMENT.md` recording
+  the RTX 5090 software versions.
+- `verify_llama_confirmations.py` now also checks the evidence manifest and
+  every frozen protocol and input against its recorded hash; CI runs it, and a
+  new `scripts/check_links.py`, on every PR.
+- Fixed `scripts/run_bounded_suite.py` overwriting a cell's own knapsack
+  profile or replay plan with `None` -- the bug that broke the D4 mechanism
+  control's first attempt, still present in the public harness.
+- `tests/test_docs_numbers.py` ties the CLI help, `docs/CONFIGURATION.md`, and
+  `afterimage/reference.py` to the README table, and the table's ratios to its
+  own seconds column. It caught one more stale ratio (min-memory 0.89x, now
+  0.83x) on its first run.
+- Removed duplication: `install.sh`/`install.ps1` (duplicated `run.sh`/
+  `run.ps1`), the README's second copy of the docs index, and three personal
+  campaign scripts with hardcoded machine paths. `benchmark.sh` and
+  `paper_benchmark.sh` moved into `scripts/`. `.dockerignore` is now an
+  allowlist, so a local build no longer uploads gitignored checkpoints.
+
 ### H6.5 arXiv readiness
 
 - Published the H6.5 Paper 1 evidence (`evidence/h65-paper1/`): the
@@ -16,7 +43,7 @@ No tagged releases yet. Everything below is `main`.
   entry point before this.
 - `afterimage doctor` now recognizes an NVIDIA GPU paired with a CPU-only
   torch build and prints the fix, instead of just reporting no usable GPU.
-- The native installers (`run.sh`, `run.ps1`, `install.sh`, `install.ps1`)
+- The native installers (`run.sh`, `run.ps1`)
   detect the driver's supported CUDA version and pick a cu128 PyTorch
   wheel on RTX 50-series (Blackwell) hosts instead of always installing
   cu124, which cannot use that hardware.

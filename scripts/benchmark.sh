@@ -2,12 +2,12 @@
 set -euo pipefail
 
 if [[ "${1:-}" != "canonical" ]]; then
-  printf 'Usage: ./benchmark.sh canonical [runner options...]\n' >&2
+  printf 'Usage: scripts/benchmark.sh canonical [runner options...]\n' >&2
   exit 2
 fi
 shift
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
 model="${AFTERIMAGE_MODEL:-Qwen/Qwen3-14B}"

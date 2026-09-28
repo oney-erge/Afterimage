@@ -53,7 +53,7 @@ For the canonical five-way Qwen3-14B comparison, prepare the Linux/WSL2
 machine and run:
 
 ```bash
-bash benchmark.sh canonical
+bash scripts/benchmark.sh canonical
 ```
 
 This runs AirLLM, Hugging Face Accelerate disk offload, exact-min,
@@ -67,7 +67,7 @@ ZeRO-Inference, and the separate short-answer and long-generation workloads,
 run:
 
 ```bash
-bash paper_benchmark.sh
+bash scripts/paper_benchmark.sh
 ```
 
 The wrapper refuses a dirty tree or missing benchmark dependency, resumes
@@ -84,7 +84,7 @@ says which cells are missing.
 ## Reproducing Paper 1's figures on a different GPU
 
 **If "Paper 1" means the H6.5 arXiv paper** ("Schedule-Aware Exact Weight
-Placement..."), start at [H65.md](H65.md) and
+Placement..."), start at [h65/README.md](h65/README.md) and
 [`../evidence/h65-paper1/`](../evidence/h65-paper1/README.md) instead of
 this section: they index the actual protocol per study (D1, D2, D4, ...)
 and the script that recomputes each published number from raw data.
@@ -96,7 +96,7 @@ script and its output convention still work and may still be useful for
 the underlying H6 mechanism evidence, not because it produces the H6.5
 paper's figures.
 
-`paper_benchmark.sh` above reproduces only the headline TTFT/Pareto
+`scripts/paper_benchmark.sh` above reproduces only the headline TTFT/Pareto
 comparison. To reproduce this earlier figure and table set (H6
 representation-and-tier planning: Figures 2, 3, 4, 5, 7, 9 and Table 2) on
 a second machine with different hardware, run:

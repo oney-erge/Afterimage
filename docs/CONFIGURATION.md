@@ -25,7 +25,7 @@ benchmark rows directly:
 
 | Profile | vram_budget_gb | draft_model | Measured |
 |---|---|---|---|
-| `min-memory` | none | none | exact, lowest VRAM, slowest (0.89x AirLLM on the reference hardware) |
+| `min-memory` | none | none | exact, lowest VRAM, slowest (0.83x AirLLM 3.2.0 on the reference hardware) |
 | `balanced` | 4.0 | none | exact, 1.55x |
 | `fast` | 4.0 | `Qwen/Qwen3-0.6B` | exact at T=0, 2.93x AirLLM 3.2.0, the largest lossless win |
 
@@ -39,9 +39,12 @@ requests, or check `/api/plan` for feasibility first.
 
 The other roughly 34 fields (placement policy, prefetch policy, storage
 read policy, representation policy, expert codec, critical-path profiles,
-replay plans, tracing) are the H0-H18 research mechanisms. None of them
-has passed its gate yet, and none of them changes behaviour unless you set
-it explicitly. See [RESEARCH_METHODS.md](RESEARCH_METHODS.md) and
+replay plans, tracing) are the H0-H18 research mechanisms. None of the
+H0-H18 candidates has L3 confirmatory evidence, and none of them changes
+behaviour unless you set it explicitly. The one research method with
+confirmatory evidence is H6.5's per-tensor placement (`representation_policy`
+plus a plan from `afterimage research h65-plan`), on one GPU and memory
+contract; see [h65/README.md](h65/README.md). See [RESEARCH_METHODS.md](RESEARCH_METHODS.md) and
 [HYPOTHESIS_LINEAGE.md](HYPOTHESIS_LINEAGE.md) for what each one claims and
 what actually happened when it was tested. `afterimage run --help` shows
 them under "advanced / research"; `afterimage research --help` lists the

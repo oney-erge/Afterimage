@@ -51,10 +51,16 @@ jobs:
       # [tool.ruff.lint] comment for why this isn't a full style pass yet.
       # scripts/ is included because it's what a reviewer or artifact
       # evaluator actually runs to reproduce a result.
-      - run: python -m ruff check afterimage scripts tests
+      - run: python -m ruff check afterimage scripts tests evidence
       # Keeps the docs a new user reads first from drifting back into
       # em-dash-heavy, AI-sounding prose. See scripts/check_prose.py.
       - run: python scripts/check_prose.py
+      # A moved or deleted document must not leave a dead link behind.
+      - run: python scripts/check_links.py
+      # The H6.5 paper's evidence: manifest hashes, every frozen protocol
+      # against the hash its run recorded, and every published number
+      # recomputed from the raw paired data. Stdlib only, a few seconds.
+      - run: python evidence/h65-paper1/verify_llama_confirmations.py
 
   cpu-tests:
     runs-on: ubuntu-latest

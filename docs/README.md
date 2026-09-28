@@ -31,7 +31,7 @@ Arrived from the paper? Start here.
 
 | Document | What it answers |
 |---|---|
-| [H65.md](H65.md) | What H6.5 is, the headline numbers, how to run it, and an index of every protocol document and evidence file below. |
+| [h65/README.md](h65/README.md) | What H6.5 is, the headline numbers, how to run it, and an index of every protocol document and evidence file below. |
 | [`../evidence/h65-paper1/`](../evidence/h65-paper1/README.md) | The frozen measurement artifacts the paper's numbers were computed from, plus a script that recomputes them from scratch. |
 
 ## The research record
@@ -49,6 +49,16 @@ contradicted findings are here too, deliberately.
 | [LITERATURE.md](LITERATURE.md) | The survey of prior work on running models larger than VRAM. |
 | [REPRODUCE.md](REPRODUCE.md) | One command per reported number, and the environment facts a rerun will not match by default. |
 | [CROSS_MODEL_BENCHMARK_2026-08-22.md](CROSS_MODEL_BENCHMARK_2026-08-22.md) | Do the Qwen3-14B conclusions transfer to another family and scale? Historical record of that campaign as run. |
+
+## Where the raw evidence lives
+
+- [`../results/`](../results/README.md): date-stamped result JSON behind the
+  H0-H18 program and the README's benchmark table, indexed by
+  `results/INDEX.md`.
+- [`../evidence/h65-paper1/`](../evidence/h65-paper1/README.md): the curated,
+  hash-verified artifacts behind the H6.5 paper, kept separate because every
+  file there is pinned by SHA-256 to a frozen protocol and must never be
+  regenerated or reformatted.
 
 ## Forward research (not yet evidence)
 

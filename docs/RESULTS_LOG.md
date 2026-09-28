@@ -10,6 +10,31 @@ and didn't notice," which has happened twice before in this project
 Baseline for comparison is always the most recent row *before* the change
 being evaluated, not row 1.
 
+## 2026-09-11 H6.5 confirmations on Llama-3.3-70B (RTX 5090)
+
+Unlike the default above, these ran on an RTX 5090 (34 GB) under WSL2, not the
+RTX 3080 Laptop, with Llama-3.3-70B-Instruct at an 8 GB logical VRAM / 16 GB RAM
+placement budget, cold page cache, one timed token after one warm-up token.
+Frozen plans, protocols, and raw artifacts are in
+[`evidence/h65-paper1/`](../evidence/h65-paper1/README.md), and
+`python evidence/h65-paper1/verify_llama_confirmations.py` recomputes every row
+below from them.
+
+| Run | Pairs | Traffic / H6.5 latency, 95% CI | Peak VRAM, traffic to H6.5 | Grade |
+|---|---:|---|---|---|
+| D1, 2026-09-10 | 8 | 1.018x [0.884, 1.173] | 10.29 to 7.95 GB | confirmatory |
+| D2, 2026-09-11, fresh prompts | 12 | 1.239x [1.128, 1.361] | 10.25 to 7.93 GB | confirmatory |
+| D1 + D2 pooled (rule fixed before D2) | 20 | 1.145x [1.052, 1.247] | about 23% lower | confirmatory |
+| D4, H6.5 vs. greedy knapsack | 6 blocks | about 16% lower latency | about 20% lower | secondary |
+| Four-token ablation, placement-only vs. traffic | 3 blocks | 1.041x | -- | secondary |
+
+Two earlier confirmations of an older plan, built before the 2026-09-09
+candidate-retention fix and the 2026-09-10 output-head seed, completed and
+passed their own gates with smaller effects: 1.066x [0.949, 1.198] (8 blocks,
+2026-08-31) and 1.052x [1.000, 1.107] (12 pairs, 2026-09-02), each 8.0 to 7.33
+GB peak VRAM. They stay in this log; see
+[h65/README.md](h65/README.md#method-history).
+
 ## 2026-08-26 AirLLM baseline refresh to 3.2.0
 
 Every prior AirLLM comparison in this repository used AirLLM 3.1.0. AirLLM

@@ -156,7 +156,7 @@ def _extra_store_roots() -> list[pathlib.Path]:
     DEFAULT_STORE_ROOT (~/.afterimage/stores by default) is only where a
     store lands when it was prepared *through this server's own* acquire/
     compress flow. A store built ad hoc -- e.g. this project's own GPU
-    benchmark tooling (scripts/run_bounded_suite.py, benchmark.sh), which
+    benchmark tooling (scripts/run_bounded_suite.py, scripts/benchmark.sh), which
     hard-codes a WSL2 path like /root/afterimage/store_14b, entirely
     outside DEFAULT_STORE_ROOT and never calling model_registry.upsert_model
     -- was real, on disk, with a valid manifest.json, and completely

@@ -890,7 +890,7 @@ def cmd_h65_plan(args: argparse.Namespace) -> int:
     campaign scripts use, but with live paired-block validation disabled
     (there is no live measurement to require from a bare CLI invocation).
     The resulting plan is a replay-validated candidate, not a paper-eligible
-    confirmed plan; see docs/H65.md for how those are produced.
+    confirmed plan; see docs/h65/README.md for how those are produced.
     """
     from afterimage.runtime.critical_path import TraceRecorder
     from afterimage.runtime.h65_planner import optimize_h65_plan
@@ -912,10 +912,18 @@ def cmd_h65_plan(args: argparse.Namespace) -> int:
 
     report = result.report
     print("H6.5 offline search: %d candidates scored, predicted improvement "
-          "%.1f%% (conservative %.1f%%)" % (
+          "%.2f%% (conservative %.2f%%)" % (
               report.candidates_scored,
               report.predicted_improvement * 100,
               report.conservative_predicted_improvement * 100))
+    print("  replayed request time: traffic control %.3fs, best candidate %.3fs"
+          % (report.control_replay_s, report.candidate_replay_s))
+    print("  best candidate %s the traffic control's placement"
+          % ("differs from" if report.treatment_diverged else "is identical to"))
+    print("  tensors per state, control -> candidate: %s" % ", ".join(
+        "%s %d->%d" % (state, report.control_choices.get(state, 0),
+                       report.candidate_choices.get(state, 0))
+        for state in sorted(set(report.control_choices) | set(report.candidate_choices))))
     if report.fallback_to_control:
         print("Guarded plan falls back to the traffic-density control: %s"
               % report.fallback_reason, file=sys.stderr)
@@ -1006,7 +1014,7 @@ def cmd_quickstart(args: argparse.Namespace) -> int:
     print("  afterimage compress Qwen/Qwen3-14B   # ~30 min download, ~6 min compress")
     print("  afterimage run Qwen/Qwen3-14B \"...\" --auto")
     print()
-    print("Here for the H6.5 paper? See docs/H65.md and evidence/h65-paper1/.")
+    print("Here for the H6.5 paper? See docs/h65/README.md and evidence/h65-paper1/.")
     return 0
 
 
@@ -1233,7 +1241,7 @@ def build_parser() -> argparse.ArgumentParser:
                             "`afterimage research optimize-residency`")
     r_adv.add_argument("--representation-plan-state", default=None,
                        help="frozen per-tensor plan required by a non-uniform "
-                            "--representation-policy -- see docs/H65.md")
+                            "--representation-policy -- see docs/h65/README.md")
     r_adv.add_argument("--lm-head-policy", default="full",
                        choices=["full", "certified_mips", "ram_overlay"])
     r_adv.add_argument("--require-pinned-ram", action="store_true",
@@ -1301,8 +1309,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     research = sub.add_parser(
         "research",
-        help="the H0-H18 research layer -- opt-in, does not affect ordinary "
-             "compress/run/serve. See docs/RESEARCH_METHODS.md.")
+        help="the opt-in research layer (H0-H18, plus H6.5's h65-plan) -- does "
+             "not affect ordinary compress/run/serve. See "
+             "docs/RESEARCH_METHODS.md and docs/h65/README.md.")
     research_sub = research.add_subparsers(dest="research_command", required=True)
 
     e = research_sub.add_parser(
@@ -1336,7 +1345,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     o = research_sub.add_parser(
         "optimize-residency",
-        help="learn a frozen whole-set residency plan from event-DAG traces")
+        help="H10/H13/H15: learn a frozen whole-set VRAM residency plan from "
+             "event-DAG traces (not H6.5 -- that is h65-plan)")
     o.add_argument("traces", nargs="+")
     o.add_argument("--manifest", required=True)
     o.add_argument("--out", required=True)
@@ -1359,11 +1369,11 @@ def build_parser() -> argparse.ArgumentParser:
     h65 = research_sub.add_parser(
         "h65-plan",
         help="H6.5: replay-score a schedule-aware per-tensor representation/tier "
-             "plan from calibration traces -- see docs/H65.md")
+             "plan from calibration traces -- see docs/h65/README.md")
     h65.add_argument("traces", nargs="+",
                      help="event-DAG calibration traces, e.g. from "
                           "`afterimage run MODEL PROMPT --trace-output FILE.json` "
-                          "(at least 3 disjoint prompts; see docs/H65.md)")
+                          "(at least 3 disjoint prompts; see docs/h65/README.md)")
     h65.add_argument("--manifest", required=True, help="compressed store's manifest.json")
     h65.add_argument("--h2d", required=True,
                      help="pinned H2D bandwidth artifact from "
@@ -1392,8 +1402,8 @@ def build_parser() -> argparse.ArgumentParser:
                           "do not deploy this plan without separately measuring it, "
                           "since this offline mode never runs the paper's paired live "
                           "validation blocks (--require-live-validation is always off "
-                          "here; see the confirmatory protocols under docs/PAPER1_5090_"
-                          "LLAMA_H65_*.md for how a paper-eligible plan is validated)")
+                          "here; see the confirmatory protocols under docs/h65/protocols/ "
+                          "for how a paper-eligible plan is validated)")
     h65.add_argument("--out", required=True,
                      help="where to write the RepresentationPlan; load it with "
                           "`afterimage run --representation-policy per_tensor "
