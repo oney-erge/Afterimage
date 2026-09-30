@@ -5,6 +5,17 @@ No tagged releases yet. Everything below is `main`.
 
 ## [Unreleased]
 
+### Repository presentation
+
+- New logo: a transparent SVG (`docs/assets/afterimage-logo.svg`) that reads on
+  both GitHub themes and at favicon size, replacing a 975 KB PNG with a baked-in
+  navy background that rendered as a dark square on the light theme.
+- `docs/assets/social-preview.png` (1280x640) for the repository's link preview.
+- README gains a Citation section with BibTeX for the H6.5 paper and the
+  software; the H6.5 guide links to it.
+- Package metadata: readme, author, keywords, classifiers, and documentation,
+  H6.5 guide, and changelog links, so a future PyPI page is not blank.
+
 ### RTX 3080 Laptop evidence and full plan re-derivation
 
 - Published the laptop studies behind the paper's Tables 9-10 and Figures 7-8

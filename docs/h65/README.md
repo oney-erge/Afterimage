@@ -4,7 +4,8 @@ H6.5 is the subject of a separate paper (Oney Erge, "Schedule-Aware Exact Weight
 Placement for Large Language Models with Limited GPU Memory", arXiv draft frozen
 2026-09-26). This page is the map from that paper to this repository: what H6.5 is,
 how it relates to the H0-H18 research program described elsewhere in these docs, how
-to run it yourself, and exactly which file backs each number in the paper.
+to run it yourself, and exactly which file backs each number in the paper. To cite
+it, see the [Citation section](../../README.md#citation) of the top-level README.
 
 ## What it does
 

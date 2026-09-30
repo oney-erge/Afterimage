@@ -1,7 +1,7 @@
 # Afterimage architecture
 
 <p align="center">
-  <img src="assets/afterimage-logo.png" width="120" alt="Afterimage logo">
+  <img src="assets/afterimage-logo.svg" width="96" alt="Afterimage logo">
 </p>
 
 Afterimage runs a model that is larger than available VRAM by keeping its exact

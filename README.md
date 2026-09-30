@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/afterimage-logo.png" width="160" alt="Afterimage logo">
+  <img src="docs/assets/afterimage-logo.svg" width="112" alt="Afterimage logo">
 </p>
 
 <h1 align="center">Afterimage</h1>
@@ -354,5 +354,26 @@ claims, and what is deliberately kept out of this repository. For the H6.5
 paper, start at [docs/h65/README.md](docs/h65/README.md) and
 [`evidence/h65-paper1/`](evidence/h65-paper1/README.md). Development and
 verification workflow: [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Citation
+
+If you use H6.5, please cite the paper. If you use the software itself, please
+cite it as well. GitHub's **Cite this repository** button, generated from
+[CITATION.cff](CITATION.cff), gives the same entries.
+
+```bibtex
+@misc{erge2026h65,
+  title  = {Schedule-Aware Exact Weight Placement for Large Language Models with Limited GPU Memory},
+  author = {Erge, Oney},
+  year   = {2026}
+}
+
+@software{erge2026afterimage,
+  title  = {Afterimage: Lossless Weight-Compressed Streaming Inference},
+  author = {Erge, Oney},
+  year   = {2026},
+  url    = {https://github.com/oney-erge/Afterimage}
+}
+```
 
 Apache-2.0. Contributions and reproducible counter-results are welcome.
