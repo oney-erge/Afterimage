@@ -58,6 +58,13 @@ Before a release:
 5. If the install scripts changed: `./run.sh repair` (or `.\run.ps1 repair`)
    on a clean checkout, on at least one NVIDIA machine.
 
+Tag as `vX.Y.Z` matching `pyproject.toml`'s `version`, and publish a GitHub
+release from that tag. Publishing the release does two things automatically,
+no further action needed: [`.github/workflows/publish.yml`](.github/workflows/publish.yml)
+builds the sdist and wheel and publishes them to PyPI (trusted publishing;
+see that file for the one-time pypi.org setup), and, if Zenodo-GitHub
+archiving is enabled for this repository, Zenodo mints a DOI for the release.
+
 ## Code style
 
 No enforced formatter yet. Match the surrounding file: comments explain

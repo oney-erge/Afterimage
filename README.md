@@ -116,6 +116,21 @@ running, use the virtual environment the launcher created:
 or `source .venv/bin/activate` (macOS/Linux/WSL2) / `.venv\Scripts\Activate.ps1`
 (Windows) first, then just `afterimage ...`.
 
+### Or install with pip
+
+```bash
+pip install afterimage-llm
+afterimage quickstart
+```
+
+This skips the launcher's own environment and GPU detection, so on Linux and
+WSL2 it gets PyPI's default CUDA-enabled Torch build; on native Windows,
+PyPI's Torch wheel is CPU-only, so follow with `pip install torch --index-url
+https://download.pytorch.org/whl/cu124` (or the index matching your driver)
+for GPU execution. If you're unsure which route to use: the launcher above
+handles this detection for you, `pip install` is for scripting or an
+existing environment you already manage.
+
 ### What to expect before you download a large model
 
 The quickstart above proves the pipeline works on your machine; its
@@ -197,6 +212,10 @@ draft changes efficiency, not the target distribution.
 
 Qwen3-14B (29.536 GB BF16), RTX 3080 Laptop GPU (8 GB), WSL2/CUDA, cold page
 cache, four prompt families × four forced greedy tokens:
+
+<p align="center">
+  <img src="docs/assets/results-chart.svg" width="600" alt="Peak VRAM versus seconds per token for the six configurations in the table below">
+</p>
 
 | Configuration | Peak VRAM | Seconds/token | vs AirLLM | Exactness |
 |---|---:|---:|---:|---|

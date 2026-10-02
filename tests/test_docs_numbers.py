@@ -13,21 +13,10 @@ import re
 
 from afterimage import cli
 from afterimage.reference import MEASURED_REFERENCE
+from scripts.make_results_chart import build_svg
+from scripts.make_results_chart import read_results_table as _readme_table
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-
-
-def _readme_table() -> dict[str, tuple[float, float, float]]:
-    text = (ROOT / "README.md").read_text(encoding="utf-8")
-    lines = text[text.index("| Configuration | Peak VRAM"):].splitlines()[2:]
-    table = {}
-    for line in lines:
-        if not line.startswith("|"):
-            break
-        cells = [c.strip().strip("*").strip() for c in line.strip("|").split("|")]
-        vram = float(cells[1].split()[0].strip("*"))
-        table[cells[0]] = (vram, float(cells[2]), float(cells[3].rstrip("x")))
-    return table
 
 
 def _row(table, prefix):
@@ -88,3 +77,11 @@ def test_superseded_ratios_do_not_reappear_in_current_claims():
         for value in superseded:
             assert value not in text, "%s still quotes superseded %s" % (
                 path.relative_to(ROOT), value)
+
+
+def test_results_chart_matches_the_readme_table():
+    committed = (ROOT / "docs" / "assets" / "results-chart.svg").read_text(encoding="utf-8")
+    regenerated = build_svg(_readme_table())
+    assert committed == regenerated, (
+        "docs/assets/results-chart.svg is stale -- run "
+        "python scripts/make_results_chart.py")
