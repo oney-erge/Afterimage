@@ -43,6 +43,10 @@ It comes with a CLI, a web UI, an OpenAI-compatible server, and a Python API.
 There's also an opt-in research workspace where nineteen speedup ideas get tested
 against named controls and reported honestly, wins and losses both.
 
+**Try it:** clone the repo and run `./run.sh` (Linux), `./run.command` (macOS),
+or `run.bat` (Windows). The [Quick start](#quick-start) has the details and the
+pip route.
+
 ## Is this for you?
 
 **Good fit:**
@@ -118,8 +122,10 @@ or `source .venv/bin/activate` (macOS/Linux/WSL2) / `.venv\Scripts\Activate.ps1`
 
 ### Or install with pip
 
+The PyPI release is not published yet, so install straight from GitHub:
+
 ```bash
-pip install afterimage-llm
+pip install "afterimage-llm @ git+https://github.com/oney-erge/Afterimage.git"
 afterimage quickstart
 ```
 
