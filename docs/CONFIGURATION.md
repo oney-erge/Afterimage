@@ -11,7 +11,7 @@ CLI-to-API mapping.
 
 | Knob | CLI flag | API field | Default | What it does |
 |---|---|---|---|---|
-| VRAM budget | `--vram-budget-gb` | `vram_budget_gb` | none (minimum-memory) | Spends spare VRAM on residency. Refused up front if infeasible, never silently approximated. Measured: 1.66x at 4 GB on a 14B model with an 8 GB card. |
+| VRAM budget | `--vram-budget-gb` | `vram_budget_gb` | none (minimum-memory) | Spends spare VRAM on residency. Refused up front if infeasible, never silently approximated. Measured: 1.55x at 4 GB on a 14B model with an 8 GB card. |
 | RAM budget | `--ram-budget-gb` | `ram_budget_gb` | none | A second, pinned-host-RAM tier below VRAM and above disk. Needs a VRAM budget set first (the planner fills VRAM before RAM). |
 | Draft model | `--draft-model` | `draft_model` | none (no speculation) | A small resident model (e.g. `Qwen/Qwen3-0.6B`) that enables speculative decoding, the largest lossless speedup measured (2.93x AirLLM 3.2.0). Must share the target's tokenizer and vocabulary. |
 | Draft chain length | `--spec-k` | `spec_k` | 8 | How many tokens the draft model proposes per sweep, when a draft model is set. |
@@ -25,8 +25,8 @@ benchmark rows directly:
 
 | Profile | vram_budget_gb | draft_model | Measured |
 |---|---|---|---|
-| `min-memory` | none | none | exact, lowest VRAM, slowest (0.89x AirLLM on the reference hardware) |
-| `balanced` | 4.0 | none | exact, 1.66x |
+| `min-memory` | none | none | exact, lowest VRAM, slowest (0.83x AirLLM 3.2.0 on the reference hardware) |
+| `balanced` | 4.0 | none | exact, 1.55x |
 | `fast` | 4.0 | `Qwen/Qwen3-0.6B` | exact at T=0, 2.93x AirLLM 3.2.0, the largest lossless win |
 
 An explicit flag always overrides the profile's value for that field.
@@ -39,9 +39,12 @@ requests, or check `/api/plan` for feasibility first.
 
 The other roughly 34 fields (placement policy, prefetch policy, storage
 read policy, representation policy, expert codec, critical-path profiles,
-replay plans, tracing) are the H0-H18 research mechanisms. None of them
-has passed its gate yet, and none of them changes behaviour unless you set
-it explicitly. See [RESEARCH_METHODS.md](RESEARCH_METHODS.md) and
+replay plans, tracing) are the H0-H18 research mechanisms. None of the
+H0-H18 candidates has L3 confirmatory evidence, and none of them changes
+behaviour unless you set it explicitly. The one research method with
+confirmatory evidence is H6.5's per-tensor placement (`representation_policy`
+plus a plan from `afterimage research h65-plan`), on one GPU and memory
+contract; see [h65/README.md](h65/README.md). See [RESEARCH_METHODS.md](RESEARCH_METHODS.md) and
 [HYPOTHESIS_LINEAGE.md](HYPOTHESIS_LINEAGE.md) for what each one claims and
 what actually happened when it was tested. `afterimage run --help` shows
 them under "advanced / research"; `afterimage research --help` lists the

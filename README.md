@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/afterimage-logo.png" width="160" alt="Afterimage logo">
+  <img src="docs/assets/afterimage-logo.svg" width="112" alt="Afterimage logo">
 </p>
 
 <h1 align="center">Afterimage</h1>
@@ -18,12 +18,20 @@
   <a href="docs/USAGE.md">Usage</a> ·
   <a href="docs/FAQ.md">FAQ</a> ·
   <a href="docs/TROUBLESHOOTING.md">Troubleshooting</a> ·
-  <a href="#results">Results</a>
+  <a href="#results">Results</a> ·
+  <a href="docs/h65/README.md">H6.5 paper</a>
 </p>
 
 Afterimage compresses your model's weights losslessly and streams them through
 your GPU a layer at a time. A 29.5 GB model runs on an 8 GB card, bit-for-bit
 identical to the original. No quantization, no accuracy loss.
+
+**Arrived here from "Schedule-Aware Exact Weight Placement for Large Language
+Models with Limited GPU Memory"?** [docs/h65/README.md](docs/h65/README.md) is your entry
+point: what H6.5 does, the headline numbers, how to run it, and
+[`evidence/h65-paper1/`](evidence/h65-paper1/README.md) holds the frozen
+measurement artifacts behind every number in the paper, plus a script that
+recomputes them from scratch.
 
 Turn on speculative decoding with a small draft model and it's nearly 3x
 faster than streaming alone, and faster than Hugging Face's own Accelerate
@@ -65,8 +73,10 @@ against named controls and reported honestly, wins and losses both.
 - macOS runs CPU-only today (no CUDA, so the GPU decode kernels don't run).
 - AMD/ROCm is implemented but hasn't been run on real AMD hardware by this
   project -- treat it as untested, not verified.
-- Native Windows CUDA is less tested here than the WSL2 path; WSL2 +
-  `install.sh` is the better-verified route on Windows with an NVIDIA GPU.
+- Native Windows CUDA is less tested here than the WSL2 path; running
+  `./run.sh` inside WSL2 is the better-verified route on Windows with an
+  NVIDIA GPU (Triton, which the GPU decode kernels need, has no native
+  Windows wheel).
 
 ## Quick start
 
@@ -105,6 +115,21 @@ running, use the virtual environment the launcher created:
 
 or `source .venv/bin/activate` (macOS/Linux/WSL2) / `.venv\Scripts\Activate.ps1`
 (Windows) first, then just `afterimage ...`.
+
+### Or install with pip
+
+```bash
+pip install afterimage-llm
+afterimage quickstart
+```
+
+This skips the launcher's own environment and GPU detection, so on Linux and
+WSL2 it gets PyPI's default CUDA-enabled Torch build; on native Windows,
+PyPI's Torch wheel is CPU-only, so follow with `pip install torch --index-url
+https://download.pytorch.org/whl/cu124` (or the index matching your driver)
+for GPU execution. If you're unsure which route to use: the launcher above
+handles this detection for you, `pip install` is for scripting or an
+existing environment you already manage.
 
 ### What to expect before you download a large model
 
@@ -187,6 +212,10 @@ draft changes efficiency, not the target distribution.
 
 Qwen3-14B (29.536 GB BF16), RTX 3080 Laptop GPU (8 GB), WSL2/CUDA, cold page
 cache, four prompt families × four forced greedy tokens:
+
+<p align="center">
+  <img src="docs/assets/results-chart.svg" width="600" alt="Peak VRAM versus seconds per token for the six configurations in the table below">
+</p>
 
 | Configuration | Peak VRAM | Seconds/token | vs AirLLM | Exactness |
 |---|---:|---:|---:|---|
@@ -282,6 +311,8 @@ tokens, policy = model.generate_adaptive(
     input_ids,
     max_new_tokens=64,
     draft_model=draft,
+    temperature=0.0,  # greedy-token exact vs. the target; generate_adaptive's
+                      # own default is 1.0 (samples), unlike the CLI's --spec-temperature
 )
 ```
 
@@ -331,28 +362,37 @@ No H1-H18 candidate has L3 confirmatory superiority evidence. Fixed speculation
 is a stable core configuration, not one of the failed adaptive candidates, and
 is the web UI's default profile.
 
+**H6.5**, a separate whole-schedule-replay successor to H6, does have L3
+confirmatory live evidence on Llama-3.3-70B: see [docs/h65/README.md](docs/h65/README.md).
+
 ## Documentation
 
-[**docs/README.md**](docs/README.md) is the index. It separates the four
-documents you need to *run* Afterimage from the research record that exists so
-you can *check* its claims, and says what is deliberately kept out of this
-repository.
+[**docs/README.md**](docs/README.md) is the single index: the four documents
+you need to *run* Afterimage, the research record that lets you *check* its
+claims, and what is deliberately kept out of this repository. For the H6.5
+paper, start at [docs/h65/README.md](docs/h65/README.md) and
+[`evidence/h65-paper1/`](evidence/h65-paper1/README.md). Development and
+verification workflow: [CONTRIBUTING.md](CONTRIBUTING.md).
 
-| Document | Purpose |
-|---|---|
-| [All hypotheses and baselines](docs/ALL_HYPOTHESES_AND_BASELINES.md) | **Controlling results table, rankings, AirLLM/Accelerate comparisons, novelty assessment** |
-| [Usage](docs/USAGE.md) | Install-to-serving walkthrough: CLI, server, Python API |
-| [FAQ](docs/FAQ.md) | Short answers to common first-time questions |
-| [Troubleshooting](docs/TROUBLESHOOTING.md) | Common failures and fixes |
-| [Architecture](docs/ARCHITECTURE.md) | Runtime, storage, memory-tier, speculation, and evidence diagrams |
-| [Configuration](docs/CONFIGURATION.md) | Stable profiles and advanced flags |
-| [How it works](docs/HOW_IT_WORKS.md) | Implementation walkthrough and AirLLM contrast |
-| [Research methods](docs/RESEARCH_METHODS.md) | H0-H18 definitions, evidence levels, controls, and kill gates |
-| [Hypothesis lineage](docs/HYPOTHESIS_LINEAGE.md) | Literature source and novelty boundary for each idea |
-| [Literature](docs/LITERATURE.md) | Survey of running models larger than VRAM, and where this sits in it |
-| [Cross-model benchmark](docs/CROSS_MODEL_BENCHMARK_2026-08-22.md) | Phi-4 Mini, Qwen3, and Mistral Small across families and scale |
-| [Results log](docs/RESULTS_LOG.md) | Chronological corrections and raw-run interpretation |
-| [Reproduce](docs/REPRODUCE.md) | One command per published number, and the environment facts a rerun needs to match |
-| [Contributing](CONTRIBUTING.md) | Development and verification workflow |
+## Citation
+
+If you use H6.5, please cite the paper. If you use the software itself, please
+cite it as well. GitHub's **Cite this repository** button, generated from
+[CITATION.cff](CITATION.cff), gives the same entries.
+
+```bibtex
+@misc{erge2026h65,
+  title  = {Schedule-Aware Exact Weight Placement for Large Language Models with Limited GPU Memory},
+  author = {Erge, Oney},
+  year   = {2026}
+}
+
+@software{erge2026afterimage,
+  title  = {Afterimage: Lossless Weight-Compressed Streaming Inference},
+  author = {Erge, Oney},
+  year   = {2026},
+  url    = {https://github.com/oney-erge/Afterimage}
+}
+```
 
 Apache-2.0. Contributions and reproducible counter-results are welcome.

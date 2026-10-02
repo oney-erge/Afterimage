@@ -540,6 +540,14 @@ def _critical_endpoint_seeds(options, control, disk, density, fill, feasible):
     then let both ordinary fill orders spend the remaining budgets.  The
     resulting complete plans still pass the same feasibility, locality,
     training, held-out, and live gates as every other seed.
+
+    Only applies to a model with a separate stored "lm_head.weight" tensor.
+    A model with tied input/output embeddings has no such manifest entry
+    (the output projection reuses the embedding table), so this seed is
+    silently absent for it -- the search still runs and still finds a
+    feasible plan, just without this particular head-critical-path seed.
+    Llama-3.3-70B (the paper's primary evaluation model) has an untied head;
+    this was not separately measured for a tied-embedding model.
     """
     key = "lm_head.weight"
     option = options.get(key, {}).get("decoded_vram")

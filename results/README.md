@@ -9,6 +9,10 @@ No result is checked in merely because a method was implemented. Hardware runs
 belong here only after completing the protocol in
 [`docs/RESEARCH_METHODS.md`](../docs/RESEARCH_METHODS.md).
 
+This folder covers the H0-H18 program and the README's benchmark table. The H6.5
+paper's artifacts are in [`../evidence/h65-paper1/`](../evidence/h65-paper1/README.md)
+instead, because each of those is hash-pinned to a frozen protocol.
+
 The server writes immutable run JSON under the configured Afterimage store root,
 in `_experiment_results/`. A publishable result copied here should retain:
 

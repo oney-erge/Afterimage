@@ -1,5 +1,14 @@
 #!/usr/bin/env python3
-"""Measure pinned-host-to-CUDA bandwidth for representation/H9 cost models."""
+"""Measure host-to-CUDA bandwidth for representation/H9 cost models and H6.5
+planning (h2d_gbps).
+
+Despite the filename (kept for compatibility with existing callers), this
+measures either pinned or pageable host memory via --memory-mode. The
+paper's Llama-3.3-70B confirmations were measured in pageable mode
+(h2d_memory_mode="pageable_blocking" in their result artifacts); the
+default here remains pinned, this script's long-standing behavior, for
+every other caller.
+"""
 from __future__ import annotations
 
 import argparse
@@ -17,6 +26,12 @@ def main() -> int:
     parser.add_argument("--sizes-mib", default="32,64,128,256,512")
     parser.add_argument("--warmups", type=int, default=3)
     parser.add_argument("--repeats", type=int, default=10)
+    parser.add_argument("--memory-mode", choices=["pinned", "pageable"],
+                        default="pinned",
+                        help="pinned (default, this script's long-standing "
+                             "behavior) or pageable (what the paper's Llama "
+                             "confirmations measured, h2d_memory_mode="
+                             "'pageable_blocking')")
     parser.add_argument("--out", required=True)
     args = parser.parse_args()
     sizes = [int(value.strip()) for value in args.sizes_mib.split(",")
@@ -31,10 +46,11 @@ def main() -> int:
         raise FileExistsError("refusing to overwrite immutable result: %s" % out)
     out.parent.mkdir(parents=True, exist_ok=True)
 
+    pin = args.memory_mode == "pinned"
     rows = []
     for size_mib in sizes:
         nbytes = size_mib << 20
-        source = torch.empty(nbytes, dtype=torch.uint8, pin_memory=True)
+        source = torch.empty(nbytes, dtype=torch.uint8, pin_memory=pin)
         destination = torch.empty(nbytes, dtype=torch.uint8, device="cuda")
         for _ in range(args.warmups):
             destination.copy_(source, non_blocking=True)
@@ -61,7 +77,7 @@ def main() -> int:
 
     stable = [row["median_gbps"] for row in rows if row["size_mib"] >= 64]
     payload = {
-        "schema_version": 1,
+        "schema_version": 2,
         "completed_at_unix": time.time(),
         "gpu": torch.cuda.get_device_name(0),
         "torch": str(torch.__version__),
@@ -69,6 +85,11 @@ def main() -> int:
         "platform": platform.platform(),
         "warmups": args.warmups,
         "repeats": args.repeats,
+        # Downstream consumers (optimize_h65_plan's h2d_memory_mode, and
+        # every scripts/run_h65_*.py caller) read this as h2d.get("memory_mode"),
+        # which silently returned None / "unknown" for every artifact this
+        # script ever produced before schema_version 2 added the key.
+        "memory_mode": "pinned_blocking" if pin else "pageable_blocking",
         "rows": rows,
         "median_stable_gbps": statistics.median(stable),
     }

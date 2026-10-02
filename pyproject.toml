@@ -10,6 +10,31 @@ description = "Lossless weight-compressed streaming inference for models larger 
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 requires-python = ">=3.10"
+readme = "README.md"
+authors = [{ name = "Oney Erge" }]
+keywords = [
+    "llm-inference",
+    "offloading",
+    "weight-streaming",
+    "lossless-compression",
+    "bfloat16",
+    "speculative-decoding",
+    "gpu-memory",
+]
+# No "License ::" classifier: the SPDX `license` expression above replaces it
+# (PEP 639), and setuptools rejects the two together.
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Environment :: GPU :: NVIDIA CUDA",
+]
 dependencies = [
     "torch>=2.2",
     "numpy>=1.24",
@@ -30,6 +55,9 @@ dependencies = [
 
 [project.urls]
 Repository = "https://github.com/oney-erge/Afterimage"
+Documentation = "https://github.com/oney-erge/Afterimage/blob/main/docs/README.md"
+"H6.5 paper guide" = "https://github.com/oney-erge/Afterimage/blob/main/docs/h65/README.md"
+Changelog = "https://github.com/oney-erge/Afterimage/blob/main/CHANGELOG.md"
 Issues = "https://github.com/oney-erge/Afterimage/issues"
 
 [project.optional-dependencies]

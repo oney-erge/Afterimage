@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "split": "h65_confirmation2",
+  "frozen": "2026-09-11, before any confirmation-2 measurement",
+  "selection": "Written fresh for this test; matched to the first confirmation's families and lengths; never used by any earlier run.",
+  "cases": [
+    {
+      "id": "confirm2-explain-seasons",
+      "semantic_bucket": "explanation",
+      "user_text": "In two concise sentences, explain why Earth has seasons even though its distance from the Sun changes only slightly. Mention axial tilt and the angle of incoming sunlight."
+    },
+    {
+      "id": "confirm2-arithmetic-tickets",
+      "semantic_bucket": "arithmetic",
+      "user_text": "A theater has 23 rows with 18 seats each, and 57 seats are reserved for staff. State how many seats remain for the public, then give one short sentence showing the calculation."
+    },
+    {
+      "id": "confirm2-code-chunks",
+      "semantic_bucket": "code",
+      "user_text": "Write a short Python function named `chunked` that splits a list into consecutive sublists of a given positive size, keeping any shorter final chunk. Do not use third-party packages."
+    },
+    {
+      "id": "confirm2-compare-queues",
+      "semantic_bucket": "comparison",
+      "user_text": "Briefly compare a FIFO queue with a priority queue for task scheduling, starvation risk, and insertion cost. Use three bullet points."
+    },
+    {
+      "id": "confirm2-summarize-soil",
+      "semantic_bucket": "summarization",
+      "user_text": "Healthy soil stores water, cycles nutrients, and hosts microbes that help plants resist disease. Erosion and compaction strip these functions and can reduce harvests for years. Summarize this passage in one sentence of at most 25 words."
+    },
+    {
+      "id": "confirm2-reasoning-couriers",
+      "semantic_bucket": "reasoning",
+      "user_text": "Every courier who works on Sunday also works on Monday. Dana does not work on Monday. Does Dana work on Sunday? Answer yes or no first, then justify in one sentence."
+    },
+    {
+      "id": "confirm2-retrieval-rivers",
+      "semantic_bucket": "retrieval",
+      "user_text": "The registry assigns 3317 to the Amber river, 9046 to the Cedar river, and 5582 to the Birch river. A later memo lists depths 33, 90, and 55, which are not registry codes. Report only the code for the Cedar river."
+    },
+    {
+      "id": "confirm2-procedure-migration",
+      "semantic_bucket": "procedure",
+      "user_text": "Give a four-step checklist for running a schema migration on a production database. Include a backup, a staging rehearsal, the deployment window, and post-migration checks, with one brief line per step."
+    },
+    {
+      "id": "confirm2-explain-rainbows",
+      "semantic_bucket": "explanation",
+      "user_text": "In two concise sentences, explain why a rainbow appears on the side of the sky opposite the Sun after rain. Mention refraction, internal reflection, and how wavelengths separate."
+    },
+    {
+      "id": "confirm2-code-palindrome",
+      "semantic_bucket": "code",
+      "user_text": "Write a short Python function named `is_palindrome` that ignores case and non-alphanumeric characters when checking whether a string reads the same backward. Use only the standard library."
+    },
+    {
+      "id": "confirm2-compare-caching",
+      "semantic_bucket": "comparison",
+      "user_text": "Briefly compare write-through caching with cache-aside caching for consistency, write latency, and behaviour on a cache miss. Use three bullet points."
+    },
+    {
+      "id": "confirm2-arithmetic-garden",
+      "semantic_bucket": "arithmetic",
+      "user_text": "A garden has 14 beds with 36 seedlings each, and 45 seedlings fail to sprout. State how many seedlings survive, then give one short sentence showing the calculation."
+    }
+  ]
+}
