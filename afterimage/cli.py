@@ -165,12 +165,28 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     print("CUDA available   : %s" % cuda_ok)
     if cuda_ok:
         print("CUDA device      : %s" % torch.cuda.get_device_name(0))
+    elif gpu["vendor"] == "nvidia":
+        print()
+        print("NOTE: an NVIDIA GPU was detected, but this torch build has no CUDA")
+        print("      support (%s). The installer picked a CPU-only wheel, most often"
+              % torch.__version__)
+        print("      because no NVIDIA driver/nvidia-smi was visible when it ran, or")
+        print("      because this environment was set up by hand. Fix it with:")
+        print("        ./run.sh repair             (Linux/macOS)")
+        print("        .\\run.ps1 repair            (Windows PowerShell)")
+        print("      or reinstall torch directly: uv pip install --reinstall torch \\")
+        print("        --index-url https://download.pytorch.org/whl/cu124")
+        print("      (use /cu128 instead of /cu124 for an RTX 50-series/Blackwell GPU)")
 
     try:
         import triton  # noqa: F401
+        triton_ok = True
         print("triton           : available")
     except ImportError:
-        print("triton           : NOT installed -- GPU decode kernels will not run")
+        triton_ok = False
+        print("triton           : NOT installed -- GPU decode kernels will not run "
+              "(falls back to a slower CPU decoder; Triton has no native Windows "
+              "wheel -- WSL2 is the better-verified route there, see README)")
 
     if gpu["vendor"] == "amd":
         print()
@@ -220,17 +236,35 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
     ok = cuda_ok or gpu["vendor"] == "amd"
     print()
-    print("Overall: %s" % ("ready" if ok else "no usable GPU found -- CPU fallback only, will be slow"))
+    if not ok:
+        summary = "no usable GPU found -- CPU fallback only, will be slow"
+    elif cuda_ok and not triton_ok:
+        summary = "ready, but GPU decode kernels need triton (see the note above) -- CPU decoder fallback will be used and is slower"
+    else:
+        summary = "ready"
+    print("Overall: %s" % summary)
 
     print()
     if not stores:
         print("Next: nothing compressed yet. Try the ~10-minute quickstart first:")
         print("  afterimage quickstart")
     elif ok:
+        example = stores[0].name.replace("__", "/")
+        # --profile fast / --auto's draft model is hardcoded to Qwen/Qwen3-0.6B
+        # (RUN_PROFILES below); it only shares a vocabulary with a Qwen3
+        # target. Suggesting it for any other family would recommend a
+        # combination generate_adaptive now refuses at runtime.
+        is_qwen3 = example.lower().startswith("qwen/qwen3")
         print("Next: run something -- profiles are measured operating points, not guesses:")
-        print("  afterimage run %s \"your prompt\" --profile fast" % stores[0].name.replace("__", "/"))
+        if is_qwen3:
+            print("  afterimage run %s \"your prompt\" --profile fast" % example)
+        else:
+            print("  afterimage run %s \"your prompt\" --profile balanced" % example)
+            print("(--profile fast's draft model only matches a Qwen3 target; for "
+                  "speculative decoding on %s, pass --draft-model explicitly with a "
+                  "small model from the SAME family)" % example)
         print("or let it pick one from your detected hardware:")
-        print("  afterimage run %s \"your prompt\" --auto" % stores[0].name.replace("__", "/"))
+        print("  afterimage run %s \"your prompt\" --auto" % example)
     return 0 if ok else 1
 
 
@@ -502,12 +536,24 @@ RUN_PROFILES = {
 }
 
 
-def automatic_run_profile(vram_gib: float | None) -> tuple[str, str]:
-    """Return the automatic profile shared by the CLI and web server."""
+def automatic_run_profile(vram_gib: float | None,
+                          model_id: str | None = None) -> tuple[str, str]:
+    """Return the automatic profile shared by the CLI and web server.
 
+    model_id, when given, downgrades 'fast' to 'balanced' for any target
+    outside the Qwen3 family: RUN_PROFILES["fast"]["draft_model"] is a fixed
+    Qwen/Qwen3-0.6B, which only shares a vocabulary with a Qwen3 target (see
+    StreamingLosslessModel.generate_adaptive's vocabulary guard). Guessing a
+    same-family draft for other targets risked more than it was worth, so
+    --auto downgrades instead of guessing; pass --draft-model explicitly for
+    speculative decoding on a non-Qwen3 model.
+    """
     if vram_gib is None:
         return "min-memory", "no GPU detected"
     if vram_gib >= 6.0:
+        if model_id is not None and not model_id.lower().startswith("qwen/qwen3"):
+            return "balanced", ("%.1f GiB VRAM detected, but the fast profile's "
+                                "draft model only matches a Qwen3 target" % vram_gib)
         return "fast", "%.1f GiB VRAM detected" % vram_gib
     if vram_gib >= 3.0:
         return "balanced", "%.1f GiB VRAM detected" % vram_gib
@@ -522,7 +568,7 @@ def _resolve_run_profile(args: argparse.Namespace) -> None:
     name = args.profile
     if args.auto and name is None:
         vram_gb = _detect_gpu().get("vram_gb")
-        name, reason = automatic_run_profile(vram_gb)
+        name, reason = automatic_run_profile(vram_gb, model_id=args.model)
         print("[auto] picked --profile %s (%s)" % (name, reason), file=sys.stderr)
     if name is None:
         return
@@ -626,11 +672,15 @@ def cmd_run(args: argparse.Namespace) -> int:
                        storage_extent_max_bytes=args.storage_extent_max_bytes,
                        storage_extent_max_gap_bytes=args.storage_extent_max_gap_bytes,
                        decode_slice_elems=args.decode_slice_elems,
+                       vram_safety_margin_gb=args.vram_safety_margin_gb,
+                       reuse_decode_tables=args.reuse_decode_tables,
                        ram_tier_format=args.ram_tier_format,
                        lm_head_slice_rows=args.lm_head_slice_rows,
                        placement_policy=args.placement_policy,
                        critical_path_profile=args.critical_path_profile,
                        replay_plan_state=args.replay_plan_state,
+                       representation_policy=args.representation_policy,
+                       representation_plan_state=args.representation_plan_state,
                        prefetch_policy=args.prefetch_policy,
                        io_prefetch_max_depth=args.io_prefetch_max_depth,
                        lm_head_policy=args.lm_head_policy,
@@ -759,7 +809,7 @@ def cmd_pin_preflight(args: argparse.Namespace) -> int:
             raise FileExistsError("refusing to overwrite immutable result: %s" % out)
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(payload, indent=2, sort_keys=True),
-                       encoding="utf-8")
+                       encoding="utf-8", newline="\n")
     if args.json:
         print(json.dumps(payload, indent=2))
     else:
@@ -833,6 +883,67 @@ def cmd_optimize_residency(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_h65_plan(args: argparse.Namespace) -> int:
+    """H6.5: build a whole-trace, schedule-replay-scored representation plan.
+
+    Offline only -- this calls the same `optimize_h65_plan` the paper's
+    campaign scripts use, but with live paired-block validation disabled
+    (there is no live measurement to require from a bare CLI invocation).
+    The resulting plan is a replay-validated candidate, not a paper-eligible
+    confirmed plan; see docs/h65/README.md for how those are produced.
+    """
+    from afterimage.runtime.critical_path import TraceRecorder
+    from afterimage.runtime.h65_planner import optimize_h65_plan
+
+    manifest = json.loads(pathlib.Path(args.manifest).read_text(encoding="utf-8"))
+    h2d = json.loads(pathlib.Path(args.h2d).read_text(encoding="utf-8"))
+    traces = [TraceRecorder.load(path) for path in args.traces]
+    result = optimize_h65_plan(
+        manifest, traces,
+        vram_budget_gb=args.vram_budget_gb, ram_budget_gb=args.ram_budget_gb,
+        h2d_gbps=float(h2d["median_stable_gbps"]),
+        h2d_memory_mode=str(h2d.get("memory_mode") or "unknown"),
+        decode_slice_elems=args.decode_slice_elems,
+        search_iterations=args.search_iterations, seed=args.seed,
+        vram_safety_margin_gb=args.vram_safety_margin_gb,
+        minimum_trace_count=args.minimum_trace_count,
+        enable_compressed_ram=args.enable_compressed_ram,
+        require_live_validation=False, live_validation_eligible=False)
+
+    report = result.report
+    print("H6.5 offline search: %d candidates scored, predicted improvement "
+          "%.2f%% (conservative %.2f%%)" % (
+              report.candidates_scored,
+              report.predicted_improvement * 100,
+              report.conservative_predicted_improvement * 100))
+    print("  replayed request time: traffic control %.3fs, best candidate %.3fs"
+          % (report.control_replay_s, report.candidate_replay_s))
+    print("  best candidate %s the traffic control's placement"
+          % ("differs from" if report.treatment_diverged else "is identical to"))
+    print("  tensors per state, control -> candidate: %s" % ", ".join(
+        "%s %d->%d" % (state, report.control_choices.get(state, 0),
+                       report.candidate_choices.get(state, 0))
+        for state in sorted(set(report.control_choices) | set(report.candidate_choices))))
+    if report.fallback_to_control:
+        print("Guarded plan falls back to the traffic-density control: %s"
+              % report.fallback_reason, file=sys.stderr)
+        if not args.emit_candidate:
+            print("Writing the safe (control) plan. Pass --emit-candidate to "
+                  "inspect the best candidate found instead.", file=sys.stderr)
+
+    chosen = result.candidate_plan if args.emit_candidate else result.plan
+    chosen.save(args.out)
+    print("Wrote %s plan to %s" %
+          ("candidate" if args.emit_candidate else "guarded", args.out))
+    print("Load it with (the run's --vram-budget-gb/--ram-budget-gb must match "
+          "exactly what built this plan, or the load fails closed):")
+    print("  afterimage run MODEL PROMPT --representation-policy per_tensor "
+          "--representation-plan-state %s \\" % args.out)
+    print("    --vram-budget-gb %s --ram-budget-gb %s"
+          % (args.vram_budget_gb, args.ram_budget_gb))
+    return 0
+
+
 # -- quickstart --------------------------------------------------------
 
 QUICKSTART_MODEL = "Qwen/Qwen3-0.6B"
@@ -892,7 +1003,7 @@ def cmd_quickstart(args: argparse.Namespace) -> int:
         print()
         print("Measured on this machine, right now:")
         print("  %d tokens in %.1fs (%.2f s/token)" % (n_tokens, gen_s, gen_s / max(n_tokens, 1)))
-        print("  peak I/O    : %.2fs   peak decode: %.2fs" %
+        print("  total I/O   : %.2fs   total decode: %.2fs" %
               (sm.stats.io_seconds, sm.stats.decode_seconds))
         if torch.cuda.is_available():
             print("  peak VRAM   : %.2f GB" % (torch.cuda.max_memory_allocated() / 1e9))
@@ -902,6 +1013,8 @@ def cmd_quickstart(args: argparse.Namespace) -> int:
     print("It works. For a real model:")
     print("  afterimage compress Qwen/Qwen3-14B   # ~30 min download, ~6 min compress")
     print("  afterimage run Qwen/Qwen3-14B \"...\" --auto")
+    print()
+    print("Here for the H6.5 paper? See docs/h65/README.md and evidence/h65-paper1/.")
     return 0
 
 
@@ -998,7 +1111,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     c = sub.add_parser("compress", help="build a compressed store for a model")
     c.add_argument("model", help="HuggingFace model id, e.g. Qwen/Qwen3-14B")
-    c.add_argument("--out", default=None, help="output store directory (default: ~/.afterimage/stores/<model>)")
+    c.add_argument("--out", "--store", dest="out", default=None,
+                   help="output store directory (default: ~/.afterimage/stores/<model>); "
+                        "--store is accepted too, matching `afterimage run --store`")
     c.add_argument("--chunk-size", type=int, default=1024)
     c.add_argument("--quantize", default=None, choices=[None, "q8"])
     c.add_argument(
@@ -1053,8 +1168,8 @@ def build_parser() -> argparse.ArgumentParser:
                         choices=["min-memory", "balanced", "fast"],
                         help="apply a measured operating point (see README's benchmark "
                              "table): min-memory = lowest VRAM, exact, slowest; "
-                             "balanced = +4GB residency, 1.66x; fast = +speculation, "
-                             "3.15x. Explicit flags below still override it.")
+                             "balanced = +4GB residency, 1.55x; fast = +speculation, "
+                             "2.93x. Explicit flags below still override it.")
     r_core.add_argument("--auto", action="store_true",
                         help="detect available VRAM and pick a profile automatically; "
                              "prints the decision before running. Explicit flags win.")
@@ -1073,7 +1188,7 @@ def build_parser() -> argparse.ArgumentParser:
     r_core.add_argument("--draft-model", default=None,
                         help="HuggingFace id of a small resident draft model (e.g. "
                              "Qwen/Qwen3-0.6B) -- enables speculative decoding, the "
-                             "engine's largest lossless speedup (3.15x measured)")
+                             "engine's largest lossless speedup (2.93x measured)")
     r_core.add_argument("--spec-k", type=int, default=8,
                         help="draft chain length when --draft-model is set")
     r_core.add_argument("--spec-temperature", type=float, default=0.0,
@@ -1119,6 +1234,16 @@ def build_parser() -> argparse.ArgumentParser:
     r_adv.add_argument("--critical-path-profile", default=None)
     r_adv.add_argument("--replay-plan-state", default=None,
                        help="frozen plan produced by `afterimage optimize-residency`")
+    r_adv.add_argument("--representation-policy", default="uniform",
+                       choices=["uniform", "per_tensor", "multi_state"],
+                       help="uniform (default) keeps every tensor in one representation; "
+                            "per_tensor/multi_state load one exact representation+tier "
+                            "choice per tensor from --representation-plan-state, e.g. a "
+                            "plan produced by `afterimage research h65-plan` (H6.5) or "
+                            "`afterimage research optimize-residency`")
+    r_adv.add_argument("--representation-plan-state", default=None,
+                       help="frozen per-tensor plan required by a non-uniform "
+                            "--representation-policy -- see docs/h65/README.md")
     r_adv.add_argument("--lm-head-policy", default="full",
                        choices=["full", "certified_mips", "ram_overlay"])
     r_adv.add_argument("--require-pinned-ram", action="store_true",
@@ -1134,6 +1259,15 @@ def build_parser() -> argparse.ArgumentParser:
                             "transient decode scratch, which is what lowers the floor "
                             "on --vram-budget-gb (1<<22 gets a 14B under 1.7 GB); the "
                             "cost is more kernel launches. Cannot change decoded values.")
+    r_adv.add_argument("--vram-safety-margin-gb", type=float, default=0.0,
+                       help="reserve this much of --vram-budget-gb unused as a runtime "
+                            "margin (requires --vram-budget-gb); the H6.5 paper's Llama "
+                            "confirmations used 0.5 GB on an 8 GB budget")
+    r_adv.add_argument("--reuse-decode-tables", action=argparse.BooleanOptionalAction,
+                       default=False,
+                       help="cache decode Huffman tables across tokens instead of "
+                            "rebuilding them each time; the H6.5 paper's Llama "
+                            "confirmations ran with this on")
     r_adv.add_argument("--no-kv-cache", action="store_true")
     r_adv.add_argument("--ram-tier-format", default="decoded", choices=["decoded", "compressed"],
                        help="'decoded' pins bf16 tensors (needs a real ulimit -l -- see "
@@ -1177,8 +1311,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     research = sub.add_parser(
         "research",
-        help="the H0-H18 research layer -- opt-in, does not affect ordinary "
-             "compress/run/serve. See docs/RESEARCH_METHODS.md.")
+        help="the opt-in research layer (H0-H18, plus H6.5's h65-plan) -- does "
+             "not affect ordinary compress/run/serve. See "
+             "docs/RESEARCH_METHODS.md and docs/h65/README.md.")
     research_sub = research.add_subparsers(dest="research_command", required=True)
 
     e = research_sub.add_parser(
@@ -1212,7 +1347,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     o = research_sub.add_parser(
         "optimize-residency",
-        help="learn a frozen whole-set residency plan from event-DAG traces")
+        help="H10/H13/H15: learn a frozen whole-set VRAM residency plan from "
+             "event-DAG traces (not H6.5 -- that is h65-plan)")
     o.add_argument("traces", nargs="+")
     o.add_argument("--manifest", required=True)
     o.add_argument("--out", required=True)
@@ -1231,6 +1367,50 @@ def build_parser() -> argparse.ArgumentParser:
     o.add_argument("--max-tensors-per-extent", type=int, default=8)
     o.add_argument("--seed", type=int, default=0)
     o.set_defaults(func=cmd_optimize_residency)
+
+    h65 = research_sub.add_parser(
+        "h65-plan",
+        help="H6.5: replay-score a schedule-aware per-tensor representation/tier "
+             "plan from calibration traces -- see docs/h65/README.md")
+    h65.add_argument("traces", nargs="+",
+                     help="event-DAG calibration traces, e.g. from "
+                          "`afterimage run MODEL PROMPT --trace-output FILE.json` "
+                          "(at least 3 disjoint prompts; see docs/h65/README.md)")
+    h65.add_argument("--manifest", required=True, help="compressed store's manifest.json")
+    h65.add_argument("--h2d", required=True,
+                     help="pinned H2D bandwidth artifact from "
+                          "scripts/benchmark_pinned_h2d.py")
+    h65.add_argument("--vram-budget-gb", type=float, required=True)
+    h65.add_argument("--ram-budget-gb", type=float, required=True)
+    h65.add_argument("--vram-safety-margin-gb", type=float, default=0.5)
+    h65.add_argument("--decode-slice-elems", type=int, default=1 << 22)
+    h65.add_argument("--search-iterations", type=int, default=256)
+    h65.add_argument("--minimum-trace-count", type=int, default=3,
+                     help="the paper's protocol used at least 3 disjoint calibration "
+                          "traces and held one out for validation; this floor exists "
+                          "so a single SSD timing excursion cannot become a frozen "
+                          "placement")
+    h65.add_argument("--enable-compressed-ram", action=argparse.BooleanOptionalAction,
+                     default=True,
+                     help="allow the encoded-in-RAM representation (full H6.5); "
+                          "--no-enable-compressed-ram restricts the search to "
+                          "placement only, matching the paper's placement-only arm")
+    h65.add_argument("--seed", type=int, default=0)
+    h65.add_argument("--emit-candidate", action="store_true",
+                     help="save the best candidate found even if it fails the "
+                          "predicted-improvement gate, instead of the safe plan "
+                          "(which falls back to the traffic-density control on a "
+                          "failed gate). Useful for inspecting what the search found; "
+                          "do not deploy this plan without separately measuring it, "
+                          "since this offline mode never runs the paper's paired live "
+                          "validation blocks (--require-live-validation is always off "
+                          "here; see the confirmatory protocols under docs/h65/protocols/ "
+                          "for how a paper-eligible plan is validated)")
+    h65.add_argument("--out", required=True,
+                     help="where to write the RepresentationPlan; load it with "
+                          "`afterimage run --representation-policy per_tensor "
+                          "--representation-plan-state OUT`")
+    h65.set_defaults(func=cmd_h65_plan)
 
     return p
 

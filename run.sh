@@ -74,7 +74,7 @@ if [ "$action" = repair ] || [ "$installed" != "$fingerprint" ] || [ "$runtime_h
     reinstall+=(--reinstall-package torch)
   fi
   case "$gpu" in
-    nvidia) torch_index=https://download.pytorch.org/whl/cu124; extras='.[gpu,server]' ;;
+    nvidia) torch_index=$(install_cuda_torch_index); extras='.[gpu,server]' ;;
     amd) torch_index=https://download.pytorch.org/whl/rocm6.1; extras='.[server]'; echo "AMD support is experimental." ;;
     *) torch_index=https://download.pytorch.org/whl/cpu; extras='.[server]' ;;
   esac

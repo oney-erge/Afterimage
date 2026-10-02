@@ -1,0 +1,13 @@
+{
+  "allowed_for_primary_paper_claim": false,
+  "allowed_for_secondary_paper_use": true,
+  "classification": "secondary_mechanism_control",
+  "reasons": [
+    "Six reserved blocks; each arm twice in every position.",
+    "No automatic retry, optional stopping, or outlier deletion.",
+    "Secondary mechanism claim limited to cold one-token latency and peak VRAM on the RTX 5090.",
+    "Amendment 1: cells run through a worker wrapper that forwards the knapsack profile; v1 is superseded."
+  ],
+  "schema_version": 1,
+  "sha256": "30b2e58e7a5e0bab9a9e0bd42f2d353086df137b09adf703a72308932643eea5"
+}

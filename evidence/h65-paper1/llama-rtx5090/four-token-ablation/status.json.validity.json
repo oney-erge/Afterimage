@@ -1,0 +1,12 @@
+{
+  "allowed_for_primary_paper_claim": false,
+  "allowed_for_secondary_paper_use": true,
+  "classification": "secondary_four_token_ablation",
+  "reasons": [
+    "Three reserved blocks with fixed plans and balanced method position.",
+    "No automatic retry, optional stopping, or outlier deletion.",
+    "Secondary claim is limited to cold four-token latency on the RTX 5090."
+  ],
+  "schema_version": 1,
+  "sha256": "43a4a3afa4323bf1ce8b3a01acd750ad4514002cafa13cba78c58d0ecc055d1b"
+}

@@ -15,12 +15,15 @@ python -m compileall -q afterimage
 python -m pytest -q
 ```
 
-`286` of the tests that can pass without CUDA pass on any machine; the rest
-are skipped, not failed, and are named individually in the output (`-rs`
-shows the reason). This proves the codec, config validation, planners,
-protocols, and API logic are correct. It does not exercise the GPU decode
-kernels, the streaming engine's live generation path, or any wall-clock
-number in the paper -- those need the hardware runs below.
+Several hundred tests that can pass without CUDA pass on any machine; the
+rest are skipped, not failed, and are named individually in the output
+(`-rs` shows the reason, and the final summary line gives the exact counts
+for your checkout -- this repository does not pin that count in prose,
+since it grows every time a test is added). This proves the codec, config
+validation, planners, protocols, and API logic are correct. It does not
+exercise the GPU decode kernels, the streaming engine's live generation
+path, or any wall-clock number in the paper -- those need the hardware runs
+below.
 
 ```bash
 python -m pytest -q -rs   # -rs prints why each test was skipped
@@ -50,7 +53,7 @@ For the canonical five-way Qwen3-14B comparison, prepare the Linux/WSL2
 machine and run:
 
 ```bash
-bash benchmark.sh canonical
+bash scripts/benchmark.sh canonical
 ```
 
 This runs AirLLM, Hugging Face Accelerate disk offload, exact-min,
@@ -64,7 +67,7 @@ ZeRO-Inference, and the separate short-answer and long-generation workloads,
 run:
 
 ```bash
-bash paper_benchmark.sh
+bash scripts/paper_benchmark.sh
 ```
 
 The wrapper refuses a dirty tree or missing benchmark dependency, resumes
@@ -80,8 +83,21 @@ says which cells are missing.
 
 ## Reproducing Paper 1's figures on a different GPU
 
-`paper_benchmark.sh` above reproduces only the headline TTFT/Pareto
-comparison. To reproduce Paper 1's full figure and table set (H6
+**If "Paper 1" means the H6.5 arXiv paper** ("Schedule-Aware Exact Weight
+Placement..."), start at [h65/README.md](h65/README.md) and
+[`../evidence/h65-paper1/`](../evidence/h65-paper1/README.md) instead of
+this section: they index the actual protocol per study (D1, D2, D4, ...)
+and the script that recomputes each published number from raw data.
+
+The section below reproduces an earlier H6 (not H6.5) figure set --
+`AFTERIMAGE_EXACT_MIN_VRAM_GB` and the H6 representation-and-tier framing
+predate the H6.5 whole-schedule-replay method. It is kept because the
+script and its output convention still work and may still be useful for
+the underlying H6 mechanism evidence, not because it produces the H6.5
+paper's figures.
+
+`scripts/paper_benchmark.sh` above reproduces only the headline TTFT/Pareto
+comparison. To reproduce this earlier figure and table set (H6
 representation-and-tier planning: Figures 2, 3, 4, 5, 7, 9 and Table 2) on
 a second machine with different hardware, run:
 

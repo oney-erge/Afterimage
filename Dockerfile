@@ -13,7 +13,15 @@
 
 ARG VARIANT=cuda
 
-FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04 AS base-cuda
+# RTX 50-series (Blackwell) hosts need both a newer CUDA runtime and a
+# matching torch wheel: rebuild with
+#   --build-arg CUDA_BASE_IMAGE=nvidia/cuda:12.8.1-runtime-ubuntu22.04 \
+#   --build-arg TORCH_INDEX_URL=https://download.pytorch.org/whl/cu128
+# Not verified in this environment (no Blackwell/Docker+GPU access here);
+# the native-install path's CUDA-version detection is in
+# scripts/install-utils.sh's install_cuda_torch_index.
+ARG CUDA_BASE_IMAGE=nvidia/cuda:12.4.1-runtime-ubuntu22.04
+FROM ${CUDA_BASE_IMAGE} AS base-cuda
 ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cu124
 ARG PIP_EXTRAS=gpu,server
 
@@ -37,7 +45,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY pyproject.toml README.md ./
+COPY pyproject.toml README.md LICENSE ./
 COPY afterimage ./afterimage
 
 RUN python3 -m venv /opt/venv

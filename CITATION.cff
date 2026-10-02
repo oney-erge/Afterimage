@@ -1,8 +1,8 @@
 cff-version: 1.2.0
-message: "If you use this software, please cite it as below."
+message: "If you use this software, please cite it as below. If you use the H6.5 method specifically, please also cite the preferred-citation paper below."
 title: "Afterimage: Lossless Weight-Compressed Streaming Inference"
 type: software
-version: "0.2.0"
+version: "0.3.0"
 authors:
   - given-names: "Oney"
     family-names: "Erge"
@@ -11,5 +11,19 @@ authors:
 url: "https://github.com/oney-erge/Afterimage"
 repository-code: "https://github.com/oney-erge/Afterimage"
 license: Apache-2.0
-# Add a Zenodo DOI here once a tagged release is archived:
-# doi: "10.5281/zenodo.XXXXXXX"
+# Add a Zenodo DOI here once a tagged release (with its evidence/h65-paper1/
+# artifacts) is archived: doi: "10.5281/zenodo.XXXXXXX"
+preferred-citation:
+  type: article
+  title: "Schedule-Aware Exact Weight Placement for Large Language Models with Limited GPU Memory"
+  authors:
+    - given-names: "Oney"
+      family-names: "Erge"
+      alias: "oney-erge"
+  # Fill in once the arXiv submission is assigned an identifier, e.g.:
+  #   identifiers:
+  #     - type: other
+  #       value: "arXiv:26XX.XXXXX"
+  #       description: "arXiv preprint"
+  #   url: "https://arxiv.org/abs/26XX.XXXXX"
+  year: 2026

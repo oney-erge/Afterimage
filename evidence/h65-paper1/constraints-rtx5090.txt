@@ -1,0 +1,18 @@
+# Package versions recorded on the RTX 5090 machine (System B) that ran every
+# Llama-3.3-70B study in this folder. Source: the "environment" block of
+# llama-rtx5090/external-comparison/status.json, which ran on the same machine,
+# at the same commit (637bbd55), on the same day as D2 and D4. The D1/D2/D4
+# artifacts themselves record the source commit and file hashes but not package
+# versions. See ENVIRONMENT.md.
+#
+# Linux or WSL2, Python 3.12, NVIDIA driver 610.88, CUDA 13.0:
+#   pip install torch==2.13.0 --index-url https://download.pytorch.org/whl/cu130
+#   pip install -e ".[gpu,server,bench]" -c evidence/h65-paper1/constraints-rtx5090.txt
+torch==2.13.0
+transformers==5.12.1
+accelerate==1.14.0
+safetensors==0.8.0
+numpy==2.5.2
+airllm==3.3.0
+deepspeed==0.19.6
+dfloat11==0.5.0

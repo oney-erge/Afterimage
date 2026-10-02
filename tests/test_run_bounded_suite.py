@@ -285,7 +285,7 @@ def test_cool_down_never_reports_recovery_from_temperature_alone(monkeypatch):
 
 
 def test_cool_down_checks_throttle_even_with_no_cooldown_flags_at_all(monkeypatch):
-    """The exact gap this fix closes: benchmark.sh's canonical invocation
+    """The exact gap this fix closes: scripts/benchmark.sh's canonical invocation
     passes neither --cooldown-seconds nor --cooldown-max-temp-c, so callers
     reach cool_down(0.0, None). The old code returned {} immediately in that
     case without ever calling gpu_thermal_snapshot() -- a genuinely
@@ -379,3 +379,32 @@ def test_cool_down_unknown_throttle_reading_does_not_block(monkeypatch):
     monkeypatch.setattr(bounded, "gpu_thermal_snapshot", lambda: {})
     result = bounded.cool_down(0.0, None)
     assert result["cooldown_reached_target"] is True
+
+
+def test_engine_config_keeps_a_cells_own_knapsack_profile_when_none_is_passed():
+    # The H6.5 D4 mechanism control's amendment 1: its worker called the suite
+    # with critical_profile=None while each knapsack cell already named its
+    # profile, and the suite overwrote that with None, so every
+    # profiled_knapsack cell failed. A passed value must still win.
+    from scripts.run_bounded_suite import Method, engine_config_for
+
+    method = Method("knapsack", "knapsack", "afterimage",
+                    {"placement_policy": "profiled_knapsack",
+                     "critical_path_profile": "cell-profile.json",
+                     "vram_budget_gb": 8.0},
+                    "exact", 1.0)
+    assert engine_config_for(method).critical_path_profile == "cell-profile.json"
+    assert engine_config_for(
+        method, critical_profile="suite-profile.json"
+    ).critical_path_profile == "suite-profile.json"
+
+
+def test_engine_config_keeps_a_cells_own_replay_plan_when_none_is_passed():
+    from scripts.run_bounded_suite import Method, engine_config_for
+
+    method = Method("replay", "replay", "afterimage",
+                    {"placement_policy": "replay_cem",
+                     "replay_plan_state": "cell-plan.json",
+                     "vram_budget_gb": 8.0},
+                    "exact", 1.0)
+    assert engine_config_for(method).replay_plan_state == "cell-plan.json"

@@ -2,6 +2,7 @@ name: ci
 
 on:
   push:
+    branches: [main]
   pull_request:
 
 permissions:
@@ -40,6 +41,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history: the laptop H6.5 plan re-derivation below exports the
+          # planner from the exact commit those plans were built with.
+          fetch-depth: 0
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
@@ -50,10 +55,20 @@ jobs:
       # [tool.ruff.lint] comment for why this isn't a full style pass yet.
       # scripts/ is included because it's what a reviewer or artifact
       # evaluator actually runs to reproduce a result.
-      - run: python -m ruff check afterimage scripts tests
+      - run: python -m ruff check afterimage scripts tests evidence
       # Keeps the docs a new user reads first from drifting back into
       # em-dash-heavy, AI-sounding prose. See scripts/check_prose.py.
       - run: python scripts/check_prose.py
+      # A moved or deleted document must not leave a dead link behind.
+      - run: python scripts/check_links.py
+      # The H6.5 paper's evidence: manifest hashes, every frozen protocol
+      # against the hash its run recorded, and every published number
+      # recomputed from the raw paired data. Stdlib only, a few seconds.
+      - run: python evidence/h65-paper1/verify_paper_evidence.py
+      # Rebuilds the RTX 3080 Laptop H6.5 plans from their recorded traces and
+      # manifests with the planner from the recorded commit, and checks them
+      # byte for byte against the frozen plans the timed runs used. CPU only.
+      - run: python evidence/h65-paper1/laptop-rtx3080/plan-rederivation/rederive_laptop_plans.py
 
   cpu-tests:
     runs-on: ubuntu-latest

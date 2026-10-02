@@ -1,0 +1,12 @@
+{
+  "allowed_for_primary_paper_claim": true,
+  "classification": "L3_frozen_confirmation",
+  "reasons": [
+    "Twelve fresh pre-registered prompts; adjacent pairs with balanced order.",
+    "No automatic retry, optional stopping, or outlier deletion.",
+    "Reported together with the first confirmation; the latency claim uses the pre-registered pooled rule.",
+    "Claim is limited to cold one-token latency on the RTX 5090."
+  ],
+  "schema_version": 1,
+  "sha256": "ee2420ae8fd746105a8dcf7813bba5e6d08804397a6d3a17f5af6e612788195d"
+}

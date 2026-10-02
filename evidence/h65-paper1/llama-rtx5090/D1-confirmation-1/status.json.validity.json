@@ -1,0 +1,11 @@
+{
+  "allowed_for_primary_paper_claim": true,
+  "classification": "L3_frozen_confirmation",
+  "reasons": [
+    "Eight reserved adjacent pairs with fixed plans and balanced order.",
+    "No automatic retry, optional stopping, or outlier deletion.",
+    "Claim is limited to cold one-token latency on the RTX 5090."
+  ],
+  "schema_version": 1,
+  "sha256": "2cbc6320e8088a4f33bde40d6edc251656f38c48e44ce390c0ebcadffd9ee1d1"
+}

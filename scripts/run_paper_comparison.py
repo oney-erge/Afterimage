@@ -7,7 +7,7 @@ real inter-method randomization instead of a fixed method order.
 Why this exists instead of just raising --repeats on run_bounded_suite.py's
 canonical driver
 --------------------------------------------------------------------------
-The canonical driver (benchmark.sh -> run_bounded_suite.py) loads one
+The canonical driver (scripts/benchmark.sh -> run_bounded_suite.py) loads one
 method, sweeps every case for every repeat, then moves to the next method
 -- so "repeat" measures noise *within* a method's own run, but never
 untangles method quality from *when in the campaign* a method happened to
@@ -42,7 +42,7 @@ why --blocks defaults to 3 ("each pass 3 times") rather than the 8-12
 blocks a confirmatory paper claim should eventually use -- raise --blocks
 for that once a pilot run's block-to-block variance is known.
 
-Requires (WSL2/Linux only, matching run_bounded_suite.py and benchmark.sh):
+Requires (WSL2/Linux only, matching run_bounded_suite.py and scripts/benchmark.sh):
 CUDA, a prepared Afterimage store for --model, and the optional-dependency
 group `bench` installed (`pip install -e .[bench]`). Missing packages fail
 preflight before the first multi-hour cell rather than creating a partial
@@ -53,7 +53,7 @@ Usage:
         --store /root/afterimage/store_14b \\
         --out-dir results/paper-comparison
 
-Or via the one-click wrapper: ./paper_benchmark.sh
+Or via the one-click wrapper: scripts/paper_benchmark.sh
 """
 from __future__ import annotations
 
