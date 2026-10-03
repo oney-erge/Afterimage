@@ -26,10 +26,13 @@ unchanged.
 - `scripts/run_paper_comparison.py --control-method` names the arm every other
   one is paired against (default `exact-min`, unchanged), so a follow-up can use
   a frozen plan as its control instead of running an arm it does not need.
-- `simple-v4-r0`: the D8 traffic control with no host-RAM tier, the matched
-  control for an H6.5 plan searched at a 0 GB RAM budget.
+- `simple-v4-r0`: the D8 traffic control with no host-RAM tier and the H6.5
+  planner's 0.5 GB VRAM reserve, the matched control for an H6.5 plan searched
+  at a 0 GB RAM budget. Protocol v3 runs six arms: the disk control, this
+  control, and H6.5 calibrated on 1 and 32 tokens at 0 and 8 GB of host RAM,
+  scored with 95% intervals as in the paper.
 - `scripts/analyze_h65_32token_followup.py` and
-  `docs/h65/protocols/PROTOCOL-h65-32token-calibration-followup-v2-20261003.md`:
+  `docs/h65/protocols/PROTOCOL-h65-32token-calibration-followup-v3-20261003.md`:
   the analysis rule, frozen before any measurement, and the script that applies
   it. The script reproduces D8's result from the published artifact, and reports
   how far the control drifted between blocks and from D8, and each arm's share

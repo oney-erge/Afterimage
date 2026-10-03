@@ -410,13 +410,16 @@ def test_engine_config_keeps_a_cells_own_replay_plan_when_none_is_passed():
     assert engine_config_for(method).replay_plan_state == "cell-plan.json"
 
 
-def test_zero_ram_traffic_control_differs_from_d8_traffic_control_only_in_ram():
+def test_zero_ram_traffic_control_matches_the_h65_plans_vram_reserve():
     """simple-v4-r0 is the matched control for an H6.5 plan searched with no
-    host-RAM budget; anything else differing would confound that pairing."""
+    host-RAM budget: same placement settings as D8's traffic control, no RAM
+    tier, and the planner's 0.5 GB VRAM reserve so resident capacity matches."""
     from scripts.run_bounded_suite import METHODS
 
     r8, r0 = METHODS["simple-v4-r8"].overrides, METHODS["simple-v4-r0"].overrides
     assert r0["ram_budget_gb"] == 0.0
-    assert {k: v for k, v in r0.items() if k != "ram_budget_gb"} == {
-        k: v for k, v in r8.items() if k != "ram_budget_gb"}
+    assert r0["vram_safety_margin_gb"] == 0.5
+    changed = {"ram_budget_gb", "vram_safety_margin_gb"}
+    assert {k: v for k, v in r0.items() if k not in changed} == {
+        k: v for k, v in r8.items() if k not in changed}
     assert METHODS["simple-v4-r0"].exactness == METHODS["simple-v4-r8"].exactness

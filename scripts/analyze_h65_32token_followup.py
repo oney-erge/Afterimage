@@ -2,12 +2,12 @@
 """Score the 32-token H6.5 follow-up against its disk control.
 
 Reads one ``run_paper_comparison.py`` result and applies the analysis frozen in
-docs/h65/protocols/PROTOCOL-h65-32token-calibration-followup-v2-20261003.md. Stdlib
+docs/h65/protocols/PROTOCOL-h65-32token-calibration-followup-v3-20261003.md. Stdlib
 only, so it runs anywhere the result file does.
 
 For each arm the primary estimate is the geometric mean over complete blocks of
 the per-block geometric mean of (control wall seconds / arm wall seconds) over
-the four prompts, with a two-sided 90% t interval on the log of the block
+the four prompts, with a two-sided 95% t interval on the log of the block
 ratios (the paper's estimator, at the protocol's level). A ratio above 1 means
 the arm is faster than the control.
 
@@ -29,9 +29,10 @@ MIN_BLOCKS = 3
 # between blocks, the environment changed during the run and every verdict is
 # reported with that caveat.
 CONTROL_DRIFT_LIMIT = 0.05
-# t_{0.95, df}: the multiplier for a two-sided 90% interval, df = blocks - 1.
-T_90 = {1: 6.314, 2: 2.920, 3: 2.353, 4: 2.132, 5: 2.015, 6: 1.943, 7: 1.895,
-        8: 1.860, 9: 1.833, 10: 1.812, 11: 1.796, 12: 1.782}
+# t_{0.975, df}: the multiplier for a two-sided 95% interval, df = blocks - 1,
+# the paper's interval.
+T_95 = {1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571, 6: 2.447, 7: 2.365,
+        8: 2.306, 9: 2.262, 10: 2.228, 11: 2.201, 12: 2.179}
 
 
 def geomean(values) -> float:
@@ -42,10 +43,10 @@ def geomean(values) -> float:
 def interval(block_ratios: list[float]) -> tuple[float, float] | None:
     if len(block_ratios) < 2:
         return None
-    if len(block_ratios) - 1 not in T_90:
-        raise ValueError("more than %d blocks: extend T_90" % (max(T_90) + 1))
+    if len(block_ratios) - 1 not in T_95:
+        raise ValueError("more than %d blocks: extend T_95" % (max(T_95) + 1))
     logs = [math.log(value) for value in block_ratios]
-    half = (T_90[len(logs) - 1] * statistics.stdev(logs) / math.sqrt(len(logs)))
+    half = (T_95[len(logs) - 1] * statistics.stdev(logs) / math.sqrt(len(logs)))
     centre = statistics.mean(logs)
     return math.exp(centre - half), math.exp(centre + half)
 
@@ -148,7 +149,7 @@ def analyze(result: dict, control: str, arms: list[str],
         estimate = geomean(block_ratios) if block_ratios else float("nan")
         out["arms"][arm] = {
             "speed_ratio_vs_control": estimate,
-            "ci90": list(bounds) if bounds else None,
+            "ci95": list(bounds) if bounds else None,
             "block_ratios": block_ratios,
             "request_wins": sum(ratio > 1 for ratio in request_ratios),
             "requests": len(request_ratios),
@@ -177,10 +178,10 @@ def render(summary: dict) -> str:
     lines = ["control %s | complete blocks %s of %s requested" % (
         summary["control"], summary["complete_blocks"], summary["requested_blocks"]), ""]
     header = ("%-18s %8s %-17s %6s %7s %7s %6s %6s  %s" % (
-        "arm", "ratio", "90% interval", "wins", "s/tok", "SSD GB", "cache", "VRAM", "verdict"))
+        "arm", "ratio", "95% interval", "wins", "s/tok", "SSD GB", "cache", "VRAM", "verdict"))
     lines.append(header)
     for arm, row in summary["arms"].items():
-        bounds = row["ci90"]
+        bounds = row["ci95"]
         share = row["cache_served_share"]
         lines.append("%-18s %8.3f %-17s %3d/%-2d %7.2f %7.2f %6s %6.2f  %s" % (
             arm, row["speed_ratio_vs_control"],

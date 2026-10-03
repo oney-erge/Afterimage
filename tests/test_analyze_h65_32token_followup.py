@@ -9,7 +9,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 D8 = (ROOT / "evidence" / "h65-paper1" / "laptop-rtx3080" / "D8-qwen-32token"
       / "qwen3-14b-h65-matched-decode-practical-20260909-r2-32tok.json")
 PROTOCOL = (ROOT / "docs" / "h65" / "protocols"
-            / "PROTOCOL-h65-32token-calibration-followup-v2-20261003.md")
+            / "PROTOCOL-h65-32token-calibration-followup-v3-20261003.md")
 CASES = ("a", "b", "c", "d")
 
 
@@ -35,7 +35,7 @@ def test_faster_arm_with_a_tight_interval_is_called_faster():
     arm = method("arm", [500.0, 505.0, 495.0])
     summary = analyze(result(control, arm), "ctl", ["arm"])["arms"]["arm"]
     assert summary["speed_ratio_vs_control"] == pytest.approx(1.2, abs=0.01)
-    assert summary["ci90"][0] > 1.0
+    assert summary["ci95"][0] > 1.0
     assert summary["verdict"] == "faster than the control"
     assert summary["request_wins"] == summary["requests"] == 12
 
@@ -87,9 +87,9 @@ def test_unknown_method_names_the_methods_the_result_has():
 
 def test_interval_matches_a_hand_computed_three_block_case():
     low, high = interval([1.10, 1.20, 1.30])
-    # mean log 0.18000, sd log 0.08355, t(2 df, 90%) 2.920 -> +/- 0.14086
-    assert low == pytest.approx(1.0399, abs=1e-3)
-    assert high == pytest.approx(1.3783, abs=1e-3)
+    # mean log 0.18000, sd log 0.08355, t(2 df, 95%) 4.303 -> +/- 0.20757
+    assert low == pytest.approx(0.9728, abs=1e-3)
+    assert high == pytest.approx(1.4734, abs=1e-3)
 
 
 def test_published_d8_shows_the_disk_control_beating_the_one_token_plan():
@@ -110,9 +110,10 @@ def test_published_d8_shows_the_disk_control_beating_the_one_token_plan():
 
 def test_the_frozen_protocol_states_the_rule_the_script_applies():
     text = " ".join(PROTOCOL.read_text(encoding="utf-8").split())
-    for required in ("two-sided 90%", "lower bound", "at least 3", "token ids",
+    for required in ("two-sided 95%", "lower bound", "at least 3", "token ids",
                      "disk-frozen", "calibration_long", "simple-v4-r0",
-                     "up to two more times", "above 5%", "17.93"):
+                     "up to two more times", "above 5%", "17.93", "h65-cal1-ram0",
+                     "predicted"):
         assert required in text, "protocol no longer states %r" % required
 
 
