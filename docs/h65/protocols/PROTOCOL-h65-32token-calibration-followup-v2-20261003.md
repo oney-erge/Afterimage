@@ -61,8 +61,11 @@ cannot see the cache it displaces. Hence two H6.5 plans from the same traces.
   the current planner, not the 6c37700 planner that built the D6 to D10 plans.
 - The H6.5 search and objective are unchanged. Only the calibration length and the
   host-RAM budget differ from D8.
-- Gate before timing: both plans built, within budget, each diverged from its own
-  traffic control, 32 forward passes per trace. Any failure stops the run.
+- Gate before timing: both plans built and within budget, 32 forward passes per
+  trace, calibration and evaluation prompts disjoint. Any failure stops the run.
+  Whether each plan diverged from its own traffic control is recorded but does not
+  stop the run: a zero-RAM plan equal to the traffic placement still answers the
+  primary question, and the attribution comparison then reports an A/A result.
 
 ## Fixed inputs
 

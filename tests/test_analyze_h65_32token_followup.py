@@ -134,3 +134,13 @@ def test_published_d8_control_is_stable_and_thermal_exposure_is_reported():
     exposure = summary["arms"]["h65-selected"]["thermal_exposure"]
     assert exposure["cells"] == 3
     assert exposure["power_limit_seconds"] > 0
+
+
+def test_an_arm_that_reads_nothing_from_storage_has_no_cache_share():
+    """Caught by the small-model rehearsal: a fully VRAM-resident arm requests
+    zero bytes, which divided by zero and crashed the scoring step."""
+    control = method("ctl", [600.0] * 3)
+    resident = method("resident", [100.0] * 3, phys=0.0, logical=0.0)
+    summary = analyze(result(control, resident), "ctl", ["resident"])
+    assert summary["arms"]["resident"]["cache_served_share"] is None
+    assert "resident" in render(summary)

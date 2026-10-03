@@ -156,7 +156,10 @@ def analyze(result: dict, control: str, arms: list[str],
                 row["seconds_per_token"] for row in used) if used else None,
             "ssd_gb_per_token": statistics.mean(phys) if phys else None,
             "requested_gb_per_token": statistics.mean(logical) if logical else None,
-            "cache_served_share": (1 - sum(phys) / sum(logical)) if logical else None,
+            # None when the arm requested nothing from storage (a model that
+            # fits its VRAM budget): there is no cache share to report.
+            "cache_served_share": (1 - sum(phys) / sum(logical))
+                                  if logical and sum(logical) > 0 else None,
             "peak_vram_gb": max((row["peak_vram_gb"] for row in used), default=None),
             "peak_host_rss_gb": max((row["host_rss_peak_gb"] for row in used), default=None),
             "throttled_requests": sum(
@@ -178,11 +181,13 @@ def render(summary: dict) -> str:
     lines.append(header)
     for arm, row in summary["arms"].items():
         bounds = row["ci90"]
-        lines.append("%-18s %8.3f %-17s %3d/%-2d %7.2f %7.2f %5.0f%% %6.2f  %s" % (
+        share = row["cache_served_share"]
+        lines.append("%-18s %8.3f %-17s %3d/%-2d %7.2f %7.2f %6s %6.2f  %s" % (
             arm, row["speed_ratio_vs_control"],
             "[%.3f, %.3f]" % tuple(bounds) if bounds else "n/a",
             row["request_wins"], row["requests"], row["seconds_per_token"] or 0,
-            row["ssd_gb_per_token"] or 0, 100 * (row["cache_served_share"] or 0),
+            row["ssd_gb_per_token"] or 0,
+            "n/a" if share is None else "%.0f%%" % (100 * share),
             row["peak_vram_gb"] or 0, row["verdict"]))
     stability = summary["control_stability"]
     if stability["per_block_seconds_per_token"]:
