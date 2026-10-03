@@ -1,6 +1,7 @@
 import pytest
 
 from afterimage.bench.prompt_suite import (
+    CALIBRATION_LONG_CASES,
     H65_CONFIRMATION_CASES,
     PAPER_GENERATION_CASES,
     PROMPT_CASES,
@@ -55,12 +56,32 @@ def test_h65_confirmation_split_has_eight_unique_reserved_cases():
     assert all(case.expected_any == () for case in confirmation)
 
 
+def test_calibration_long_split_is_disjoint_long_form_calibration():
+    """Multi-token H6.5 calibration needs prompts that keep generating. The
+    short calibration split ends after one word, so forcing it on to 32 tokens
+    would record padding, not a decode schedule."""
+    long_calibration = prompt_cases("calibration_long")
+    assert len(long_calibration) == 3
+    assert all(case.split == "calibration_long" for case in long_calibration)
+    assert len({case.semantic_bucket for case in long_calibration}) == 3
+    assert all(case.expected_any == () for case in long_calibration)
+    assert all(len(case.user_text) > 80 for case in long_calibration)
+    others = [
+        case for split in ("evaluation", "calibration", "paper_generation",
+                           "h65_confirmation")
+        for case in prompt_cases(split)]
+    assert not {case.id for case in long_calibration} & {case.id for case in others}
+    assert not {case.user_text for case in long_calibration} & {
+        case.user_text for case in others}
+
+
 def test_prompt_cases_all_includes_every_split():
     every_id = {case.id for case in prompt_cases("all")}
     assert every_id == (
         {case.id for case in PROMPT_CASES}
         | {case.id for case in PAPER_GENERATION_CASES}
-        | {case.id for case in H65_CONFIRMATION_CASES})
+        | {case.id for case in H65_CONFIRMATION_CASES}
+        | {case.id for case in CALIBRATION_LONG_CASES})
 
 
 def test_prompt_cases_rejects_an_unknown_split():

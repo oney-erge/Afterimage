@@ -5,6 +5,29 @@ No tagged releases yet. Everything below is `main`.
 
 ## [Unreleased]
 
+### H6.5 at 32 tokens: calibration tooling and a frozen follow-up protocol
+
+The paper's 32-token Qwen test (D8) found the disk control faster. Per-request
+rows show why: the disk control read 8.05 GB per token from the SSD because the
+page cache served 57% of its requested bytes, while the one-token H6.5 plan
+(8 GB of decoded host RAM) was served 3% from the cache and read 11.85 GB. This
+adds what a calibrated retest needs. The H6.5 planner and its objective are
+unchanged.
+
+- `scripts/run_h65_paper_matrix.py`: `--calibration-tokens` (default 1, so
+  existing runs are unchanged), `--calibration-split`, `--plan-only` (record
+  traces and build plans, evaluate nothing), and `--reuse-calibration-traces`
+  (build plans at other budgets from one trace set, CPU only). A multi-token
+  calibration stops if any request generates fewer tokens than asked or any trace
+  does not hold exactly that many forward passes. Snapshot file names no longer
+  depend on the host's path separator.
+- New `calibration_long` prompt split: three prompts that keep generating, since
+  the one-token calibration prompts end after a word.
+- `scripts/analyze_h65_32token_followup.py` and
+  `docs/h65/protocols/PROTOCOL-h65-32token-calibration-followup-20261003.md`:
+  the analysis rule, frozen before any measurement, and the script that applies
+  it. The script reproduces D8's result from the published artifact.
+
 ### Repository presentation
 
 - New logo: a transparent SVG (`docs/assets/afterimage-logo.svg`) that reads on

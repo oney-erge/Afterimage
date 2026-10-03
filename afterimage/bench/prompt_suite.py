@@ -94,6 +94,38 @@ PAPER_GENERATION_CASES = (
     ),
 )
 
+# Calibration prompts for multi-token H6.5 planning (split="calibration_long").
+# The one-token calibration split above is deliberately terse: its prompts
+# end after one word, so forcing them on to 32 tokens would record a trace of
+# padding rather than a representative decode schedule. These three ask for a
+# real multi-sentence answer, in three different buckets, and share no topic
+# with paper_generation, so a 32-token calibration trace and a 32-token
+# evaluation request remain disjoint. expected_any is empty for the same
+# reason as in paper_generation: this split measures a schedule, not accuracy.
+CALIBRATION_LONG_CASES = (
+    PromptCase(
+        "calibration-long-explain", "explanation", "calibration_long",
+        "In about 120 words, explain why the sky looks blue during the day "
+        "but turns red and orange at sunset. Mention Rayleigh scattering and "
+        "how the length of the light's path through the atmosphere changes.",
+        (),
+    ),
+    PromptCase(
+        "calibration-long-code", "code", "calibration_long",
+        "Write a complete Python function `is_palindrome(text)` that ignores "
+        "case, spaces, and punctuation and returns True or False. Include a "
+        "short docstring and handle the empty string correctly.",
+        (),
+    ),
+    PromptCase(
+        "calibration-long-compare", "analytical", "calibration_long",
+        "In a short structured comparison, contrast TCP and UDP as transport "
+        "protocols. Cover connection setup, delivery and ordering guarantees, "
+        "and one typical use case for each.",
+        (),
+    ),
+)
+
 # Frozen before the endpoint-seed pilot produced any live result. These cases
 # are reserved for the independent H6.5 confirmation and intentionally do not
 # overlap calibration, evaluation, or paper-generation cases. Exactness is
@@ -240,17 +272,20 @@ PROMPT_CASES = (
 def prompt_cases(split: str = "evaluation") -> tuple[PromptCase, ...]:
     if split not in {
         "evaluation", "calibration", "all", "paper_generation",
-        "h65_confirmation",
+        "h65_confirmation", "calibration_long",
     }:
         raise ValueError(
-            "split must be evaluation, calibration, paper_generation, "
-            "h65_confirmation, or all")
+            "split must be evaluation, calibration, calibration_long, "
+            "paper_generation, h65_confirmation, or all")
     if split == "paper_generation":
         return PAPER_GENERATION_CASES
+    if split == "calibration_long":
+        return CALIBRATION_LONG_CASES
     if split == "h65_confirmation":
         return H65_CONFIRMATION_CASES
     if split == "all":
-        return PROMPT_CASES + PAPER_GENERATION_CASES + H65_CONFIRMATION_CASES
+        return (PROMPT_CASES + PAPER_GENERATION_CASES + H65_CONFIRMATION_CASES
+                + CALIBRATION_LONG_CASES)
     return tuple(case for case in PROMPT_CASES if case.split == split)
 
 
