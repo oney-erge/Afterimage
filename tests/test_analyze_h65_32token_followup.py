@@ -145,3 +145,15 @@ def test_an_arm_that_reads_nothing_from_storage_has_no_cache_share():
     summary = analyze(result(control, resident), "ctl", ["resident"])
     assert summary["arms"]["resident"]["cache_served_share"] is None
     assert "resident" in render(summary)
+
+
+def test_a_storage_counter_that_reads_zero_everywhere_is_unavailable_not_fully_cached():
+    """The follow-up ran on a WSL kernel with no /proc/self/io: every row said 0
+    bytes read while requesting ~18 GB a token, which must not print as '0 GB, 100%
+    cache'."""
+    control = method("ctl", [600.0] * 3, phys=0.0, logical=18.0)
+    arm = method("arm", [500.0] * 3, phys=0.0, logical=12.0)
+    summary = analyze(result(control, arm), "ctl", ["arm"])["arms"]["arm"]
+    assert summary["ssd_gb_per_token"] is None
+    assert summary["cache_served_share"] is None
+    assert "n/a" in render(analyze(result(control, arm), "ctl", ["arm"]))

@@ -145,6 +145,11 @@ def analyze(result: dict, control: str, arms: list[str],
         used = [tables[arm][(block, case)] for block in blocks for case in cases]
         phys = [row["process_read_bytes_per_token"] / 1e9 for row in used]
         logical = [row["gb_read_per_token"] for row in used]
+        # The collector reads /proc/self/io, which some WSL kernels (6.18.40)
+        # do not provide: every row then reports 0 bytes read while requesting
+        # many GB. That is a missing counter, not a fully cached run.
+        if logical and sum(logical) > 0 and not any(phys):
+            phys = []
         bounds = interval(block_ratios) if block_ratios else None
         estimate = geomean(block_ratios) if block_ratios else float("nan")
         out["arms"][arm] = {
@@ -160,7 +165,7 @@ def analyze(result: dict, control: str, arms: list[str],
             # None when the arm requested nothing from storage (a model that
             # fits its VRAM budget): there is no cache share to report.
             "cache_served_share": (1 - sum(phys) / sum(logical))
-                                  if logical and sum(logical) > 0 else None,
+                                  if phys and logical and sum(logical) > 0 else None,
             "peak_vram_gb": max((row["peak_vram_gb"] for row in used), default=None),
             "peak_host_rss_gb": max((row["host_rss_peak_gb"] for row in used), default=None),
             "throttled_requests": sum(
@@ -183,11 +188,11 @@ def render(summary: dict) -> str:
     for arm, row in summary["arms"].items():
         bounds = row["ci95"]
         share = row["cache_served_share"]
-        lines.append("%-18s %8.3f %-17s %3d/%-2d %7.2f %7.2f %6s %6.2f  %s" % (
+        lines.append("%-18s %8.3f %-17s %3d/%-2d %7.2f %7s %6s %6.2f  %s" % (
             arm, row["speed_ratio_vs_control"],
             "[%.3f, %.3f]" % tuple(bounds) if bounds else "n/a",
             row["request_wins"], row["requests"], row["seconds_per_token"] or 0,
-            row["ssd_gb_per_token"] or 0,
+            "n/a" if row["ssd_gb_per_token"] is None else "%.2f" % row["ssd_gb_per_token"],
             "n/a" if share is None else "%.0f%%" % (100 * share),
             row["peak_vram_gb"] or 0, row["verdict"]))
     stability = summary["control_stability"]
