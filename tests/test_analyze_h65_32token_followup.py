@@ -9,7 +9,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 D8 = (ROOT / "evidence" / "h65-paper1" / "laptop-rtx3080" / "D8-qwen-32token"
       / "qwen3-14b-h65-matched-decode-practical-20260909-r2-32tok.json")
 PROTOCOL = (ROOT / "docs" / "h65" / "protocols"
-            / "PROTOCOL-h65-32token-calibration-followup-20261003.md")
+            / "PROTOCOL-h65-32token-calibration-followup-v2-20261003.md")
 CASES = ("a", "b", "c", "d")
 
 
@@ -111,5 +111,26 @@ def test_published_d8_shows_the_disk_control_beating_the_one_token_plan():
 def test_the_frozen_protocol_states_the_rule_the_script_applies():
     text = " ".join(PROTOCOL.read_text(encoding="utf-8").split())
     for required in ("two-sided 90%", "lower bound", "at least 3", "token ids",
-                     "disk-frozen", "calibration_long"):
+                     "disk-frozen", "calibration_long", "simple-v4-r0",
+                     "up to two more times", "above 5%", "17.93"):
         assert required in text, "protocol no longer states %r" % required
+
+
+def test_control_drift_between_blocks_is_flagged():
+    control = method("ctl", [600.0, 610.0, 700.0])
+    arm = method("arm", [500.0, 505.0, 580.0])
+    summary = analyze(result(control, arm), "ctl", ["arm"], 600.0 / 32)
+    stability = summary["control_stability"]
+    assert stability["drifted"]
+    assert stability["relative_difference_from_expected"] > 0
+    assert "DRIFTED" in render(summary)
+
+
+def test_published_d8_control_is_stable_and_thermal_exposure_is_reported():
+    summary = analyze(json.loads(D8.read_text(encoding="utf-8")),
+                      "disk-frozen", ["h65-selected"], 17.93)
+    assert not summary["control_stability"]["drifted"]
+    assert abs(summary["control_stability"]["relative_difference_from_expected"]) < 0.01
+    exposure = summary["arms"]["h65-selected"]["thermal_exposure"]
+    assert exposure["cells"] == 3
+    assert exposure["power_limit_seconds"] > 0

@@ -288,8 +288,10 @@ def snapshot_afterimage_plan_methods(
 # is the "reference_execution_equivalent" control -- greedy-exact, no
 # speculation, no residency heuristics -- so a speedup measured against it
 # isolates what a given method or mechanism contributes, not a second
-# confounding Afterimage feature.
-CONTROL_METHOD = "exact-min"
+# confounding Afterimage feature. --control-method can name another selected
+# method; main() rebinds CONTROL_METHOD to it for the run.
+DEFAULT_CONTROL_METHOD = "exact-min"
+CONTROL_METHOD = DEFAULT_CONTROL_METHOD
 
 DEPENDENCY_PACKAGE = {"airllm": "airllm", "accelerate": "accelerate",
                       "dfloat11": "dfloat11", "dfloat11-gpu-resident": "dfloat11",
@@ -619,6 +621,12 @@ def run_one_token_length(args, tokenizer, rendered: list[dict],
             if (result.get(name, False) if name == "require_thermally_clean"
                 else result.get(name, []) if name == "afterimage_plan_methods"
                 else result.get(name)) != value]
+        # Older .partial files predate --control-method; they were all
+        # paired against exact-min.
+        if result.get("control_method", "exact-min") != CONTROL_METHOD:
+            mismatched.append(("control_method",
+                               result.get("control_method", "exact-min"),
+                               CONTROL_METHOD))
         # prompt_suite predates this field in older .partial files; a
         # missing key means "evaluation" (the only split that existed
         # then), not "leave unspecified and refuse to resume".
@@ -951,6 +959,7 @@ def run_one_token_length(args, tokenizer, rendered: list[dict],
 
 
 def main() -> int:
+    global CONTROL_METHOD
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--model", default=bounded.MODEL)
@@ -1033,6 +1042,13 @@ def main() -> int:
                              "is reproducible given the same --blocks and --methods, "
                              "not so every block gets the same order (each block "
                              "advances the same Random instance).")
+    parser.add_argument(
+        "--control-method", default=DEFAULT_CONTROL_METHOD,
+        help="the method every other one is paired against in the result's "
+             "paired_vs_control and token_exactness_vs_control (default "
+             "%(default)s). Must be one of the selected methods, including a "
+             "frozen --afterimage-plan-method, so a follow-up can use its own "
+             "control instead of paying for an exact-min arm it does not need.")
     parser.add_argument("--out-dir", default="results/paper-comparison")
     parser.add_argument("--run-label", default=None,
                         help="filename component; default is the model name plus "
@@ -1065,9 +1081,9 @@ def main() -> int:
     if args.exact_min_vram_budget_gb is not None:
         if args.exact_min_vram_budget_gb <= 0:
             parser.error("--exact-min-vram-budget-gb must be positive")
-        exact = METHODS[CONTROL_METHOD]
+        exact = METHODS["exact-min"]
         label = budget_label(args.exact_min_vram_budget_gb)
-        METHODS[CONTROL_METHOD] = dataclasses.replace(
+        METHODS["exact-min"] = dataclasses.replace(
             exact,
             title=("Afterimage exact streaming at %s GB "
                    "(model-specific viable control)" % label),
@@ -1106,8 +1122,10 @@ def main() -> int:
     unknown = sorted(set(selected) - set(METHODS))
     if unknown:
         parser.error("unknown methods: %s" % ", ".join(unknown))
-    if CONTROL_METHOD not in selected:
-        parser.error("--methods must include %r (the comparison control)" % CONTROL_METHOD)
+    if args.control_method not in selected:
+        parser.error("--methods must include %r (the comparison control)"
+                     % args.control_method)
+    CONTROL_METHOD = args.control_method
     token_lengths_arg = args.token_lengths or ",".join(
         map(str, DEFAULT_TOKEN_LENGTHS_BY_SUITE[args.prompt_suite]))
     try:

@@ -295,6 +295,16 @@ METHODS = {
          "decode_slice_elems": 1 << 22, "io_prefetch_depth": 2,
          "placement_policy": "traffic_density", "ram_tier_format": "decoded"},
         "reference_execution_equivalent", 20.0),
+    # The same traffic-density placement with no host-RAM tier: the matched
+    # control for an H6.5 plan searched at a 0 GB RAM budget, so a win can be
+    # attributed to the search rather than to VRAM residency alone.
+    "simple-v4-r0": Method(
+        "simple-v4-r0", "Afterimage simple tier placement at 4 GB VRAM / 0 GB RAM",
+        "afterimage",
+        {"vram_budget_gb": 4.00, "ram_budget_gb": 0.0,
+         "decode_slice_elems": 1 << 22, "io_prefetch_depth": 2,
+         "placement_policy": "traffic_density", "ram_tier_format": "decoded"},
+        "reference_execution_equivalent", 20.0),
     "h1-v4-r8": Method(
         "h1-v4-r8", "Afterimage H1 placement at 4 GB VRAM / 8 GB RAM",
         "afterimage",

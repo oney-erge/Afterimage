@@ -756,6 +756,52 @@ class TestRunOneTokenLengthIntegration:
                 out_path=out_path, repo_root=tmp_path, n_tokens=4, dirty=None,
                 work_dir=tmp_path)
 
+    def test_a_chosen_control_is_recorded_and_paired_against(
+            self, tmp_path, monkeypatch, stub_environment_manifest):
+        """--control-method rebinds CONTROL_METHOD; the result must pair every
+        other method against that one, not against exact-min."""
+        import scripts.run_paper_comparison as rpc
+
+        def fake_cell(config, work_dir, timeout_s):
+            return {"rows": [_cell_row(config["method_id"], cid, config["block"])
+                             for cid in ("a", "b")],
+                   "metadata": {}, "peak_host_rss_bytes": 1, "thermal_monitoring": None,
+                   "error": None}
+
+        monkeypatch.setattr(rpc, "_run_cell_in_subprocess", fake_cell)
+        monkeypatch.setattr(rpc, "CONTROL_METHOD", "airllm")
+        result = run_one_token_length(
+            _fake_args(), tokenizer=None, rendered=_fake_rendered(),
+            selected=["exact-min", "airllm"], out_path=tmp_path / "result.json",
+            repo_root=tmp_path, n_tokens=4, dirty=None, work_dir=tmp_path)
+        by_method = {entry["method_id"]: entry for entry in result["methods"]}
+        assert result["control_method"] == "airllm"
+        assert "paired_vs_control" in by_method["exact-min"]
+        assert "paired_vs_control" not in by_method["airllm"]
+
+    def test_resume_refuses_a_partial_paired_against_a_different_control(
+            self, tmp_path, monkeypatch, stub_environment_manifest):
+        import scripts.run_paper_comparison as rpc
+
+        def fake_cell(config, work_dir, timeout_s):
+            return {"rows": [], "metadata": {}, "peak_host_rss_bytes": None,
+                   "thermal_monitoring": None, "error": "simulated failure"}
+
+        monkeypatch.setattr(rpc, "_run_cell_in_subprocess", fake_cell)
+        out_path = tmp_path / "result.json"
+        run_one_token_length(
+            _fake_args(require_complete=True), tokenizer=None,
+            rendered=_fake_rendered(), selected=["exact-min", "airllm"],
+            out_path=out_path, repo_root=tmp_path, n_tokens=4, dirty=None,
+            work_dir=tmp_path)
+        monkeypatch.setattr(rpc, "CONTROL_METHOD", "airllm")
+        with pytest.raises(ValueError, match="control_method"):
+            run_one_token_length(
+                _fake_args(require_complete=True, resume=True), tokenizer=None,
+                rendered=_fake_rendered(), selected=["exact-min", "airllm"],
+                out_path=out_path, repo_root=tmp_path, n_tokens=4, dirty=None,
+                work_dir=tmp_path)
+
     def test_metadata_and_thermal_data_are_preserved_in_the_final_report(
             self, tmp_path, monkeypatch, stub_environment_manifest):
         """The exact bug this fix closes: the worker always returned rich
@@ -790,3 +836,15 @@ class TestRunOneTokenLengthIntegration:
         assert entry["thermal_across_all_cells"]["any_throttle_during_measurement"] is False
         assert entry["thermal_across_all_cells"]["any_thermal_throttle_during_measurement"] is False
         assert entry["thermal_across_all_cells"]["any_power_limit_during_measurement"] is True
+
+
+def test_control_method_must_be_one_of_the_selected_methods(monkeypatch, capsys):
+    import scripts.run_paper_comparison as rpc
+
+    monkeypatch.setattr("sys.argv", [
+        "run_paper_comparison.py", "--methods", "airllm",
+        "--control-method", "exact-min"])
+    with pytest.raises(SystemExit) as raised:
+        rpc.main()
+    assert raised.value.code == 2
+    assert "must include 'exact-min'" in capsys.readouterr().err

@@ -23,10 +23,18 @@ unchanged.
   depend on the host's path separator.
 - New `calibration_long` prompt split: three prompts that keep generating, since
   the one-token calibration prompts end after a word.
+- `scripts/run_paper_comparison.py --control-method` names the arm every other
+  one is paired against (default `exact-min`, unchanged), so a follow-up can use
+  a frozen plan as its control instead of running an arm it does not need.
+- `simple-v4-r0`: the D8 traffic control with no host-RAM tier, the matched
+  control for an H6.5 plan searched at a 0 GB RAM budget.
 - `scripts/analyze_h65_32token_followup.py` and
-  `docs/h65/protocols/PROTOCOL-h65-32token-calibration-followup-20261003.md`:
+  `docs/h65/protocols/PROTOCOL-h65-32token-calibration-followup-v2-20261003.md`:
   the analysis rule, frozen before any measurement, and the script that applies
-  it. The script reproduces D8's result from the published artifact.
+  it. The script reproduces D8's result from the published artifact, and reports
+  how far the control drifted between blocks and from D8, and each arm's share
+  of measured time spent power limited (97% for D8's H6.5 arm, 33% for its disk
+  control).
 
 ### Repository presentation
 

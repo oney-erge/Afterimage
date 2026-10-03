@@ -408,3 +408,15 @@ def test_engine_config_keeps_a_cells_own_replay_plan_when_none_is_passed():
                      "vram_budget_gb": 8.0},
                     "exact", 1.0)
     assert engine_config_for(method).replay_plan_state == "cell-plan.json"
+
+
+def test_zero_ram_traffic_control_differs_from_d8_traffic_control_only_in_ram():
+    """simple-v4-r0 is the matched control for an H6.5 plan searched with no
+    host-RAM budget; anything else differing would confound that pairing."""
+    from scripts.run_bounded_suite import METHODS
+
+    r8, r0 = METHODS["simple-v4-r8"].overrides, METHODS["simple-v4-r0"].overrides
+    assert r0["ram_budget_gb"] == 0.0
+    assert {k: v for k, v in r0.items() if k != "ram_budget_gb"} == {
+        k: v for k, v in r8.items() if k != "ram_budget_gb"}
+    assert METHODS["simple-v4-r0"].exactness == METHODS["simple-v4-r8"].exactness

@@ -2,7 +2,7 @@
 """Score the 32-token H6.5 follow-up against its disk control.
 
 Reads one ``run_paper_comparison.py`` result and applies the analysis frozen in
-docs/h65/protocols/PROTOCOL-h65-32token-calibration-followup-20261003.md. Stdlib
+docs/h65/protocols/PROTOCOL-h65-32token-calibration-followup-v2-20261003.md. Stdlib
 only, so it runs anywhere the result file does.
 
 For each arm the primary estimate is the geometric mean over complete blocks of
@@ -25,6 +25,10 @@ import statistics
 import sys
 
 MIN_BLOCKS = 3
+# The control runs in every block; if its own speed moves more than this
+# between blocks, the environment changed during the run and every verdict is
+# reported with that caveat.
+CONTROL_DRIFT_LIMIT = 0.05
 # t_{0.95, df}: the multiplier for a two-sided 90% interval, df = blocks - 1.
 T_90 = {1: 6.314, 2: 2.920, 3: 2.353, 4: 2.132, 5: 2.015, 6: 1.943, 7: 1.895,
         8: 1.860, 9: 1.833, 10: 1.812, 11: 1.796, 12: 1.782}
@@ -70,7 +74,45 @@ def verdict(estimate: float, bounds, blocks: int, exact: bool) -> str:
     return "inconclusive"
 
 
-def analyze(result: dict, control: str, arms: list[str]) -> dict:
+def thermal_exposure(result: dict, method: str, blocks: list[int],
+                     measured_seconds: float) -> dict:
+    """Seconds each analysed cell spent thermally throttled or power limited.
+    On this laptop every cell, the control included, reports some of both
+    (the GPU mostly waits on reads), so this is a balance check across arms,
+    not an exclusion rule."""
+    thermal = power = 0.0
+    cells = 0
+    for cell in result.get("cells", []):
+        if cell.get("method") != method or cell.get("block") not in blocks:
+            continue
+        monitoring = cell.get("thermal_measurement_monitoring") or {}
+        thermal += float(monitoring.get("thermal_throttle_counter_delta_seconds") or 0.0)
+        power += float(monitoring.get("power_limit_counter_delta_seconds") or 0.0)
+        cells += 1
+    return {"cells": cells, "thermal_throttle_seconds": thermal,
+            "power_limit_seconds": power,
+            "power_limited_share": power / measured_seconds if measured_seconds else None}
+
+
+def control_stability(tables: dict, control: str, blocks: list[int],
+                      cases: set[str], expected: float | None) -> dict:
+    per_block = [statistics.mean(tables[control][(block, case)]["seconds_per_token"]
+                                 for case in cases) for block in blocks]
+    spread = ((max(per_block) - min(per_block)) / statistics.mean(per_block)
+              if per_block else None)
+    mean = statistics.mean(per_block) if per_block else None
+    return {
+        "per_block_seconds_per_token": per_block,
+        "relative_spread": spread,
+        "drifted": bool(spread is not None and spread > CONTROL_DRIFT_LIMIT),
+        "expected_seconds_per_token": expected,
+        "relative_difference_from_expected": (
+            (mean - expected) / expected if expected and mean else None),
+    }
+
+
+def analyze(result: dict, control: str, arms: list[str],
+            expected_control_seconds_per_token: float | None = None) -> dict:
     methods = {method["method_id"]: method for method in result["methods"]}
     missing = [name for name in [control, *arms] if name not in methods]
     if missing:
@@ -80,7 +122,14 @@ def analyze(result: dict, control: str, arms: list[str]) -> dict:
     cases = {case for table in tables.values() for _, case in table}
     blocks = complete_blocks(tables, cases)
     out = {"control": control, "complete_blocks": blocks,
-           "requested_blocks": result.get("blocks_requested"), "arms": {}}
+           "requested_blocks": result.get("blocks_requested"),
+           "control_stability": control_stability(
+               tables, control, blocks, cases, expected_control_seconds_per_token),
+           "control_thermal_exposure": thermal_exposure(
+               result, control, blocks,
+               sum(row["wall_seconds"] for (block, _), row in tables[control].items()
+                   if block in blocks)),
+           "arms": {}}
     for arm in arms:
         block_ratios, request_ratios = [], []
         exact = True
@@ -114,6 +163,8 @@ def analyze(result: dict, control: str, arms: list[str]) -> dict:
                 bool(row.get("throttled_after_cooldown")
                      or row.get("power_limited_after_cooldown")) for row in used),
             "tokens_identical_to_control": exact,
+            "thermal_exposure": thermal_exposure(
+                result, arm, blocks, sum(row["wall_seconds"] for row in used)),
             "verdict": verdict(estimate, bounds, len(blocks), exact),
         }
     return out
@@ -133,6 +184,22 @@ def render(summary: dict) -> str:
             row["request_wins"], row["requests"], row["seconds_per_token"] or 0,
             row["ssd_gb_per_token"] or 0, 100 * (row["cache_served_share"] or 0),
             row["peak_vram_gb"] or 0, row["verdict"]))
+    stability = summary["control_stability"]
+    if stability["per_block_seconds_per_token"]:
+        lines += ["", "control per block (s/token): %s, spread %.1f%%%s" % (
+            ", ".join("%.2f" % value for value in stability["per_block_seconds_per_token"]),
+            100 * stability["relative_spread"],
+            "  ** DRIFTED: environment changed during the run **"
+            if stability["drifted"] else "")]
+        if stability["relative_difference_from_expected"] is not None:
+            lines.append("control vs expected %.2f s/token: %+.1f%%" % (
+                stability["expected_seconds_per_token"],
+                100 * stability["relative_difference_from_expected"]))
+    exposure = [("control", summary["control_thermal_exposure"])] + [
+        (arm, row["thermal_exposure"]) for arm, row in summary["arms"].items()]
+    lines.append("share of measured time power limited: " + "; ".join(
+        "%s %.0f%%" % (name, 100 * (item["power_limited_share"] or 0))
+        for name, item in exposure))
     lines += ["", "ratio > 1: faster than the control. SSD GB: bytes actually read from "
               "storage per token; cache: share of requested bytes served from the OS "
               "page cache; VRAM: peak whole-process GB."]
@@ -148,10 +215,16 @@ def main() -> int:
     parser.add_argument("--protocol", type=pathlib.Path,
                         help="the frozen protocol; its SHA-256 is printed and stored")
     parser.add_argument("--json-out", type=pathlib.Path)
+    parser.add_argument(
+        "--expect-control-seconds-per-token", type=float,
+        help="the control's speed in an earlier run (D8's disk control: 17.93), "
+             "to show how far this run's environment moved")
     args = parser.parse_args()
 
     result = json.loads(args.result.read_text(encoding="utf-8"))
-    summary = analyze(result, args.control, [a.strip() for a in args.arms.split(",") if a.strip()])
+    summary = analyze(result, args.control,
+                      [a.strip() for a in args.arms.split(",") if a.strip()],
+                      args.expect_control_seconds_per_token)
     summary["result_sha256"] = hashlib.sha256(args.result.read_bytes()).hexdigest()
     if args.protocol:
         summary["protocol_sha256"] = hashlib.sha256(args.protocol.read_bytes()).hexdigest()
