@@ -118,6 +118,9 @@ least 3 complete blocks are required for any verdict.
 Attribution: the same estimator with `simple-v4-r0` as the control and
 `h65-cal32-ram0` as the arm. Faster: the H6.5 search adds measurable benefit at a
 zero RAM budget. Otherwise the benefit, if any, is not separable from VRAM residency.
+As in D8, the traffic control runs with the engine's default 0 GB VRAM safety margin
+while the H6.5 plans reserve 0.5 GB, so it may hold more weights in VRAM; this tilts
+the attribution comparison against H6.5, not towards it.
 
 Reported for each arm, with no verdict attached: per-request wins out of 12, SSD
 bytes per token, the share of requested bytes served from the page cache, peak
