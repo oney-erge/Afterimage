@@ -76,3 +76,55 @@ def test_physical_ceiling_defaults_to_explicit_allocator_cap():
                            physical_vram_ceiling_gb=None)
     assert allocator_cap_gb(args) == 10
     assert physical_vram_ceiling_gb(args) == 10
+
+
+def test_calibration_cases_default_to_the_historical_one_token_set():
+    from scripts.run_h65_paper_matrix import (
+        DEFAULT_CALIBRATION_CASES, resolve_calibration_cases)
+
+    assert resolve_calibration_cases("calibration", None) == DEFAULT_CALIBRATION_CASES
+    assert resolve_calibration_cases("calibration", "a, b") == ("a", "b")
+    assert resolve_calibration_cases("calibration_long", None) == (
+        "calibration-long-explain", "calibration-long-code",
+        "calibration-long-compare")
+
+
+def test_trace_sweep_count_counts_forward_passes():
+    from scripts.run_h65_paper_matrix import trace_sweep_count
+
+    events = [SimpleNamespace(kind=kind) for kind in (
+        "forward_start", "read", "compute", "forward_end",
+        "forward_start", "read", "compute", "forward_end")]
+    assert trace_sweep_count(events) == 2
+
+
+def test_multi_token_calibration_must_actually_generate_every_token():
+    from scripts.run_h65_paper_matrix import calibration_rows_error
+
+    full = {"rows": [{"case_id": "a", "output_tokens": 32}]}
+    early = {"rows": [{"case_id": "a", "output_tokens": 32},
+                      {"case_id": "b", "output_tokens": 9}]}
+    assert calibration_rows_error(full, 32) is None
+    assert "stopped early" in calibration_rows_error(early, 32)
+    assert "recorded no rows" in calibration_rows_error({"rows": []}, 32)
+    # The one-token default is unchanged: it never inspected rows.
+    assert calibration_rows_error(early, 1) is None
+
+
+@pytest.mark.parametrize("extra,message", [
+    (["--reuse-calibration-traces", "somewhere"], "requires --plan-only"),
+    (["--plan-only", "--calibration-tokens", "0"], "at least 1"),
+    (["--calibration-split", "calibration_long", "--calibration-cases",
+      "logic-ravens,json-status,copy-nonce"], "calibration_long split"),
+])
+def test_new_calibration_flags_reject_invalid_combinations(
+        monkeypatch, capsys, extra, message):
+    from scripts import run_h65_paper_matrix as matrix
+
+    monkeypatch.setattr("sys.argv", [
+        "run_h65_paper_matrix.py", "--store", "s", "--h2d", "h",
+        "--out", "o", *extra])
+    with pytest.raises(SystemExit) as raised:
+        matrix.main()
+    assert raised.value.code == 2
+    assert message in capsys.readouterr().err

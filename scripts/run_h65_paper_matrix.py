@@ -39,6 +39,7 @@ WORKER = REPO / "scripts/run_h65_paper_worker.py"
 sys.path.insert(0, str(REPO))
 
 from afterimage.runtime.critical_path import TraceRecorder  # noqa: E402
+from afterimage.bench.prompt_suite import prompt_cases  # noqa: E402
 from afterimage.bench.ram_prepare import (  # noqa: E402
     profile_execution_contract, runtime_source_fingerprint, validate_ram_profile,
 )
@@ -202,6 +203,40 @@ def parse_cases(value: str) -> tuple[str, ...]:
     return tuple(item.strip() for item in value.split(",") if item.strip())
 
 
+def resolve_calibration_cases(split: str, value: str | None) -> tuple[str, ...]:
+    """Explicit ``--calibration-cases`` wins. Otherwise the historical
+    one-token default for the ``calibration`` split, and every case of any
+    other split (``calibration_long`` has exactly the three it needs)."""
+    if value:
+        return parse_cases(value)
+    if split == "calibration":
+        return DEFAULT_CALIBRATION_CASES
+    return tuple(case.id for case in prompt_cases(split))
+
+
+def trace_sweep_count(events) -> int:
+    """Forward passes recorded in one calibration trace. A request that
+    generates N tokens makes N target sweeps, so this is how a reused trace
+    proves it really is an N-token calibration."""
+    return sum(1 for event in events if event.kind == "forward_start")
+
+
+def calibration_rows_error(cell: dict, tokens: int) -> str | None:
+    """Multi-token calibration only means something if every request kept
+    generating. A prompt that ends early records a shorter schedule than the
+    one the plan is meant to serve, and nothing downstream would notice."""
+    if tokens <= 1:
+        return None
+    rows = cell.get("rows") or []
+    short = [(row.get("case_id"), row.get("output_tokens"))
+             for row in rows if row.get("output_tokens") != tokens]
+    if rows and not short:
+        return None
+    return ("calibration requested %d tokens but %s" % (
+        tokens, ("recorded no rows" if not rows else
+                 "these cases stopped early: %s" % short)))
+
+
 def common_overrides(args: argparse.Namespace) -> dict:
     return {
         "reuse_decode_tables": getattr(args, "reuse_decode_tables", False),
@@ -263,9 +298,9 @@ def archive_sources(root: pathlib.Path) -> dict[str, dict]:
         if not source.exists():
             raise FileNotFoundError("source file missing: %s" % source)
         relative = source.relative_to(REPO)
-        target = destination / str(relative).replace("/", "__")
+        target = destination / relative.as_posix().replace("/", "__")
         shutil.copy2(source, target)
-        archived[str(relative)] = {
+        archived[relative.as_posix()] = {
             "source_sha256": sha256(source),
             "snapshot": str(target),
             "snapshot_sha256": sha256(target),
@@ -463,7 +498,29 @@ def main() -> int:
              "without execution provenance cannot calibrate this paper run.")
     parser.add_argument("--search-iterations", type=int, default=256)
     parser.add_argument("--minimum-live-improvement", type=float, default=0.05)
-    parser.add_argument("--calibration-cases", default=",".join(DEFAULT_CALIBRATION_CASES))
+    parser.add_argument(
+        "--calibration-cases", default=None,
+        help="comma-separated case ids; default is the three one-token cases "
+             "for --calibration-split calibration, else every case in the split")
+    parser.add_argument(
+        "--calibration-split", default="calibration",
+        choices=("calibration", "calibration_long"),
+        help="prompt split the calibration traces are recorded from. "
+             "calibration_long has prompts that keep generating, which a "
+             "multi-token --calibration-tokens needs")
+    parser.add_argument(
+        "--calibration-tokens", type=int, default=1,
+        help="tokens generated per calibration trace (default 1, the paper's "
+             "short-request calibration). Evaluation always uses --max-new-tokens")
+    parser.add_argument(
+        "--plan-only", action="store_true",
+        help="record calibration traces and build the plans, then stop: no "
+             "evaluation cells run. Writes a plan artifact, not a matrix result")
+    parser.add_argument(
+        "--reuse-calibration-traces", metavar="ARTIFACT_DIR",
+        help="with --plan-only: take the calibration traces from an earlier "
+             "run's artifact directory instead of recording new ones, so plans "
+             "built at different budgets share one trace set. CPU only")
     parser.add_argument("--evaluation-cases", default=",".join(DEFAULT_EVALUATION_CASES))
     parser.add_argument("--max-new-tokens", type=int, default=1)
     parser.add_argument("--blocks", type=int, default=4)
@@ -481,7 +538,8 @@ def main() -> int:
     parser.add_argument("--resume", action="store_true")
     args = parser.parse_args()
 
-    calibration_cases = parse_cases(args.calibration_cases)
+    calibration_cases = resolve_calibration_cases(
+        args.calibration_split, args.calibration_cases)
     evaluation_cases = parse_cases(args.evaluation_cases)
     confirmatory_protocol = (
         pathlib.Path(args.confirmatory_protocol).resolve()
@@ -496,6 +554,21 @@ def main() -> int:
         parser.error("--blocks must be a positive multiple of %d" % len(METHODS))
     if confirmatory_protocol is not None and args.blocks < 8:
         parser.error("a confirmatory protocol requires at least eight blocks")
+    if args.calibration_tokens < 1:
+        parser.error("--calibration-tokens must be at least 1")
+    if args.reuse_calibration_traces and not args.plan_only:
+        parser.error("--reuse-calibration-traces requires --plan-only")
+    if args.plan_only and confirmatory_protocol is not None:
+        parser.error("--plan-only builds plans and evaluates nothing, so it "
+                     "cannot satisfy a confirmatory protocol")
+    if args.calibration_split == "calibration_long":
+        calibration_pool = {case.id for case in prompt_cases("calibration_long")}
+        if not set(calibration_cases) <= calibration_pool:
+            parser.error("--calibration-cases must come from the "
+                         "calibration_long split")
+    elif not set(calibration_cases) <= {
+            case.id for case in prompt_cases("calibration")}:
+        parser.error("--calibration-cases must come from the calibration split")
     resolved_allocator_cap = allocator_cap_gb(args)
     resolved_physical_ceiling = physical_vram_ceiling_gb(args)
     if (args.max_new_tokens < 1 or args.vram_gb <= 0 or args.ram_gb < 0
@@ -522,9 +595,12 @@ def main() -> int:
     out = pathlib.Path(args.out).resolve()
     partial = out.with_suffix(out.suffix + ".partial")
     root = out.parent / (out.stem + "-artifacts")
+    reuse_traces = (pathlib.Path(args.reuse_calibration_traces).resolve()
+                    if args.reuse_calibration_traces else None)
     for required in (
             store, manifest_path, h2d_path, WORKER, *SOURCE_FILES,
-            *([confirmatory_protocol] if confirmatory_protocol else [])):
+            *([confirmatory_protocol] if confirmatory_protocol else []),
+            *([reuse_traces] if reuse_traces else [])):
         if not required.exists():
             parser.error("required path does not exist: %s" % required)
     if out.exists():
@@ -580,6 +656,10 @@ def main() -> int:
         "search_iterations": args.search_iterations,
         "minimum_live_improvement": args.minimum_live_improvement,
         "calibration_case_ids": list(calibration_cases),
+        "calibration_split": args.calibration_split,
+        "calibration_tokens": args.calibration_tokens,
+        "plan_only": args.plan_only,
+        "reuse_calibration_traces": str(reuse_traces) if reuse_traces else None,
         "evaluation_case_ids": list(evaluation_cases),
         "max_new_tokens": args.max_new_tokens,
         "blocks": args.blocks,
@@ -625,7 +705,8 @@ def main() -> int:
             }
         result = {
             "schema_version": 1,
-            "kind": "h65_causal_paper_matrix",
+            "kind": ("h65_plan_only" if args.plan_only
+                     else "h65_causal_paper_matrix"),
             "campaign_id": CAMPAIGN_ID,
             "status": "initializing",
             "evidence_level": (
@@ -634,6 +715,8 @@ def main() -> int:
             "exploratory": confirmatory_protocol is None,
             "confirmatory_protocol_satisfied": False,
             "paper_claim_scope": (
+                "plans and calibration traces only; nothing here was evaluated "
+                "live" if args.plan_only else
                 "frozen bounded TTFT/short-decode confirmatory causal matrix"
                 if confirmatory_protocol else
                 "bounded TTFT/short-decode causal pilot; use for effect-size and "
@@ -653,16 +736,23 @@ def main() -> int:
     checkpoint(partial, result)
 
     try:
-        wait_for_gpu(args.wait_for_gpu_minutes)
-        cache_ok, cache_error = cache_drop_preflight()
-        result["cache_drop_preflight"] = {
-            "succeeded": cache_ok, "error": cache_error,
-        }
-        checkpoint(partial, result)
-        if not cache_ok:
-            raise RuntimeError(
-                "cold-cache experiment requires /proc/sys/vm/drop_caches: %s" %
-                cache_error)
+        if reuse_traces is None:
+            wait_for_gpu(args.wait_for_gpu_minutes)
+            cache_ok, cache_error = cache_drop_preflight()
+            result["cache_drop_preflight"] = {
+                "succeeded": cache_ok, "error": cache_error,
+            }
+            checkpoint(partial, result)
+            if not cache_ok:
+                raise RuntimeError(
+                    "cold-cache experiment requires /proc/sys/vm/drop_caches: %s" %
+                    cache_error)
+        else:
+            # Planning from existing traces never touches the GPU or the cache.
+            result["cache_drop_preflight"] = {
+                "succeeded": None,
+                "error": "not applicable: CPU-only planning from reused traces",
+            }
 
         common = common_overrides(args)
         disk_plan = build_uniform_disk_plan(
@@ -680,6 +770,15 @@ def main() -> int:
             label = "calibration-disk-b%d-%s" % (block, case_id)
             trace_path = root / ("calibration-trace-b%d-%s.json" % (block, case_id))
             trace_paths.append(trace_path)
+            if reuse_traces is not None:
+                source = reuse_traces / trace_path.name
+                if not source.exists():
+                    raise FileNotFoundError(
+                        "no reusable trace %s (the source run must have used "
+                        "the same calibration cases)" % source)
+                shutil.copy2(source, trace_path)
+                log("REUSE %s" % source)
+                continue
             completed = next((
                 cell for cell in result["cells"]
                 if cell.get("label") == label and not cell.get("error")
@@ -697,8 +796,9 @@ def main() -> int:
             cell = run_cell(
                 label, worker_config(
                     args=args, method_id="h65-calibration-disk",
-                    overrides=overrides, block=block, split="calibration",
-                    case_ids=(case_id,), max_new_tokens=1),
+                    overrides=overrides, block=block,
+                    split=args.calibration_split,
+                    case_ids=(case_id,), max_new_tokens=args.calibration_tokens),
                 root=root, timeout_minutes=args.cell_timeout_minutes)
             result["cells"] = [
                 existing for existing in result["cells"]
@@ -707,8 +807,20 @@ def main() -> int:
             checkpoint(partial, result)
             if cell.get("error") or not trace_path.exists():
                 raise RuntimeError("calibration failed: %s" % label)
+            short = calibration_rows_error(cell, args.calibration_tokens)
+            if short:
+                raise RuntimeError("%s: %s" % (label, short))
 
         traces = [TraceRecorder.load(path) for path in trace_paths]
+        trace_sweeps = [trace_sweep_count(events) for events in traces]
+        # The one-token default predates this check and its traces are not
+        # re-validated; a multi-token calibration must prove its length.
+        if args.calibration_tokens > 1 and any(
+                count != args.calibration_tokens for count in trace_sweeps):
+            raise RuntimeError(
+                "calibration traces hold %s forward passes but "
+                "--calibration-tokens is %d" % (trace_sweeps, args.calibration_tokens))
+        result["calibration_trace_sweeps"] = trace_sweeps
         result["status"] = "planning"
         checkpoint(partial, result)
         planned = {}
@@ -758,6 +870,37 @@ def main() -> int:
         result["representation_ablation"] = representation_ablation_status(
             planned["h65-placement-only"]["planning"].candidate_plan,
             planned["h65-full"]["planning"].candidate_plan)
+        if args.plan_only:
+            placement_plan = planned["h65-placement-only"]["planning"].candidate_plan
+            full_plan = planned["h65-full"]["planning"].candidate_plan
+            gates = {
+                "raw_scheduler_traces_retained": all(
+                    path.exists() for path in trace_paths),
+                "calibration_evaluation_disjoint": not bool(
+                    set(calibration_cases) & set(evaluation_cases)),
+                "calibration_sweeps_match_tokens": all(
+                    count == args.calibration_tokens for count in trace_sweeps),
+                "placement_candidate_within_budget": plan_budget_ok(placement_plan),
+                "full_candidate_within_budget": plan_budget_ok(full_plan),
+                "full_candidate_diverged_from_traffic": bool(
+                    planned["h65-full"]["planning"].report.treatment_diverged),
+                "source_snapshot_retained": all(
+                    pathlib.Path(entry["snapshot"]).exists()
+                    and entry["source_sha256"] == entry["snapshot_sha256"]
+                    for entry in result["source_snapshot"].values()),
+            }
+            gates["plan_artifacts_eligible"] = all(gates.values())
+            result["gates"] = gates
+            result["evaluated_plan_kind"] = "none_plan_only"
+            result["status"] = "planned"
+            result["completed_at_unix"] = time.time()
+            result["elapsed_seconds"] = result.get("elapsed_seconds", 0.0) + (
+                time.time() - session_started)
+            checkpoint(partial, result)
+            partial.replace(out)
+            log("PLANNED eligible=%s result=%s" % (
+                gates["plan_artifacts_eligible"], out))
+            return 0
         result["evaluated_plan_kind"] = "diagnostic_candidate_not_guarded_deployment"
         method_overrides = {
             "disk-only": {

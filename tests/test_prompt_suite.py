@@ -1,6 +1,8 @@
 import pytest
 
 from afterimage.bench.prompt_suite import (
+    CALIBRATION_LONG_CASES,
+    PAPER_GENERATION_CONFIRM_CASES,
     H65_CONFIRMATION_CASES,
     PAPER_GENERATION_CASES,
     PROMPT_CASES,
@@ -55,12 +57,33 @@ def test_h65_confirmation_split_has_eight_unique_reserved_cases():
     assert all(case.expected_any == () for case in confirmation)
 
 
+def test_calibration_long_split_is_disjoint_long_form_calibration():
+    """Multi-token H6.5 calibration needs prompts that keep generating. The
+    short calibration split ends after one word, so forcing it on to 32 tokens
+    would record padding, not a decode schedule."""
+    long_calibration = prompt_cases("calibration_long")
+    assert len(long_calibration) == 3
+    assert all(case.split == "calibration_long" for case in long_calibration)
+    assert len({case.semantic_bucket for case in long_calibration}) == 3
+    assert all(case.expected_any == () for case in long_calibration)
+    assert all(len(case.user_text) > 80 for case in long_calibration)
+    others = [
+        case for split in ("evaluation", "calibration", "paper_generation",
+                           "h65_confirmation")
+        for case in prompt_cases(split)]
+    assert not {case.id for case in long_calibration} & {case.id for case in others}
+    assert not {case.user_text for case in long_calibration} & {
+        case.user_text for case in others}
+
+
 def test_prompt_cases_all_includes_every_split():
     every_id = {case.id for case in prompt_cases("all")}
     assert every_id == (
         {case.id for case in PROMPT_CASES}
         | {case.id for case in PAPER_GENERATION_CASES}
-        | {case.id for case in H65_CONFIRMATION_CASES})
+        | {case.id for case in H65_CONFIRMATION_CASES}
+        | {case.id for case in CALIBRATION_LONG_CASES}
+        | {case.id for case in PAPER_GENERATION_CONFIRM_CASES})
 
 
 def test_prompt_cases_rejects_an_unknown_split():
@@ -126,3 +149,18 @@ def test_render_reraises_unrelated_template_errors():
     case = prompt_cases("evaluation")[0]
     with pytest.raises(Exception, match="unrelated template failure"):
         render_chat_prompt(BrokenTokenizer(), case)
+
+
+def test_confirmation_prompts_are_fresh_long_form_and_cover_the_same_buckets():
+    """The 32-token confirmation re-asks the frozen H6.5 plan on new questions:
+    no id, text, or bucket mismatch against the run it confirms."""
+    confirm = prompt_cases("paper_generation_confirm")
+    assert len(confirm) == 4
+    assert {c.semantic_bucket for c in confirm} == {
+        c.semantic_bucket for c in prompt_cases("paper_generation")}
+    assert all(c.expected_any == () and len(c.user_text) > 80 for c in confirm)
+    others = [c for split in ("evaluation", "calibration", "calibration_long",
+                              "paper_generation", "h65_confirmation")
+              for c in prompt_cases(split)]
+    assert not {c.id for c in confirm} & {c.id for c in others}
+    assert not {c.user_text for c in confirm} & {c.user_text for c in others}
