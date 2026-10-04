@@ -2,6 +2,7 @@ import pytest
 
 from afterimage.bench.prompt_suite import (
     CALIBRATION_LONG_CASES,
+    PAPER_GENERATION_CONFIRM_CASES,
     H65_CONFIRMATION_CASES,
     PAPER_GENERATION_CASES,
     PROMPT_CASES,
@@ -81,7 +82,8 @@ def test_prompt_cases_all_includes_every_split():
         {case.id for case in PROMPT_CASES}
         | {case.id for case in PAPER_GENERATION_CASES}
         | {case.id for case in H65_CONFIRMATION_CASES}
-        | {case.id for case in CALIBRATION_LONG_CASES})
+        | {case.id for case in CALIBRATION_LONG_CASES}
+        | {case.id for case in PAPER_GENERATION_CONFIRM_CASES})
 
 
 def test_prompt_cases_rejects_an_unknown_split():
@@ -147,3 +149,18 @@ def test_render_reraises_unrelated_template_errors():
     case = prompt_cases("evaluation")[0]
     with pytest.raises(Exception, match="unrelated template failure"):
         render_chat_prompt(BrokenTokenizer(), case)
+
+
+def test_confirmation_prompts_are_fresh_long_form_and_cover_the_same_buckets():
+    """The 32-token confirmation re-asks the frozen H6.5 plan on new questions:
+    no id, text, or bucket mismatch against the run it confirms."""
+    confirm = prompt_cases("paper_generation_confirm")
+    assert len(confirm) == 4
+    assert {c.semantic_bucket for c in confirm} == {
+        c.semantic_bucket for c in prompt_cases("paper_generation")}
+    assert all(c.expected_any == () and len(c.user_text) > 80 for c in confirm)
+    others = [c for split in ("evaluation", "calibration", "calibration_long",
+                              "paper_generation", "h65_confirmation")
+              for c in prompt_cases(split)]
+    assert not {c.id for c in confirm} & {c.id for c in others}
+    assert not {c.user_text for c in confirm} & {c.user_text for c in others}

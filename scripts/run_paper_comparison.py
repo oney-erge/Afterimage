@@ -108,6 +108,7 @@ DEFAULT_METHODS = ("airllm", "accelerate", "deepspeed-zero-inference",
 DEFAULT_TOKEN_LENGTHS_BY_SUITE = {
     "evaluation": (1, 4),
     "paper_generation": (1, 32, 128),
+    "paper_generation_confirm": (32,),
 }
 # Backwards-compatible public constant used by tests and external scripts.
 # The CLI selects the suite-specific value above when --token-lengths is not
@@ -996,7 +997,7 @@ def main() -> int:
              "to the result before any GPU cell runs.")
     parser.add_argument(
         "--prompt-suite", default="evaluation",
-        choices=["evaluation", "paper_generation"],
+        choices=["evaluation", "paper_generation", "paper_generation_confirm"],
         help="'evaluation' is paper-short-v1 (the four short factual cases) -- "
              "use it for the ttft/short_cold_start workloads. 'paper_generation' "
              "is paper-generation-v1 (explanation/summarization/code/analytical, "

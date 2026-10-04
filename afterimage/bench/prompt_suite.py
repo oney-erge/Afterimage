@@ -126,6 +126,50 @@ CALIBRATION_LONG_CASES = (
     ),
 )
 
+# Fresh questions for confirming the 32-token H6.5 follow-up
+# (split="paper_generation_confirm"). The same four buckets as paper_generation
+# (explanation, summarization, code, analytical), long-form like it, and written
+# after that run's calibration and evaluation prompts were fixed: no topic or text
+# overlaps any other split, by test. Throughput only, so expected_any is empty.
+PAPER_GENERATION_CONFIRM_CASES = (
+    PromptCase(
+        "confirm32-explain-refrigerator", "explanation", "paper_generation_confirm",
+        "In about 150 words, explain how a household refrigerator moves heat out "
+        "of its interior. Cover the refrigerant's evaporation inside the fridge, "
+        "its condensation at the back, and the role of the compressor.",
+        (),
+    ),
+    PromptCase(
+        "confirm32-summarize-waggle-dance", "summarization", "paper_generation_confirm",
+        "Honeybee foragers that find a rich food source return to the hive and "
+        "perform a waggle dance on the vertical comb. The angle of the waggling "
+        "run relative to vertical indicates the direction of the food relative to "
+        "the sun, and the duration of the run indicates its distance. Other "
+        "workers follow the dancer, learn the location, and fly out to it. Karl "
+        "von Frisch decoded this behaviour and shared the 1973 Nobel Prize for "
+        "it, and later radar-tracking studies confirmed that recruits really use "
+        "the information in the dance. In about 150 words, summarize how the "
+        "waggle dance communicates a food source and how scientists showed that "
+        "it works.",
+        (),
+    ),
+    PromptCase(
+        "confirm32-code-word-frequencies", "code", "paper_generation_confirm",
+        "Write a complete Python function `word_frequencies(text)` that returns a "
+        "dictionary mapping each lowercase word to the number of times it "
+        "appears, ignoring punctuation. Include a short docstring with one "
+        "usage example.",
+        (),
+    ),
+    PromptCase(
+        "confirm32-analyze-ssd-vs-hdd", "analytical", "paper_generation_confirm",
+        "In a short structured comparison, analyze the trade-offs between a "
+        "solid-state drive and a hard disk drive in a laptop. Cover read and "
+        "write speed, cost per gigabyte, resistance to drops, and power use.",
+        (),
+    ),
+)
+
 # Frozen before the endpoint-seed pilot produced any live result. These cases
 # are reserved for the independent H6.5 confirmation and intentionally do not
 # overlap calibration, evaluation, or paper-generation cases. Exactness is
@@ -272,20 +316,22 @@ PROMPT_CASES = (
 def prompt_cases(split: str = "evaluation") -> tuple[PromptCase, ...]:
     if split not in {
         "evaluation", "calibration", "all", "paper_generation",
-        "h65_confirmation", "calibration_long",
+        "h65_confirmation", "calibration_long", "paper_generation_confirm",
     }:
         raise ValueError(
             "split must be evaluation, calibration, calibration_long, "
-            "paper_generation, h65_confirmation, or all")
+            "paper_generation, paper_generation_confirm, h65_confirmation, or all")
     if split == "paper_generation":
         return PAPER_GENERATION_CASES
     if split == "calibration_long":
         return CALIBRATION_LONG_CASES
+    if split == "paper_generation_confirm":
+        return PAPER_GENERATION_CONFIRM_CASES
     if split == "h65_confirmation":
         return H65_CONFIRMATION_CASES
     if split == "all":
         return (PROMPT_CASES + PAPER_GENERATION_CASES + H65_CONFIRMATION_CASES
-                + CALIBRATION_LONG_CASES)
+                + CALIBRATION_LONG_CASES + PAPER_GENERATION_CONFIRM_CASES)
     return tuple(case for case in PROMPT_CASES if case.split == split)
 
 
