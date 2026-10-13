@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "split": "h65_d4r3",
+  "frozen": "2026-10-05, before any D4R3 measurement and without seeing method performance",
+  "selection": "Twelve fresh prompts, at least one per P1 bucket, on topics distinct from every earlier prompt set (checked by the worker); target 72-110 rendered input tokens; one output token; one prompt per block.",
+  "cases": [
+    {"id": "d4r3-explain-ice", "semantic_bucket": "explanation", "user_text": "In two concise sentences, explain why ice floats on liquid water instead of sinking to the bottom. Mention the open hexagonal structure of ice and its lower density than liquid water."},
+    {"id": "d4r3-arithmetic-cafe", "semantic_bucket": "arithmetic", "user_text": "A cafe sells 8 cups of tea per hour for 9 hours and 6 cups of coffee per hour for 11 hours. How many drinks does it sell in total? Give the number first, then one sentence of working."},
+    {"id": "d4r3-code-intervals", "semantic_bucket": "code", "user_text": "Write a short Python function named `merge_intervals` that takes a list of (start, end) pairs and returns the merged list of overlapping intervals sorted by start. Use only built-in Python."},
+    {"id": "d4r3-compare-nuclear-wind", "semantic_bucket": "comparison", "user_text": "Briefly compare nuclear power and wind power for a country's electricity supply, covering reliability, construction time, land use, and waste handling. Use three short bullet points."},
+    {"id": "d4r3-summarize-bats", "semantic_bucket": "summarization", "user_text": "Bats pollinate flowers, spread seeds, and eat large numbers of crop-damaging insects each night. Disease and habitat loss have cut populations in many places, and some regions now protect roosting caves. Summarize this passage in one sentence of at most 25 words."},
+    {"id": "d4r3-reasoning-library", "semantic_bucket": "reasoning", "user_text": "If the library is open, then the main door is unlocked. The main door is locked right now. What can you conclude about the library? Answer first, then justify in one sentence."},
+    {"id": "d4r3-retrieval-hotel", "semantic_bucket": "retrieval", "user_text": "The hotel confirmation lists room 614, a booking reference 90427, a check-in time of 15:00, and a rate of 129 dollars. Ignore the reference, the time and the rate. Report only the room number."},
+    {"id": "d4r3-procedure-flat-tyre", "semantic_bucket": "procedure", "user_text": "Give a four-step checklist for changing a flat bicycle tyre. Include removing the wheel, taking out the punctured tube, fitting a new tube, and reinflating and refitting the wheel, with one brief line per step."},
+    {"id": "d4r3-explain-moon-phases", "semantic_bucket": "explanation", "user_text": "In two concise sentences, explain why the moon shows different phases over a month. Mention the changing angle between the Sun, Earth and Moon and the part of the lit half that we can see."},
+    {"id": "d4r3-code-transpose", "semantic_bucket": "code", "user_text": "Write a short Python function named `matrix_transpose` that takes a list of equal-length lists and returns its transpose as a new list of lists, without using any external libraries."},
+    {"id": "d4r3-compare-language-learning", "semantic_bucket": "comparison", "user_text": "Briefly compare learning a language through a classroom course and through a mobile app, covering structure, speaking practice, cost, and motivation over six months. Use three short bullet points."},
+    {"id": "d4r3-arithmetic-pool", "semantic_bucket": "arithmetic", "user_text": "A swimming pool holds 18000 litres and fills at 500 litres per minute, but loses 50 litres per minute through a leak. How many minutes does it take to fill? Give the number first, then one sentence of working."}
+  ]
+}

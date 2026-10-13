@@ -1,0 +1,11 @@
+{
+  "classification": "complete",
+  "eligible_blocks": 12,
+  "reasons": [
+    "D4 replication: frozen D4/P1 arms, fresh prompts, Williams order x2.",
+    "Symmetric stall prevention: keep-awake, 120 s storage idle per cell.",
+    "No automatic retry, replacement block, extension or outlier deletion."
+  ],
+  "schema_version": 1,
+  "sha256": "84cab0c47c48723669c3b9f02cf0b10dbd8ff1d9bfd172e35f649d5476b8eeba"
+}
