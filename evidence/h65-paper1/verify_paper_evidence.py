@@ -2,9 +2,10 @@
 """Recompute every number the H6.5 paper reports from the raw artifacts in
 this folder and check each against the value printed in the arXiv draft
 (Oney Erge, "Schedule-Aware Exact Weight Placement for Large Language Models
-with Limited GPU Memory", draft frozen 2026-09-26): the Llama-3.3-70B / RTX
-5090 confirmations (Tables 7-8) and the Qwen3-14B / Gemma 2 27B / RTX 3080
-Laptop studies (Tables 9-10 and the external-package comparisons).
+with Limited GPU Memory"): the Llama-3.3-70B / RTX 5090 confirmations
+(Tables 7-8), their three repeats, the 12 GB budget follow-up and the
+head-seed ablation, and the Qwen3-14B / Gemma 2 27B / RTX 3080 Laptop studies
+(Tables 9-11 and the external-package comparisons).
 
 Every artifact here is copied verbatim from the original campaign output;
 nothing recomputes or edits a measurement. The script also checks
@@ -257,12 +258,127 @@ def run_method_history_confirmation(name: str, path: pathlib.Path,
         methods["h65-placement-only"]["median_whole_cell_peak_vram_gb"]))
 
 
+# Llama follow-ups on the RTX 5090: folder, frozen protocol, prompt file, the
+# amendment a resumed run recorded (if any), and each arm's frozen plan.
+_D4_PLANS = {"h65": "h65-endpoint-plan.json", "traffic": "traffic-plan.json"}
+LLAMA_FOLLOWUPS = {
+    "D4 repeat 1": ("D4-repeat-1", "PROTOCOL-d4-replication-20261005.md", "d4r-prompts.json",
+                    "AMENDMENT-1-resume-after-controller-stop-20261005.md", _D4_PLANS),
+    "D4 repeat 2": ("D4-repeat-2", "PROTOCOL-d4r2-20261005.md", "d4r2-prompts.json", None, _D4_PLANS),
+    "D4 repeat 3": ("D4-repeat-3", "PROTOCOL-d4r3-20261005.md", "d4r3-prompts.json", None, _D4_PLANS),
+    "D11": ("D11-seed-ablation", "PROTOCOL-P1-head-seed-ablation.md", "p1-prompts.json",
+            "PROTOCOL-P1-amendment1-pause-resume.md",
+            {"h65-endpoint": "h65-endpoint-plan.json", "traffic": "traffic-plan.json",
+             "head-seed": "head-seed-plan.json"}),
+    "D12": ("D12-budget-12gb", "PROTOCOL-budget-followup-amendment1-20261004.md",
+            "budget-prompts.json", None,
+            {"h65": "h65-plan-12v16r.json", "traffic": "traffic-plan-12v16r.json"}),
+}
+
+
+def _followup(label: str) -> dict:
+    return load(LLAMA / LLAMA_FOLLOWUPS[label][0] / "status.json")
+
+
+def _recorded_input(status: dict, suffix: str) -> str | None:
+    return next((sha for path, sha in (status.get("immutable_input_sha256") or {}).items()
+                 if path.endswith(suffix)), None)
+
+
+def check_followup_inputs() -> None:
+    """Each follow-up pinned its protocol, prompts, amendment and plans by
+    SHA-256 before measuring. The published copies must be those exact bytes.
+    """
+    print("\n=== Llama follow-ups: frozen inputs vs. the hashes each run recorded ===")
+    for label, (folder, protocol, prompts, amendment, plans) in LLAMA_FOLLOWUPS.items():
+        status = _followup(label)
+        pinned = [(PROTOCOLS / protocol, status["protocol_sha256"]),
+                  (LLAMA / folder / prompts,
+                   status.get("prompts_sha256") or _recorded_input(status, prompts))]
+        if amendment:
+            pinned.append((PROTOCOLS / amendment, status["resume"]["amendment_sha256"]))
+        for arm, plan in plans.items():
+            recorded = status["plans"][arm]
+            pinned.append((LLAMA / "frozen-plans" / plan,
+                           recorded["sha256"] if isinstance(recorded, dict) else recorded))
+        profile = _recorded_input(status, "knapsack-critical-path-profile.json")
+        if profile:
+            pinned.append((LLAMA / "frozen-plans" / "knapsack-critical-path-profile.json", profile))
+        for path, recorded in pinned:
+            ok = path.exists() and _sha256(path) == recorded
+            print("  [%s] %s: %s" % ("OK  " if ok else "FAIL", label, path.name))
+            if not ok:
+                FAILURES.append("%s: %s does not match its recorded SHA-256" % (label, path.name))
+
+
+def _eligible_blocks(label: str) -> list[dict]:
+    """Blocks the run's own gates kept, with each recorded ratio rechecked
+    against the two cells it was computed from."""
+    blocks = [b for b in _followup(label)["block_results"] if b["eligible"]]
+    for block in blocks:
+        for key, value in block.items():
+            if not key.endswith(("_latency", "_peak_vram")):
+                continue
+            top, bottom = key[0], key[len("X_over_")]
+            field = "wall_seconds" if key.endswith("_latency") else "peak_vram_gb"
+            recomputed = block["arms"][top][field] / block["arms"][bottom][field]
+            if abs(recomputed - value) > 1e-9:
+                FAILURES.append("%s block %s: %s is %r, cells give %r"
+                                % (label, block["block"], key, value, recomputed))
+    return blocks
+
+
+def _unresolved(label: str, what: str, ratios: list[float]) -> None:
+    gm, lo, hi = paired_log_ratio_ci(ratios)
+    ok = lo < 1 < hi
+    print("  [%s] %s: %s ratio %.3f [%.3f, %.3f], interval includes 1"
+          % ("OK  " if ok else "FAIL", label, what, gm, lo, hi))
+    if not ok:
+        FAILURES.append("%s: %s interval [%.3f, %.3f] does not include 1" % (label, what, lo, hi))
+
+
+def run_llama_followups() -> None:
+    print("\n=== Section 5.3: three repeats of the mechanism study on new prompts ===")
+    pooled = []
+    for label, complete in (("D4 repeat 1", 11), ("D4 repeat 2", 12), ("D4 repeat 3", 12)):
+        blocks = _eligible_blocks(label)
+        check("%s: complete blocks (Table 5)" % label, len(blocks), complete, 0)
+        pooled += blocks
+    check("Repeats: pooled blocks", len(pooled), 35, 0)
+    for key, what, paper in (("T_over_H_latency", "latency vs traffic", 0.18),
+                             ("K_over_H_latency", "latency vs greedy", 0.15),
+                             ("T_over_H_peak_vram", "peak GPU vs traffic", 0.23),
+                             ("K_over_H_peak_vram", "peak GPU vs greedy", 0.20)):
+        check("Repeats: H6.5 reduction, %s" % what,
+              1 - 1 / geomean([b[key] for b in pooled]), paper, 0.01)
+    lower = sum(b["T_over_H_peak_vram"] > 1 and b["K_over_H_peak_vram"] > 1 for b in pooled)
+    ok = lower == len(pooled)
+    print("  [%s] Repeats: H6.5 peak GPU below both controls in %d of %d blocks"
+          % ("OK  " if ok else "FAIL", lower, len(pooled)))
+    if not ok:
+        FAILURES.append("Repeats: H6.5 peak GPU is not lower in every block")
+
+    print("\n=== Section 5.3: 12 GB GPU budget follow-up (D12) ===")
+    blocks = _eligible_blocks("D12")
+    check("D12: blocks", len(blocks), 8, 0)
+    check("D12: H6.5 peak GPU reduction vs traffic",
+          1 - 1 / geomean([b["T_over_H_peak_vram"] for b in blocks]), 0.14, 0.01)
+    _unresolved("D12", "traffic/H6.5 latency", [b["T_over_H_latency"] for b in blocks])
+
+    print("\n=== Section 6: head-seed ablation (D11) ===")
+    blocks = _eligible_blocks("D11")
+    check("D11: blocks", len(blocks), 8, 0)
+    _unresolved("D11", "head-seed/H6.5 latency", [b["S_over_H_latency"] for b in blocks])
+
+
 LAPTOP_STUDIES = {
     "D6": "D6-qwen-matched/qwen3-14b-h65-matched-ttft-practical-20260909-r2-1tok.json",
     "D7": "D7-qwen-external/qwen3-14b-h65-external-ttft-practical-20260909-r2-1tok.json",
     "D8": "D8-qwen-32token/qwen3-14b-h65-matched-decode-practical-20260909-r2-32tok.json",
     "D9": "D9-gemma-matched/gemma2-27b-h65-matched-ttft-practical-20260909-r2b-1tok.json",
     "D10": "D10-gemma-external/gemma2-27b-h65-external-ttft-practical-20260909-r2b-1tok.json",
+    "D13": "D13-qwen-32token-screen/qwen3-14b-h65-cal32v2-20261003-cal32v2-32tok.json",
+    "D14": "D14-qwen-32token-confirmation/qwen3-14b-h65-confirm32-20261004-confirm32-32tok.json",
 }
 # Paper Table 4, System A. Checked against each artifact's own environment block.
 SYSTEM_A = {"torch": "2.6.0+cu124", "cuda": "12.4", "driver": "596.49"}
@@ -296,7 +412,8 @@ def check_laptop_provenance() -> None:
               % ("OK  " if ok else "FAIL", label, str(env.get("git_commit"))[:7]))
         if not ok:
             FAILURES.append("%s provenance or environment does not match" % label)
-    for label, model in (("D6", "qwen3-14b"), ("D9", "gemma2-27b")):
+    for label, model in (("D6", "qwen3-14b"), ("D9", "gemma2-27b"),
+                         ("D13", "qwen3-14b"), ("D14", "qwen3-14b")):
         for plan in _laptop(label).get("afterimage_plan_methods") or []:
             name = "%s-%s" % (model, pathlib.PurePosixPath(plan["snapshot_path"]).name)
             local = LAPTOP / "frozen-plans" / name
@@ -366,11 +483,61 @@ def check_laptop_tables() -> None:
           max(x["peak_vram_gb"] for x in rows["deepspeed-zero-inference"]), 7.4, 0.05)
 
 
+def check_table11() -> None:
+    print("\n=== Table 11 and Section 5.5: Qwen3-14B 32-token follow-ups (D13, D14) ===")
+    names = {"disk-frozen": "disk control", "simple-v4-r0": "traffic control",
+             "h65-cal1-ram8": "H6.5, 8 GB host, 1-token calibration",
+             "h65-cal32-ram8": "H6.5, 8 GB host, 32-token calibration",
+             "h65-cal1-ram0": "H6.5, 0 GB host, 1-token calibration",
+             "h65-cal32-ram0": "H6.5, 0 GB host, 32-token calibration"}
+    # method -> (time/output-token, disk/method ratio with its 95% interval, peak incremental GPU)
+    table11 = {
+        "D13": (3, {"disk-frozen": (18.07, None, 1.976),
+                    "simple-v4-r0": (15.02, (1.203, 1.183, 1.223), 3.768),
+                    "h65-cal1-ram8": (23.57, (0.768, 0.680, 0.868), 2.908),
+                    "h65-cal32-ram8": (23.09, (0.785, 0.643, 0.959), 3.069),
+                    "h65-cal1-ram0": (13.84, (1.305, 1.275, 1.336), 2.911),
+                    "h65-cal32-ram0": (14.18, (1.274, 1.203, 1.349), 2.916)}),
+        "D14": (7, {"disk-frozen": (18.18, None, 1.956),
+                    "simple-v4-r0": (14.88, (1.221, 1.194, 1.249), 3.739),
+                    "h65-cal32-ram0": (13.93, (1.304, 1.279, 1.329), 2.900)}),
+    }
+    for label, (n_blocks, expected) in table11.items():
+        tables = {method: {(int(r["repeat"]), r["case_id"]): r for r in rows}
+                  for method, rows in _rows(_laptop(label)).items()}
+        control = tables["disk-frozen"]
+        blocks = sorted({block for block, _ in control})
+        check("%s: blocks" % label, len(blocks), n_blocks, 0)
+        for method, (seconds, ratio, peak) in expected.items():
+            rows = tables[method]
+            check("%s %s time/output-token (s)" % (label, names[method]),
+                  statistics.fmean(r["wall_seconds"] / r["output_tokens"] for r in rows.values()),
+                  seconds, 0.005)
+            check("%s %s max peak incremental GPU (GB)" % (label, names[method]),
+                  max(r["peak_vram_gb"] for r in rows.values()), peak, 0.0005)
+            if ratio is None:
+                continue
+            # The paper's estimator: per-block geometric mean of the paired
+            # disk/method request times, then mean and t interval across blocks.
+            gm, lo, hi = paired_log_ratio_ci([
+                geomean([control[key]["wall_seconds"] / rows[key]["wall_seconds"]
+                         for key in control if key[0] == block]) for block in blocks])
+            for what, got, want in (("ratio", gm, ratio[0]), ("95% CI lower", lo, ratio[1]),
+                                    ("95% CI upper", hi, ratio[2])):
+                check("%s %s disk/method latency %s" % (label, names[method], what),
+                      got, want, 0.0006)
+            if (label, method) == ("D14", "h65-cal32-ram0"):
+                check("D14 H6.5 latency reduction vs disk control, paper 'about 23%'",
+                      1 - 1 / gm, 0.23, 0.01)
+
+
 def main() -> int:
     check_manifest()
     check_frozen_inputs()
+    check_followup_inputs()
     check_laptop_provenance()
     check_laptop_tables()
+    check_table11()
     d1 = run_confirmation(
         "D1: Llama confirmation 1 (n=8)",
         LLAMA / "D1-confirmation-1" / "status.json",
@@ -381,6 +548,7 @@ def main() -> int:
         paper_geomean=1.239, paper_ci=(1.128, 1.361))
     run_pooled(d1, d2, paper_geomean=1.145, paper_ci=(1.052, 1.247))
     run_d4_greedy_mechanism()
+    run_llama_followups()
     run_four_token_ablation()
     run_method_history_confirmation(
         "2026-08-31, 8 blocks, before the output-head seed",

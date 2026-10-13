@@ -1,0 +1,11 @@
+{
+  "classification": "complete",
+  "eligible_blocks": 8,
+  "reasons": [
+    "Eight fresh prompts; alternating two-arm order; frozen measured-cost plans.",
+    "No automatic retry, replacement block, sample extension or outlier deletion.",
+    "Claim limited to cold one-token latency and memory on this RTX 5090 at 12v16r."
+  ],
+  "schema_version": 1,
+  "sha256": "12284c0b60fd9f769f32a13251e5c62cdd576f0733c4f3749a5e595e8501682e"
+}

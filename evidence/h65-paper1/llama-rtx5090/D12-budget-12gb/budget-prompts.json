@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "split": "h65_budget_followup",
+  "frozen": "2026-10-04, before any RAM calibration or live measurement of the budget follow-up and without seeing any method performance",
+  "selection": "Written fresh for the 2026-10-04 budget follow-up on topics distinct from every calibration, pilot, confirmation, confirmation-2, mechanism-control, external-comparison, P1 and RTX 3080 prompt; same eight semantic buckets as P1; target 72-110 rendered input tokens; exactly one output token requested by the driver. The same eight prompts are used, one per block, at every budget that qualifies for a live comparison.",
+  "cases": [
+    {
+      "id": "budget-explain-tides",
+      "semantic_bucket": "explanation",
+      "user_text": "In two concise sentences, explain why most coastlines see two high tides each day. Mention the Moon's gravity and the rotation of the Earth."
+    },
+    {
+      "id": "budget-arithmetic-bakery",
+      "semantic_bucket": "arithmetic",
+      "user_text": "A bakery fills 9 trays with 24 rolls each and sells 137 rolls before noon. How many rolls are left for the afternoon? Give the number first, then one sentence of working."
+    },
+    {
+      "id": "budget-code-rotate",
+      "semantic_bucket": "code",
+      "user_text": "Write a short Python function named `rotate_left` that takes a list and an integer k and returns a new list rotated left by k positions, handling k larger than the list length. Use only built-in Python."
+    },
+    {
+      "id": "budget-compare-solar-wind",
+      "semantic_bucket": "comparison",
+      "user_text": "Briefly compare rooftop solar panels and a small wind turbine for a rural home, covering upfront cost, maintenance, noise, and output on calm cloudy days. Use three short bullet points."
+    },
+    {
+      "id": "budget-summarize-street-trees",
+      "semantic_bucket": "summarization",
+      "user_text": "Street trees shade pavements and release water vapour, which can lower summer surface temperatures in dense neighbourhoods by several degrees. Many cities now plant them to reduce heat stress. Summarize this passage in one sentence of at most 25 words."
+    },
+    {
+      "id": "budget-reasoning-badges",
+      "semantic_bucket": "reasoning",
+      "user_text": "Every visitor with a blue badge may enter the lab. Priya cannot enter the lab. What can you conclude about Priya's badge? Answer first, then justify in one sentence."
+    },
+    {
+      "id": "budget-retrieval-platform",
+      "semantic_bucket": "retrieval",
+      "user_text": "The departure board shows the 14:05 express to Leeds on platform 9, the 14:12 stopping service on platform 3, and coach C with 72 seats. Ignore times and seat counts. Report only the platform for the express."
+    },
+    {
+      "id": "budget-procedure-smoke-alarm",
+      "semantic_bucket": "procedure",
+      "user_text": "Give a four-step checklist for replacing the battery in a ceiling smoke alarm. Include getting safe access, removing the old battery, fitting the new one, and testing the alarm, with one brief line per step."
+    }
+  ]
+}

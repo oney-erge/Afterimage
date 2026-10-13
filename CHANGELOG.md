@@ -5,6 +5,16 @@ No tagged releases yet. Everything below is `main`.
 
 ## [Unreleased]
 
+### H6.5 paper: evidence for the follow-up studies
+
+`evidence/h65-paper1/` now holds the raw artifacts for every study the paper
+reports. Added, byte for byte from the campaign output and each checked against
+the hash its run recorded: the three repeats of D4 (35 blocks), the head-seed
+ablation (D11), the 12 GB GPU budget follow-up (D12), and the two Qwen3-14B
+32-token follow-ups (D13, D14), with their prompts, frozen plans and protocols.
+`verify_paper_evidence.py` recomputes Table 11 and the Section 5.3 and Section 6
+statements from them. No planner or runtime code changed.
+
 ### H6.5 at 32 tokens: calibration tooling and a frozen follow-up protocol
 
 The paper's 32-token Qwen test (D8) found the disk control faster. Per-request

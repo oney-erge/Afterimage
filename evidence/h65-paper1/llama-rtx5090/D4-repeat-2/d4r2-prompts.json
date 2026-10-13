@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "split": "h65_d4r2",
+  "frozen": "2026-10-05, before any D4R2 measurement and without seeing method performance",
+  "selection": "Twelve fresh prompts, at least one per P1 bucket, on topics distinct from every earlier prompt set (checked by the worker); target 72-110 rendered input tokens; one output token; one prompt per block.",
+  "cases": [
+    {"id": "d4r2-explain-spoon", "semantic_bucket": "explanation", "user_text": "In two concise sentences, explain why a metal spoon feels colder than a wooden spoon at the same room temperature. Mention thermal conductivity and the flow of heat away from the hand."},
+    {"id": "d4r2-arithmetic-train", "semantic_bucket": "arithmetic", "user_text": "A train has 12 carriages with 68 seats each, and 523 passengers board at the first station. How many seats are empty? Give the number first, then one sentence of working."},
+    {"id": "d4r2-code-top-words", "semantic_bucket": "code", "user_text": "Write a short Python function named `top_k_words` that takes a string and an integer k and returns the k most frequent words, ignoring case, with ties broken alphabetically. Use only built-in Python."},
+    {"id": "d4r2-compare-bike-car", "semantic_bucket": "comparison", "user_text": "Briefly compare cycling and driving for a daily five-kilometre commute, covering cost, travel time in city traffic, health effects, and exposure to bad weather. Use three short bullet points."},
+    {"id": "d4r2-summarize-reefs", "semantic_bucket": "summarization", "user_text": "Coral reefs shelter about a quarter of marine species while covering under one percent of the ocean floor. Warming water causes bleaching that can kill corals, and several countries now fund restoration. Summarize this passage in one sentence of at most 25 words."},
+    {"id": "d4r2-reasoning-board", "semantic_bucket": "reasoning", "user_text": "Every flight that departs before six in the morning is listed on the early board. The 07:15 flight to Oslo is not on the early board. What can you conclude about that flight? Answer first, then justify in one sentence."},
+    {"id": "d4r2-retrieval-parking", "semantic_bucket": "retrieval", "user_text": "The parking ticket shows bay 38, level 4, an entry time of 08:20, and a fee of 12 dollars. Ignore the level, the time and the fee. Report only the bay number printed on the ticket."},
+    {"id": "d4r2-procedure-phone-backup", "semantic_bucket": "procedure", "user_text": "Give a four-step checklist for backing up a phone before a software update. Include checking battery and storage, connecting to Wi-Fi, running the backup, and verifying it finished, with one brief line per step."},
+    {"id": "d4r2-explain-skater", "semantic_bucket": "explanation", "user_text": "In two concise sentences, explain why a spinning figure skater rotates faster when pulling their arms in toward the body. Mention angular momentum and the moment of inertia."},
+    {"id": "d4r2-code-brackets", "semantic_bucket": "code", "user_text": "Write a short Python function named `is_balanced` that returns True if every opening bracket in a string made of ()[]{} characters is closed in the correct order, and False otherwise. Use only built-in Python."},
+    {"id": "d4r2-compare-rent-buy", "semantic_bucket": "comparison", "user_text": "Briefly compare renting and buying a home for someone who may relocate within three years, covering upfront cost, flexibility, maintenance responsibility, and long-term equity. Use three short bullet points."},
+    {"id": "d4r2-procedure-classroom", "semantic_bucket": "procedure", "user_text": "Give a four-step checklist for preparing a classroom for a science experiment. Include gathering materials, checking safety equipment, arranging the workstations, and briefing the students, with one brief line per step."}
+  ]
+}

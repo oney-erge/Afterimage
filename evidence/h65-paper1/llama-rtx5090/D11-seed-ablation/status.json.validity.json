@@ -1,0 +1,17 @@
+{
+  "classification": "complete",
+  "eligible_blocks": 8,
+  "pauses": 1,
+  "reasons": [
+    "Eight fresh prompts; four-arm Williams order used twice; frozen plans.",
+    "No automatic retry, replacement block, sample extension or outlier deletion.",
+    "Paused blocks are rerun in full; abandoned cells are preserved, never paired.",
+    "Claim limited to cold one-token latency and memory on this RTX 5090."
+  ],
+  "schema_version": 1,
+  "sessions": [
+    "original",
+    "resume-20260913-103839"
+  ],
+  "sha256": "9a2ad93c1555ab4d9d813b7a02798d7909e08484d97f6dd3120c27fe15584cd5"
+}

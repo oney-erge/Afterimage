@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "split": "h65_seed_ablation",
+  "frozen": "2026-09-12, before any P1 measurement and without seeing method performance",
+  "selection": "Written fresh for P1 on topics distinct from every calibration, pilot, confirmation, confirmation-2, mechanism-control and external-comparison prompt; target 72-110 rendered input tokens; exactly one output token requested by the driver.",
+  "cases": [
+    {
+      "id": "seedabl-explain-auroras",
+      "semantic_bucket": "explanation",
+      "user_text": "In two concise sentences, explain why auroras are seen most often near the polar regions. Mention the solar wind and the shape of Earth's magnetic field."
+    },
+    {
+      "id": "seedabl-arithmetic-library",
+      "semantic_bucket": "arithmetic",
+      "user_text": "A library has 14 shelves holding 38 books each, and 57 books are currently on loan. How many books are still on the shelves? Give the number first, then one sentence of working."
+    },
+    {
+      "id": "seedabl-code-flatten",
+      "semantic_bucket": "code",
+      "user_text": "Write a short Python function named `flatten_once` that takes a list of lists and returns one list containing every inner item in its original order. Use only built-in Python."
+    },
+    {
+      "id": "seedabl-compare-tcp-udp",
+      "semantic_bucket": "comparison",
+      "user_text": "Briefly compare TCP and UDP for reliability, ordering guarantees, latency, and suitability for live video calls over unreliable networks. Use three short bullet points."
+    },
+    {
+      "id": "seedabl-summarize-bees",
+      "semantic_bucket": "summarization",
+      "user_text": "Wild bees pollinate many crops and flowering plants, often more efficiently than managed honeybees. Habitat loss and pesticide exposure have reduced their numbers in many regions. Summarize this passage in one sentence of at most 25 words."
+    },
+    {
+      "id": "seedabl-reasoning-lamps",
+      "semantic_bucket": "reasoning",
+      "user_text": "If the hall lamp is on, then the porch lamp is off. The porch lamp is currently on. What can you conclude about the hall lamp? Answer first, then justify in one sentence."
+    },
+    {
+      "id": "seedabl-retrieval-ports",
+      "semantic_bucket": "retrieval",
+      "user_text": "A config file lists port 8443 for the admin panel, 5432 for the database, and 6379 for the cache. A comment mentions timeouts of 84, 54, and 63 seconds, which are not ports. Report only the database port."
+    },
+    {
+      "id": "seedabl-procedure-restore",
+      "semantic_bucket": "procedure",
+      "user_text": "Give a four-step checklist for restoring a laptop from a backup. Include verifying the backup, preparing the device, running the restore, and checking key files, with one brief line per step."
+    }
+  ]
+}

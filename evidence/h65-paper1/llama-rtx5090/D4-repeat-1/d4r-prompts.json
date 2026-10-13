@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "split": "h65_d4_replication",
+  "frozen": "2026-10-05, before any D4-replication measurement and without seeing method performance",
+  "selection": "Twelve fresh prompts, at least one per P1 bucket, on topics distinct from every earlier prompt set (checked by the worker); target 72-110 rendered input tokens; one output token; one prompt per block.",
+  "cases": [
+    {"id": "d4r-explain-dew", "semantic_bucket": "explanation", "user_text": "In two concise sentences, explain why dew forms on grass during clear, calm nights but rarely on cloudy ones. Mention radiative cooling and the dew point."},
+    {"id": "d4r-arithmetic-tiles", "semantic_bucket": "arithmetic", "user_text": "A floor is covered with 27 rows of 34 tiles, and 58 cracked tiles are replaced from a spare box of 75. How many spare tiles are left? Give the number first, then one sentence of working."},
+    {"id": "d4r-code-count-runs", "semantic_bucket": "code", "user_text": "Write a short Python function named `run_lengths` that takes a string and returns a list of (character, count) pairs for each run of repeated characters, in order. Use only built-in Python."},
+    {"id": "d4r-compare-trains-planes", "semantic_bucket": "comparison", "user_text": "Briefly compare high-speed trains and short-haul flights for a 500 km city-to-city trip, covering door-to-door time, emissions, and comfort for working on a laptop. Use three short bullet points."},
+    {"id": "d4r-summarize-hedgerows", "semantic_bucket": "summarization", "user_text": "Hedgerows between fields shelter birds and insects, slow soil erosion, and act as corridors linking patches of woodland. Many were removed to enlarge fields, and some farms now replant them. Summarize this passage in one sentence of at most 25 words."},
+    {"id": "d4r-reasoning-alarm", "semantic_bucket": "reasoning", "user_text": "Whenever the server room is too hot, the alarm sounds. The alarm is silent right now. What can you conclude about the server room temperature? Answer first, then justify in one sentence."},
+    {"id": "d4r-retrieval-locker", "semantic_bucket": "retrieval", "user_text": "The gym receipt lists membership number 70315, locker 212, a renewal date of 9 March, and a fee of 45 dollars. Ignore the membership number, date and fee. Report only the locker number."},
+    {"id": "d4r-procedure-coffee", "semantic_bucket": "procedure", "user_text": "Give a four-step checklist for descaling a drip coffee maker. Include mixing the descaling solution, running a brew cycle, rinsing with clean water twice, and wiping the parts, with one brief line per step."},
+    {"id": "d4r-explain-echo", "semantic_bucket": "explanation", "user_text": "In two concise sentences, explain why you can hear a clear echo when shouting toward a distant cliff but not in a small furnished room. Mention reflection and the delay of the returning sound."},
+    {"id": "d4r-code-safe-div", "semantic_bucket": "code", "user_text": "Write a short Python function named `safe_ratio` that takes two lists of numbers of equal length and returns a list of their element-wise ratios, using None wherever the divisor is zero. Use only built-in Python."},
+    {"id": "d4r-compare-ssd-backup", "semantic_bucket": "comparison", "user_text": "Briefly compare an external hard drive and a cloud service for backing up family photos, covering cost over five years, risk of loss, and how quickly files can be restored. Use three short bullet points."},
+    {"id": "d4r-procedure-bike-chain", "semantic_bucket": "procedure", "user_text": "Give a four-step checklist for cleaning and lubricating a bicycle chain. Include degreasing the chain, scrubbing the links, drying it thoroughly, and applying lubricant sparingly, with one brief line per step."}
+  ]
+}
