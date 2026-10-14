@@ -38,6 +38,20 @@ afterimage doctor
 afterimage quickstart
 ```
 
+### Install into an existing environment
+
+The PyPI release is not published yet. To install directly from GitHub:
+
+```bash
+pip install "afterimage-llm @ git+https://github.com/oney-erge/Afterimage.git"
+afterimage doctor
+afterimage quickstart
+```
+
+This route uses your existing Python environment. Check its Torch/CUDA setup
+with `afterimage doctor`; the root launcher manages its own environment and
+GPU detection instead.
+
 ## Quickstart (a few minutes, ~2 GB)
 
 ```bash
@@ -162,14 +176,39 @@ print(resp.usage.model_extra["afterimage"])  # seconds_per_token, peak_vram_gb, 
 ## Programmatic use
 
 ```python
-from afterimage.runtime.config import EngineConfig
-from afterimage.runtime.streaming_engine import StreamingLosslessModel, load_draft_model
+from pathlib import Path
 
-cfg = EngineConfig(vram_budget_gb=4.0, draft_mode="model", spec_k=8)
-sm = StreamingLosslessModel("Qwen/Qwen3-14B", store_dir, device="cuda", config=cfg)
+from transformers import AutoTokenizer
+
+from afterimage.runtime.config import EngineConfig
+from afterimage.runtime.streaming_engine import (
+    StreamingLosslessModel,
+    load_draft_model,
+)
+
+config = EngineConfig(
+    vram_budget_gb=4.0,
+    ram_budget_gb=8.0,
+    draft_mode="model",
+    spec_k=8,
+)
+
+model = StreamingLosslessModel(
+    "Qwen/Qwen3-14B",
+    store_dir=Path.home() / ".afterimage/stores/Qwen__Qwen3-14B",
+    device="cuda",
+    config=config,
+)
 draft = load_draft_model("Qwen/Qwen3-0.6B", device="cuda")
-seq, _policy = sm.generate_adaptive(input_ids, max_new_tokens=64, draft_model=draft,
-                                    temperature=0.0)  # T=0: provably token-identical to greedy
+tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-14B")
+input_ids = tokenizer("Explain entropy in one paragraph.", return_tensors="pt").input_ids.cuda()
+tokens, policy = model.generate_adaptive(
+    input_ids,
+    max_new_tokens=64,
+    draft_model=draft,
+    temperature=0.0,  # greedy-token exact vs. the target; generate_adaptive's
+                      # own default is 1.0 (samples), unlike the CLI's --spec-temperature
+)
 ```
 
 ## The research layer
