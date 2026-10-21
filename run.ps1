@@ -86,9 +86,9 @@ if (Test-Path -LiteralPath $python) {
   Write-Host "The project Python environment is already installed."
 } else {
   Invoke-InstallRetry "Python installation" {
-    $output = & $uv python install 3.11 2>&1
-    if ($LASTEXITCODE -ne 0) { throw "uv python install failed: $($output -join [Environment]::NewLine)" }
-    $output | Write-Host
+    $result = Invoke-InstallNative $uv @("python", "install", "3.11")
+    if ($result.ExitCode -ne 0) { throw "uv python install failed: $($result.Output -join [Environment]::NewLine)" }
+    $result.Output | Write-Host
   }
 }
 if (-not (Test-Path -LiteralPath $python)) {
