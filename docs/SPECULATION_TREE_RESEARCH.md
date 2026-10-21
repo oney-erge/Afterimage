@@ -35,7 +35,7 @@ distinction this table used to compress away.
 | H19 Candidate Amortization | **Implemented.** `StreamingLosslessModel.measure_candidate_sweep_latency`, `scripts/run_h19_candidate_sweep.py` (warmup, randomized dispatch order, VRAM/RAM-budget configuration, per-case knee detection) | Pending |
 | H20 Branching Rescue | Planned -- needs a real tree-attention verifier, GPU-correctness-sensitive, not written blind. CPU-only `SpecNode`/`SpecTree` structural representation is implemented ([SpecTree structure](#spectree-structure-implemented-ahead-of-h20)) | Pending (blocked on the verifier) |
 | H21 Multi-Source Oracle Headroom | **Implemented,** as a three-stage pipeline: `scripts/run_h21_collect_target_corpus.py` (target corpus, once), `scripts/run_h21_score_source.py` (any candidate source, reusable), `scripts/run_h21_combine_sources.py` (coverage, equal-total-budget comparison, sustained rescue depth) | Pending |
-| H22a Temporal Disagreement Persistence / H22b Online Disagreement Prediction | **Implemented** (split from the original single H22 -- see [H22 detail](#h22a-h22b-persistent-disagreement-state-implemented-split-into-two-claims)), `scripts/run_h22_disagreement_hmm.py`: baseline ladder B0-B5, validation-selected hidden-state count, grouped cross-validation, bootstrapped confidence intervals | Pending |
+| H22a Temporal Disagreement Persistence / H22b Online Disagreement Prediction | **Implemented** (split from the original single H22 -- see [H22 detail](#h22a-h22b----persistent-disagreement-state-implemented-split-into-two-claims)), `scripts/run_h22_disagreement_hmm.py`: baseline ladder B0-B5, validation-selected hidden-state count, grouped cross-validation, bootstrapped confidence intervals | Pending |
 | H23 Established Tree Baselines | Planned -- same GPU-correctness dependency as H20 | Pending |
 | H24 Actual SpecExec | Planned -- budgets set from H19's real measured knee, not guessed | Pending |
 | H25-H34 (BeliefSpec-Triad) | Planned, gated on H21/H22's real results (see [Hard research gates](#hard-research-gates)) | Pending |
@@ -146,7 +146,7 @@ P can be more valuable than a 70%-accurate scout that makes the *same*
 mistakes -- that is the actual ensemble-diversity argument, and it is what
 H21 measures directly rather than assumes. Candidate scouts, in the risk
 order this document's own gates enforce (see
-[H21](#h21-multi-source-oracle-headroom-implemented)): same tokenizer,
+[H21](#h21----multi-source-oracle-headroom-implemented)): same tokenizer,
 different training lineage first (lowest risk -- this is what H21's
 default `Qwen/Qwen3-1.7B` scout tests); a Mamba/SSM source next (fast
 sequential drafting from a structurally different architecture); a
