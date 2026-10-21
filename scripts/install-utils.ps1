@@ -79,6 +79,24 @@ function Invoke-InstallRetry {
   }
 }
 
+# Runs a native command and returns its exit code and its stdout/stderr as plain text lines.
+# Windows PowerShell 5.1, which run.bat starts, raises a terminating error for the first stderr
+# line of a redirected native command while $ErrorActionPreference is "Stop", and uv prints ordinary
+# progress there ("Downloading cpython-3.11 ..."). The preference is relaxed for this call only;
+# callers check ExitCode.
+function Invoke-InstallNative {
+  param([string]$FilePath, [string[]]$Arguments = @())
+  $previous = $ErrorActionPreference
+  $ErrorActionPreference = "Continue"
+  try {
+    $lines = @(& $FilePath @Arguments 2>&1 | ForEach-Object { [string]$_ })
+    $exitCode = $LASTEXITCODE
+  } finally {
+    $ErrorActionPreference = $previous
+  }
+  return [pscustomobject]@{ ExitCode = $exitCode; Output = $lines }
+}
+
 function Save-InstallDownload {
   param([string]$Url, [string]$Destination, [string]$Label = "download")
   $parent = Split-Path -Parent $Destination
