@@ -5,6 +5,12 @@ No tagged releases yet. Everything below is `main`.
 
 ## [Unreleased]
 
+### Security
+
+`uv.lock` now resolves Pillow 13.0.0 on Python 3.11 and newer (nine advisories, fixed in 13.0.0; Python 3.10
+keeps 12.3.0, which has no fix) and certifi 2026.10.19. The server's image upload path was checked on
+Pillow 13 and the server tests pass.
+
 ### H6.5 paper: evidence for the follow-up studies
 
 `evidence/h65-paper1/` now holds the raw artifacts for every study the paper
