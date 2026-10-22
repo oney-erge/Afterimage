@@ -9,7 +9,7 @@ version = "0.3.0"
 description = "Lossless weight-compressed streaming inference for models larger than your GPU"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 readme = "README.md"
 authors = [{ name = "Oney Erge" }]
 keywords = [
@@ -30,7 +30,7 @@ classifiers = [
     "Operating System :: POSIX :: Linux",
     "Operating System :: Microsoft :: Windows",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Environment :: GPU :: NVIDIA CUDA",
@@ -89,7 +89,7 @@ afterimage = ["py.typed"]
 
 [tool.ruff]
 line-length = 92
-target-version = "py310"
+target-version = "py311"
 
 [tool.ruff.lint]
 # Starting narrow and unopinionated: unused imports/names and obvious bugs,

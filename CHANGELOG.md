@@ -7,9 +7,13 @@ No tagged releases yet. Everything below is `main`.
 
 ### Security
 
-`uv.lock` now resolves Pillow 13.0.0 on Python 3.11 and newer (nine advisories, fixed in 13.0.0; Python 3.10
-keeps 12.3.0, which has no fix) and certifi 2026.10.19. The server's image upload path was checked on
-Pillow 13 and the server tests pass.
+`uv.lock` now resolves Pillow 13.0.0 (nine advisories, fixed in 13.0.0) and certifi 2026.10.19. The server's
+image upload path was checked on Pillow 13 and the server tests pass.
+
+### Changed
+
+Afterimage now requires Python 3.11 or newer. Python 3.10 reaches end of life this month, and Pillow 13.0.0
+does not support it, so a 3.10 install could not take the Pillow fix. CI now tests 3.11 and 3.12.
 
 ### H6.5 paper: evidence for the follow-up studies
 
