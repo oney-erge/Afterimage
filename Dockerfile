@@ -32,14 +32,18 @@ ARG PIP_EXTRAS=server
 FROM base-${VARIANT} AS final
 ARG TORCH_INDEX_URL
 ARG PIP_EXTRAS
+# Ubuntu 22.04's own Python is 3.10, which Afterimage no longer supports. uv provisions a Python
+# 3.11 for the virtual environment on either base image, so the CUDA runtime image stays as it was.
+ARG UV_VERSION=0.12.5
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
+    UV_PYTHON_INSTALL_DIR=/opt/python \
     AFTERIMAGE_STORE_ROOT=/data/stores \
     HF_HOME=/data/hf-cache
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        python3 python3-venv python3-pip git curl \
+        python3 python3-pip ca-certificates git curl \
     && groupadd --gid 10001 afterimage \
     && useradd --uid 10001 --gid afterimage --create-home afterimage \
     && rm -rf /var/lib/apt/lists/*
@@ -48,7 +52,9 @@ WORKDIR /app
 COPY pyproject.toml README.md LICENSE ./
 COPY afterimage ./afterimage
 
-RUN python3 -m venv /opt/venv
+# UV_PYTHON_INSTALL_DIR is outside /root so the unprivileged user below can run the interpreter.
+RUN python3 -m pip install --no-cache-dir "uv==${UV_VERSION}" \
+    && uv venv --seed --python 3.11 /opt/venv
 ENV PATH="/opt/venv/bin:${PATH}"
 
 # [gpu] on the CUDA variant declares the triton dependency this image
