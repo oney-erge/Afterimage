@@ -47,13 +47,6 @@ bench = [
     { name = "deepspeed" },
     { name = "dfloat11", extra = ["cuda12"] },
 ]
-dev = [
-    { name = "httpx" },
-    { name = "playwright" },
-    { name = "pytest" },
-    { name = "pytest-benchmark" },
-    { name = "ruff" },
-]
 gpu = [
     { name = "torch" },
     { name = "triton" },
@@ -66,6 +59,15 @@ server = [
     { name = "websockets" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "httpx" },
+    { name = "playwright" },
+    { name = "pytest" },
+    { name = "pytest-benchmark" },
+    { name = "ruff" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "accelerate", marker = "extra == 'bench'", specifier = ">=1.0" },
@@ -73,17 +75,12 @@ requires-dist = [
     { name = "deepspeed", marker = "extra == 'bench'", specifier = ">=0.14" },
     { name = "dfloat11", extras = ["cuda12"], marker = "extra == 'bench'" },
     { name = "fastapi", marker = "extra == 'server'", specifier = ">=0.110" },
-    { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27" },
     { name = "huggingface-hub", specifier = ">=0.20" },
     { name = "numba", specifier = ">=0.58" },
     { name = "numpy", specifier = ">=1.24" },
     { name = "pillow", marker = "extra == 'server'", specifier = ">=10.0" },
-    { name = "playwright", marker = "extra == 'dev'", specifier = ">=1.49" },
     { name = "psutil", specifier = ">=6.0" },
     { name = "pydantic", marker = "extra == 'server'", specifier = ">=2.0" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
-    { name = "pytest-benchmark", marker = "extra == 'dev'", specifier = ">=4.0" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = "==0.17.2" },
     { name = "safetensors", specifier = ">=0.4" },
     { name = "torch", specifier = ">=2.2" },
     { name = "torch", marker = "extra == 'gpu'", specifier = ">=2.2" },
@@ -92,7 +89,16 @@ requires-dist = [
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'server'", specifier = ">=0.29" },
     { name = "websockets", marker = "extra == 'server'", specifier = ">=12.0" },
 ]
-provides-extras = ["gpu", "server", "bench", "dev"]
+provides-extras = ["gpu", "server", "bench"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "playwright", specifier = ">=1.49" },
+    { name = "pytest", specifier = ">=8.0" },
+    { name = "pytest-benchmark", specifier = ">=4.0" },
+    { name = "ruff", specifier = "==0.17.2" },
+]
 
 [[package]]
 name = "airllm"

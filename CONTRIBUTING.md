@@ -5,7 +5,7 @@
 ```bash
 git clone https://github.com/oney-erge/Afterimage.git
 cd Afterimage
-pip install -e ".[dev,server]"    # add "gpu" too if you have an NVIDIA card
+pip install -e ".[server]" --group dev    # add "gpu" too if you have an NVIDIA card
 ```
 
 ## Tests
@@ -34,7 +34,7 @@ Windows that means WSL2, because Triton publishes no native Windows wheel
 (see `docs/TROUBLESHOOTING.md`). The suite grows over time, so don't trust a
 specific pass/skip count in prose here -- run `python -m pytest -q` yourself
 and read its final summary line; `-rs` names every skip's reason. Reference
-point (this file's date, native Windows, CPU-only torch, `[dev,server]`
+point (this file's date, native Windows, CPU-only torch, `[server]` plus the dev group
 extras): 741 passed / 76 skipped, 2026-09-27.
 
 ```bash

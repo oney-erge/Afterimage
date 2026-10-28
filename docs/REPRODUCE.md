@@ -10,7 +10,7 @@ every number means.
 ## What needs no hardware
 
 ```bash
-pip install -e ".[dev,server]"
+pip install -e ".[server]" --group dev
 python -m compileall -q afterimage
 python -m pytest -q
 ```
