@@ -1014,7 +1014,7 @@ def cmd_quickstart(args: argparse.Namespace) -> int:
     print("  afterimage compress Qwen/Qwen3-14B   # ~30 min download, ~6 min compress")
     print("  afterimage run Qwen/Qwen3-14B \"...\" --auto")
     print()
-    print("Here for the H6.5 paper? See docs/h65/README.md and evidence/h65-paper1/.")
+    print("H6.5 paper and evidence: https://github.com/oney-erge/Afterimage/tree/main/docs/h65")
     return 0
 
 
@@ -1421,7 +1421,7 @@ def build_parser() -> argparse.ArgumentParser:
 # one underneath.
 _KNOWN_FAILURES: list[tuple[type[BaseException] | None, str, str]] = [
     (ModuleNotFoundError, "No module named 'transformers'",
-     "the [server]/[gpu] extras aren't installed -- run: pip install -e \".[gpu,server]\""),
+     "transformers is missing -- see https://github.com/oney-erge/Afterimage/blob/main/docs/USAGE.md#install-into-an-existing-environment"),
     (FileNotFoundError, "manifest.json",
      "no compressed store found -- run: afterimage compress MODEL_ID"),
     (RuntimeError, "out of memory",

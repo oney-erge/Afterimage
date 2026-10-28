@@ -21,6 +21,9 @@ On Windows, double-click `run.bat`. On macOS, double-click
 way, and it always tells you whether it just installed something or is
 just starting.
 
+If setup fails, inspect `.setup/install.log` in the checkout for the persistent
+installer error.
+
 When you are ready for the separate small-model check, run `afterimage
 quickstart`. It downloads Qwen3-0.6B and measures the pipeline on your machine.
 
@@ -103,7 +106,7 @@ for you, printing what it chose and why. To pick explicitly:
 
 ```bash
 afterimage run Qwen/Qwen3-14B "..." --profile fast     # 2.93x AirLLM 3.2.0, needs a draft model + ~4 GB VRAM
-afterimage run Qwen/Qwen3-14B "..." --profile balanced  # 1.66x, ~4 GB VRAM, no speculation
+afterimage run Qwen/Qwen3-14B "..." --profile balanced  # 1.55x, ~4 GB VRAM, no speculation
 afterimage run Qwen/Qwen3-14B "..." --profile min-memory  # lowest VRAM, slowest, fully exact
 ```
 

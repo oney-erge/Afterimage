@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/afterimage-logo.svg" width="112" alt="Afterimage logo">
+  <img src="https://raw.githubusercontent.com/oney-erge/Afterimage/main/docs/assets/afterimage-logo.svg" width="112" alt="Afterimage logo">
 </p>
 
 <h1 align="center">Afterimage</h1>
@@ -21,9 +21,13 @@
 </p>
 
 Afterimage stores model weights losslessly and streams them through limited GPU
-memory. In the reference setup below, it runs Qwen3-14B's 29.5 GB BF16
-checkpoint on an 8 GB GPU. The normal exact modes keep the original weights;
-they do not quantize them or silently change the requested execution mode.
+memory. In one measured setup, it ran Qwen3-14B's 29.5 GB BF16 checkpoint on
+an 8 GB RTX 3080 Laptop GPU. Fixed speculative decoding took 9.150 seconds per
+token, versus 26.828 for AirLLM 3.2.0, on four forced greedy tokens across four
+prompt families. See [results and reproduction](docs/RESULTS_LOG.md#2026-08-26-airllm-baseline-refresh-to-320)
+for the full setup and tradeoffs. The AirLLM refresh was measured with
+uncommitted repository-hygiene changes; clean-tree confirmation is pending.
+Exact modes retain the original weights.
 
 This is for research, evaluation, and offline generation when the original
 checkpoint matters more than interactive speed. A streamed model remains
@@ -44,8 +48,16 @@ sets up its managed environment, starts the server after its health check, and
 starts the web UI at **http://127.0.0.1:8420**. First run installs dependencies;
 later runs reuse them. Open that address in a browser; press Ctrl-C to stop.
 
-The small `afterimage quickstart` model is available separately and does not
-automatically download a large checkpoint. Use `doctor`, `repair`, `docker`,
+For a first end-to-end check, open a second terminal in the checkout and run:
+
+```bash
+.venv/bin/afterimage quickstart             # Linux, macOS, WSL2
+```
+
+On Windows, run `.venv\Scripts\afterimage.exe quickstart`. This explicitly
+downloads the small Qwen3-0.6B model (about 2 GB including preparation),
+compresses it, generates text, and reports measurements for your machine. No
+model is downloaded until you request it. Use `doctor`, `repair`, `docker`,
 `logs`, or `stop` after the launcher name when needed. The full launcher,
 Docker, and pip instructions are in [Usage](docs/USAGE.md).
 
@@ -69,18 +81,8 @@ can take substantial time to download and prepare; the reference run took about
 30 minutes to download and 6 minutes to compress, but hardware and network
 speed matter.
 
-For a speculative-decoding configuration, add a small draft model:
-
-```bash
-afterimage run Qwen/Qwen3-14B \
-  "Write a short Python function that checks whether a number is prime." \
-  --vram-budget-gb 4 --draft-model Qwen/Qwen3-0.6B --spec-k 8 --stats
-```
-
-At temperature zero, this keeps the target model's greedy tokens. At nonzero
-temperature, it samples from the target distribution; the draft model changes
-efficiency, not that distribution. See [Usage](docs/USAGE.md) for the CLI,
-Python API, server, model-store, and configuration reference.
+See [Usage](docs/USAGE.md) for speculative decoding, the CLI, Python API,
+server, model-store, and configuration reference.
 
 ## Results
 
@@ -88,7 +90,7 @@ Qwen3-14B (29.536 GB BF16), RTX 3080 Laptop GPU (8 GB), WSL2/CUDA, cold page
 cache, four prompt families with four forced greedy tokens:
 
 <p align="center">
-  <img src="docs/assets/results-chart.svg" width="600" alt="Peak VRAM versus seconds per token for the six configurations below">
+  <img src="https://raw.githubusercontent.com/oney-erge/Afterimage/main/docs/assets/results-chart.svg" width="600" alt="Peak VRAM versus seconds per token for the six configurations below">
 </p>
 
 | Configuration | Peak VRAM | Seconds/token | vs AirLLM | Exactness |
