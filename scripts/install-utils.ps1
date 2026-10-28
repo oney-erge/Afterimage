@@ -97,6 +97,21 @@ function Invoke-InstallNative {
   return [pscustomobject]@{ ExitCode = $exitCode; Output = $lines }
 }
 
+function Invoke-NativeQuiet {
+  # Runs a native command for its exit code ($LASTEXITCODE) and stdout lines, dropping
+  # stderr. Use it for probes such as "docker info": under Windows PowerShell 5.1 with
+  # $ErrorActionPreference = "Stop", redirecting a native command's stderr (2>$null,
+  # *>$null) turns any stderr line into a terminating error.
+  param([string]$FilePath, [string[]]$Arguments = @())
+  $previous = $ErrorActionPreference
+  $ErrorActionPreference = "Continue"
+  try {
+    return @(& $FilePath @Arguments 2>$null | ForEach-Object { [string]$_ })
+  } finally {
+    $ErrorActionPreference = $previous
+  }
+}
+
 function Save-InstallDownload {
   param([string]$Url, [string]$Destination, [string]$Label = "download")
   $parent = Split-Path -Parent $Destination
