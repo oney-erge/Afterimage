@@ -105,6 +105,41 @@ def test_delete_job_on_an_unknown_id_returns_false(counted_registry):
     assert registry.delete_job("no-such-job") is False
 
 
+@pytest.mark.parametrize(
+    "status", ["queued", "running", "pause_requested", "pausing", "paused", "cancelling"]
+)
+def test_restart_reconciles_jobs_that_need_a_live_worker(tmp_path, monkeypatch, status):
+    from afterimage.server import jobs
+
+    path = tmp_path / "restart.sqlite3"
+    before = ModelRegistry(path)
+    before.create_job("job-1", kind="compress", lane="gpu", model_id="org/model")
+    before.update_job("job-1", status=status, progress={"stage": "compress"})
+
+    # A new registry represents a new server process: no worker thread survives.
+    after = ModelRegistry(path)
+    monkeypatch.setattr(jobs, "model_registry", after)
+    live_jobs = jobs.JobRegistry()
+    recovered = live_jobs.get("job-1")
+    assert recovered is not None
+    assert recovered.status == "interrupted"
+    assert recovered.progress == {"stage": "compress"}
+    assert live_jobs.resume("job-1") is None
+    assert live_jobs.delete("job-1") is True
+    assert after.get_job("job-1") is None
+
+
+@pytest.mark.parametrize("status", ["done", "error", "cancelled", "interrupted"])
+def test_restart_preserves_terminal_job_status(tmp_path, status):
+    path = tmp_path / "terminal.sqlite3"
+    before = ModelRegistry(path)
+    before.create_job("job-1", kind="compress", lane="gpu", model_id=None)
+    before.update_job("job-1", status=status)
+
+    after = ModelRegistry(path)
+    assert after.get_job("job-1")["status"] == status
+
+
 def test_a_realistic_download_style_call_volume_leaks_nothing(counted_registry):
     """Mirrors afterimage/server/acquisition.py's download_snapshot(), which
     calls upsert_model once per file in a model with potentially hundreds of

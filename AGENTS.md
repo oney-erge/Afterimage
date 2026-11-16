@@ -7,6 +7,8 @@ evidence must distinguish measured results from projections.
 
 ## Focused commands
 
+Lifecycle owners and recovery are documented in `docs/STATE_MACHINES.md`.
+
 - Lint and focused tests: use the commands documented in `README.md` and
   `pyproject.toml` for the changed subsystem.
 - Native application: `./run.sh` or `.\run.ps1`

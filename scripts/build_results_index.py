@@ -14,7 +14,6 @@ Usage:
 from __future__ import annotations
 
 import pathlib
-import subprocess
 import sys
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -22,10 +21,17 @@ RESULTS_DIR = REPO_ROOT / "results"
 
 
 def cited_from(filename: str) -> str:
-    proc = subprocess.run(
-        ["grep", "-rl", filename, "docs", "README.md"],
-        capture_output=True, text=True, cwd=REPO_ROOT)
-    hits = sorted({pathlib.Path(line).stem for line in proc.stdout.splitlines()})
+    paths = [REPO_ROOT / "README.md", *(REPO_ROOT / "docs").rglob("*")]
+    hits = set()
+    for path in paths:
+        if not path.is_file():
+            continue
+        try:
+            if filename in path.read_text(encoding="utf-8"):
+                hits.add(path.stem)
+        except (OSError, UnicodeDecodeError):
+            continue
+    hits = sorted(hits)
     return ", ".join(hits) if hits else "-"
 
 
@@ -63,7 +69,7 @@ def main() -> int:
     print("```")
     print()
     print("\"Cited from\" is every tracked doc whose text contains the exact "
-          "filename, found by grep; a `-` means no current doc cites that "
+          "filename; a `-` means no current doc cites that "
           "file by name, not that it is unused (an aggregate table drawn "
           "from a directory of runs, for instance, cites the directory, "
           "not each JSON individually).")

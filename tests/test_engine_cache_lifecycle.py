@@ -253,7 +253,10 @@ class TestRemoveModelEvictsALoadedEngineFirst:
         monkeypatch.setattr(app_module, "DEFAULT_STORE_ROOT", store_root)
         monkeypatch.setattr(app_module, "_store_dir_for",
                             lambda model_id: store_root / model_id.replace("/", "__"))
-        monkeypatch.setattr(app_module, "registry", type("R", (), {"list": staticmethod(list)})())
+        from afterimage.server.jobs import JobRegistry
+        registry = JobRegistry()
+        monkeypatch.setattr(registry, "list", list)
+        monkeypatch.setattr(app_module, "registry", registry)
         monkeypatch.setattr(app_module.model_registry, "delete_model", lambda model_id: True)
         monkeypatch.setattr(app_module, "_engine_cache", app_module._EngineCache())
         return TestClient(app_module.app), store_root

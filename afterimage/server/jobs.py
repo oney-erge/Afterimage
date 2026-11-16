@@ -38,6 +38,12 @@ class Job:
     result: Any = None
     error: Optional[str] = None
     control: JobControl = dataclasses.field(default_factory=JobControl)
+    worker_finished: threading.Event = dataclasses.field(default_factory=threading.Event, repr=False)
+    _state_lock: Any = dataclasses.field(default_factory=threading.RLock, repr=False, compare=False)
+
+    @property
+    def cleanup_pending(self) -> bool:
+        return self.status == "cancelled" and not self.worker_finished.is_set()
 
 
 class JobRegistry:
@@ -45,6 +51,7 @@ class JobRegistry:
         self._jobs: dict[str, Job] = {}
         self._lock = threading.Lock()
         self._lanes: dict[str, threading.Lock] = {}
+        self._model_locks: dict[str, threading.Lock] = {}
 
     def create(
         self,
@@ -61,27 +68,38 @@ class JobRegistry:
         model_registry.create_job(job.id, kind, lane, model_id)
 
         def on_progress(fields: dict) -> None:
-            job.progress = {**job.progress, **fields}
-            if job.status not in ("cancelled", "done", "error"):
-                job.status = "paused" if job.control.is_paused else "running"
-            model_registry.update_job(job.id, status=job.status, progress=job.progress)
+            with job._state_lock:
+                job.progress = {**job.progress, **fields}
+                if job.status not in ("cancelled", "done", "error"):
+                    if job.control.is_paused:
+                        if job.status != "paused":
+                            job.status = "pause_requested"
+                    else:
+                        job.status = "running"
+                model_registry.update_job(job.id, status=job.status, progress=job.progress)
 
         def on_state(status: str) -> None:
-            if job.status in {"cancelled", "done", "error"}:
-                return
-            job.status = status
-            model_registry.update_job(job.id, status=status, progress=job.progress)
+            with job._state_lock:
+                if job.status in {"cancelled", "done", "error"}:
+                    return
+                if (status == "paused" and not job.control.is_paused) or (
+                    status == "running" and job.control.is_paused
+                ):
+                    return
+                job.status = status
+                model_registry.update_job(job.id, status=status, progress=job.progress)
 
         job.control.progress_callback = on_progress
         job.control.state_callback = on_state
 
-        def run() -> None:
+        def run_lane() -> None:
             lane_lock = None
             while lane_lock is None:
-                if job.control.is_cancelled:
-                    job.status = "cancelled"
-                    model_registry.update_job(job.id, status=job.status)
-                    return
+                with job._state_lock:
+                    if job.control.is_cancelled:
+                        job.status = "cancelled"
+                        model_registry.update_job(job.id, status=job.status)
+                        return
                 candidate = self._lane_lock(lane)
                 if not candidate.acquire(timeout=0.1):
                     continue
@@ -92,37 +110,61 @@ class JobRegistry:
                     continue
                 lane_lock = candidate
             try:
-                if job.control.is_cancelled:
-                    job.status = "cancelled"
+                with job._state_lock:
+                    if job.control.is_cancelled:
+                        job.status = "cancelled"
+                        model_registry.update_job(job.id, status=job.status)
+                        return
+                    job.status = "pause_requested" if job.control.is_paused else "running"
                     model_registry.update_job(job.id, status=job.status)
-                    return
-                job.status = "running"
-                model_registry.update_job(job.id, status=job.status)
                 logger.info("job %s (%s) started", job.id, job.kind)
                 try:
-                    job.result = fn(job.control)
-                    if job.control.is_cancelled:
-                        raise JobCancelled()
-                    job.status = "done"
-                    model_registry.update_job(
-                        job.id, status=job.status, progress=job.progress,
-                        result=job.result,
-                    )
-                    logger.info("job %s (%s) done", job.id, job.kind)
+                    result = fn(job.control)
+                    with job._state_lock:
+                        if job.control.is_cancelled:
+                            raise JobCancelled()
+                        model_registry.update_job(
+                            job.id, status="done", progress=job.progress,
+                            result=result,
+                        )
+                        job.result = result
+                        job.status = "done"
+                        logger.info("job %s (%s) done", job.id, job.kind)
                 except JobCancelled:
-                    job.status = "cancelled"
-                    model_registry.update_job(job.id, status=job.status)
+                    with job._state_lock:
+                        job.status = "cancelled"
+                        model_registry.update_job(job.id, status=job.status)
                     logger.info("job %s (%s) cancelled", job.id, job.kind)
                 except Exception as e:  # noqa: BLE001 -- surfaced to the API caller
-                    job.status = "error"
-                    job.error = "%s: %s" % (type(e).__name__, e)
-                    model_registry.update_job(
-                        job.id, status=job.status, progress=job.progress,
-                        error=job.error,
-                    )
+                    with job._state_lock:
+                        job.status = "cancelled" if job.control.is_cancelled else "error"
+                        job.error = None if job.control.is_cancelled else "%s: %s" % (type(e).__name__, e)
+                        model_registry.update_job(
+                            job.id, status=job.status, progress=job.progress,
+                            error=job.error,
+                        )
                     logger.exception("job %s (%s) failed", job.id, job.kind)
             finally:
                 lane_lock.release()
+
+        def run() -> None:
+            model_lock = None
+            try:
+                if lane == "model-lifecycle" and model_id:
+                    with self._lock:
+                        model_lock = self._model_locks.setdefault(model_id.casefold(), threading.Lock())
+                    while not model_lock.acquire(timeout=0.1):
+                        with job._state_lock:
+                            if job.control.is_cancelled:
+                                job.status = "cancelled"
+                                model_registry.update_job(job.id, status=job.status)
+                                model_lock = None
+                                return
+                run_lane()
+            finally:
+                if model_lock is not None:
+                    model_lock.release()
+                job.worker_finished.set()
 
         with self._lock:
             self._jobs[job.id] = job
@@ -141,12 +183,14 @@ class JobRegistry:
         saved = model_registry.get_job(job_id)
         if saved is None:
             return None
-        return Job(
+        recovered = Job(
             id=saved["id"], kind=saved["kind"], model_id=saved["model_id"],
             lane=saved["lane"], created_at=saved["created_at"],
             status=saved["status"], progress=saved["progress"],
             result=saved["result"], error=saved["error"],
         )
+        recovered.worker_finished.set()
+        return recovered
 
     def list(self) -> list[Job]:
         return [self.get(row["id"]) for row in model_registry.list_jobs()]
@@ -154,43 +198,52 @@ class JobRegistry:
     def pause(self, job_id: str) -> Job | None:
         with self._lock:
             job = self._jobs.get(job_id)
-        if job is None or job.status not in {"queued", "running"}:
+        if job is None:
             return job
-        job.control.pause()
-        job.status = "pause_requested"
-        model_registry.update_job(job.id, status=job.status, progress=job.progress)
+        with job._state_lock:
+            if job.status not in {"queued", "running"}:
+                return job
+            job.control.pause()
+            job.status = "pause_requested"
+            model_registry.update_job(job.id, status=job.status, progress=job.progress)
         return job
 
     def resume(self, job_id: str) -> Job | None:
         with self._lock:
             job = self._jobs.get(job_id)
-        if job is None or job.status not in {"paused", "pause_requested"}:
+        if job is None:
             return job
-        job.control.resume()
-        job.status = "running"
-        model_registry.update_job(job.id, status=job.status, progress=job.progress)
+        with job._state_lock:
+            if job.status not in {"paused", "pause_requested"}:
+                return job
+            job.control.resume()
+            job.status = "running"
+            model_registry.update_job(job.id, status=job.status, progress=job.progress)
         return job
 
     def cancel(self, job_id: str) -> Job | None:
         with self._lock:
             job = self._jobs.get(job_id)
-        if job is None or job.status in {"done", "error", "cancelled"}:
+        if job is None:
             return job
-        job.control.cancel()
-        # Cancellation is a user-facing terminal state. A network read in a
-        # third-party downloader may take time to unwind after the cooperative
-        # signal. Leaving the API in ``cancelling`` strands the UI and every
-        # job behind the same lane. Hugging Face partials are resumable, so a
-        # download can release the public lane while its old request unwinds.
-        # GPU work remains serialized.
-        job.status = "cancelled"
-        if job.lane == "model-lifecycle" and (
-            job.progress.get("stage") in {None, "downloading"}
-            or not job.progress
-        ):
-            with self._lock:
-                self._lanes[job.lane] = threading.Lock()
-        model_registry.update_job(job.id, status=job.status, progress=job.progress)
+        with job._state_lock:
+            if job.status in {"done", "error", "cancelled"}:
+                return job
+            job.control.cancel()
+            # Cancellation is a user-facing terminal state. A network read in a
+            # third-party downloader may take time to unwind after the cooperative
+            # signal. Leaving the API in ``cancelling`` strands the UI and every
+            # job behind the same lane. Hugging Face partials are resumable, so a
+            # download can release the public lane while its old request unwinds.
+            # GPU work remains serialized.
+            job.status = "cancelled"
+            if job.lane == "model-lifecycle" and (
+                job.progress.get("stage") in {None, "downloading"}
+                or not job.progress
+            ):
+                with self._lock:
+                    self._lanes[job.lane] = threading.Lock()
+            model_registry.update_job(job.id, status=job.status, progress=job.progress)
         return job
 
     def delete(self, job_id: str) -> bool:
@@ -207,8 +260,8 @@ class JobRegistry:
         check entirely for any job not currently held in memory.
         """
         job = self.get(job_id)
-        if job is not None and job.status in {
-                "queued", "running", "pause_requested", "paused", "cancelling"}:
+        if job is not None and (job.cleanup_pending or job.status in {
+                "queued", "running", "pause_requested", "paused", "cancelling"}):
             return False
         with self._lock:
             self._jobs.pop(job_id, None)

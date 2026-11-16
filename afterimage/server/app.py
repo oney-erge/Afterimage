@@ -312,15 +312,25 @@ class AcquireRequest(BaseModel):
     prepare: bool = True
 
 
+_acquisition_lock = threading.Lock()
+
+
 def _queue_acquisition(req: AcquireRequest) -> dict:
     if not req.model_id.strip() or ".." in req.model_id:
         raise HTTPException(400, "invalid model id")
+    with _acquisition_lock:
+        return _queue_acquisition_locked(req)
+
+
+def _queue_acquisition_locked(req: AcquireRequest) -> dict:
     active = [
         job for job in registry.list()
         if job and job.model_id == req.model_id
-        and job.status in {"queued", "running", "pause_requested", "paused", "cancelling"}
+        and (job.cleanup_pending or job.status in {"queued", "running", "pause_requested", "paused", "cancelling"})
     ]
     if active:
+        if active[0].cleanup_pending:
+            raise HTTPException(409, "the previous job is still stopping; retry after cleanup finishes")
         return {"job_id": active[0].id, "existing": True}
 
     model_registry.upsert_model(
@@ -332,20 +342,25 @@ def _queue_acquisition(req: AcquireRequest) -> dict:
         from afterimage.runtime.control import JobCancelled
 
         try:
-            return acquire_model(
+            result = acquire_model(
                 req.model_id, revision=req.revision, prepare=req.prepare,
                 control=control,
             )
+            control.checkpoint()
+            return result
         except JobCancelled:
             model_registry.upsert_model(
                 req.model_id, state="interrupted", stage="interrupted", error=None,
             )
             raise
         except Exception as exc:
-            model_registry.upsert_model(
-                req.model_id, state="failed", stage="failed",
-                error="%s: %s" % (type(exc).__name__, exc),
-            )
+            if control.is_cancelled:
+                model_registry.upsert_model(req.model_id, state="interrupted", stage="interrupted", error=None)
+            else:
+                model_registry.upsert_model(
+                    req.model_id, state="failed", stage="failed",
+                    error="%s: %s" % (type(exc).__name__, exc),
+                )
             raise
 
     job = registry.create(
@@ -415,9 +430,10 @@ def unload_model(model_id: str) -> dict:
     happens to be resident) so a stale UI can't unload a different
     model's engine out from under a request that started in between.
     """
-    if _engine_cache._key is None or _engine_cache._key[0] != model_id:
-        raise HTTPException(409, "%r is not currently loaded" % model_id)
-    unloaded = _engine_cache.unload()
+    with registry._lane_lock("gpu"):
+        if _engine_cache._key is None or _engine_cache._key[0] != model_id:
+            raise HTTPException(409, "%r is not currently loaded" % model_id)
+        unloaded = _engine_cache.unload()
     return {"model_id": unloaded, "unloaded": unloaded is not None}
 
 
@@ -427,10 +443,15 @@ def remove_model(model_id: str, confirm_model_id: str) -> dict:
 
     if confirm_model_id != model_id:
         raise HTTPException(400, "confirm_model_id must exactly match model_id")
+    with registry._lane_lock("gpu"):
+        return _remove_model_locked(model_id)
+
+
+def _remove_model_locked(model_id: str) -> dict:
     active = [
         job for job in registry.list()
         if job and job.model_id == model_id
-        and job.status in {"queued", "running", "pause_requested", "paused", "cancelling"}
+        and (job.cleanup_pending or job.status in {"queued", "running", "pause_requested", "paused", "cancelling"})
     ]
     if active:
         raise HTTPException(409, "cancel the active model job before removing this model")
@@ -637,7 +658,7 @@ def list_jobs() -> dict:
         {
             "id": j.id, "kind": j.kind, "model_id": j.model_id,
             "lane": j.lane, "status": j.status, "progress": j.progress,
-            "error": j.error, "created_at": j.created_at,
+            "error": j.error, "created_at": j.created_at, "cleanup_pending": j.cleanup_pending,
         }
         for j in registry.list() if j is not None
     ]}
@@ -648,7 +669,7 @@ def job_status(job_id: str) -> dict:
     job = _get_job(job_id)
     return {"id": job.id, "kind": job.kind, "model_id": job.model_id,
             "lane": job.lane, "status": job.status,
-            "progress": job.progress, "error": job.error,
+            "progress": job.progress, "error": job.error, "cleanup_pending": job.cleanup_pending,
             "result": job.result if job.status == "done" else None}
 
 
@@ -694,6 +715,8 @@ def job_delete(job_id: str) -> dict:
     job = registry.get(job_id)
     if job is None:
         raise HTTPException(404, "no such job: %r" % job_id)
+    if job.cleanup_pending:
+        raise HTTPException(409, "job is still stopping; retry after cleanup finishes")
     if job.status in {"queued", "running", "pause_requested", "paused", "cancelling"}:
         raise HTTPException(409, "cancel the job before deleting it")
     removed = registry.delete(job_id)
@@ -1587,38 +1610,39 @@ def _stats_usage(sm, ids_len: int, completion_len: int) -> dict:
 def chat_completions(req: ChatCompletionRequest):
     logger.info("chat completion: model=%s max_tokens=%d stream=%s draft=%s",
                req.model, req.max_tokens, req.stream, req.draft_model or "none")
-    sm, tok, ids, stop_ids, draft, _image_count = _prepare_generation(req)
-
     cid = "chatcmpl-" + uuid.uuid4().hex[:24]
     created = int(time.time())
+    lane = registry._lane_lock("gpu")
+    lane.acquire()
+    handed_to_stream = False
+    try:
+        sm, tok, ids, stop_ids, draft, _image_count = _prepare_generation(req)
+        if req.stream:
+            stream = _stream_chat(sm, tok, ids, req, cid, created, stop_ids, draft, lane.release)
+            handed_to_stream = True
+            return StreamingResponse(stream, media_type="text/event-stream")
 
-    if req.stream:
-        # Token-by-token SSE needs each chunk emitted as it's produced, not
-        # collected after the fact -- _stream_chat bridges generate_greedy's
-        # (or generate_adaptive's) synchronous on_token callback (running in
-        # a background thread) to this generator via a queue.
-        return StreamingResponse(
-            _stream_chat(sm, tok, ids, req, cid, created, stop_ids, draft),
-            media_type="text/event-stream")
-
-    import torch
-    sm.stats.reset()
-    if torch.cuda.is_available():
-        torch.cuda.reset_peak_memory_stats()
-    with torch.no_grad():
-        if draft is not None:
-            seq, _policy = sm.generate_adaptive(
-                ids, max_new_tokens=req.max_tokens, draft_model=draft,
-                temperature=req.temperature, stop_token_ids=stop_ids)
-        else:
-            seq = sm.generate_greedy(ids, max_new_tokens=req.max_tokens, stop_token_ids=stop_ids)
-    text = tok.decode(seq[0, ids.shape[1]:], skip_special_tokens=True)
-    completion_len = seq.shape[1] - ids.shape[1]
-    _engine_cache._last_completion_len = completion_len
-    return {"id": cid, "object": "chat.completion", "created": created, "model": req.model,
-            "choices": [{"index": 0, "message": {"role": "assistant", "content": text},
-                        "finish_reason": "stop"}],
-            "usage": _stats_usage(sm, ids.shape[1], completion_len)}
+        import torch
+        sm.stats.reset()
+        if torch.cuda.is_available():
+            torch.cuda.reset_peak_memory_stats()
+        with torch.no_grad():
+            if draft is not None:
+                seq, _policy = sm.generate_adaptive(
+                    ids, max_new_tokens=req.max_tokens, draft_model=draft,
+                    temperature=req.temperature, stop_token_ids=stop_ids)
+            else:
+                seq = sm.generate_greedy(ids, max_new_tokens=req.max_tokens, stop_token_ids=stop_ids)
+        text = tok.decode(seq[0, ids.shape[1]:], skip_special_tokens=True)
+        completion_len = seq.shape[1] - ids.shape[1]
+        _engine_cache._last_completion_len = completion_len
+        return {"id": cid, "object": "chat.completion", "created": created, "model": req.model,
+                "choices": [{"index": 0, "message": {"role": "assistant", "content": text},
+                            "finish_reason": "stop"}],
+                "usage": _stats_usage(sm, ids.shape[1], completion_len)}
+    finally:
+        if not handed_to_stream:
+            lane.release()
 
 
 @app.post("/api/chat")
@@ -1674,7 +1698,7 @@ def start_chat(req: ChatCompletionRequest) -> dict:
 
 
 def _stream_chat(sm, tok, ids, req: ChatCompletionRequest, cid: str, created: int,
-                 stop_ids: set, draft=None):
+                 stop_ids: set, draft=None, release_lane=None):
     """Runs generation in a background thread, pushing each token's decoded
     text piece into a queue that this generator drains -- the standard
     bridge for turning a synchronous, blocking token loop into an SSE
@@ -1698,7 +1722,11 @@ def _stream_chat(sm, tok, ids, req: ChatCompletionRequest, cid: str, created: in
     TOKEN, ERROR, DONE = "token", "error", "done"
     gen_t0 = time.perf_counter()
 
+    n_tokens = 0
+
     def on_token(tok_id: int) -> None:
+        nonlocal n_tokens
+        n_tokens += 1
         piece = tok.decode([tok_id], skip_special_tokens=True)
         q.put((TOKEN, piece))
 
@@ -1718,9 +1746,29 @@ def _stream_chat(sm, tok, ids, req: ChatCompletionRequest, cid: str, created: in
         except Exception as exc:  # noqa: BLE001 - serialize generation failure to SSE
             q.put((ERROR, "%s: %s" % (type(exc).__name__, exc)))
         finally:
-            q.put((DONE, None))
+            try:
+                _engine_cache._last_completion_len = n_tokens
+                try:
+                    usage = _stats_usage(sm, ids.shape[1], n_tokens)
+                except Exception as exc:  # noqa: BLE001 - serialize stats failure to SSE
+                    q.put((ERROR, "%s: %s" % (type(exc).__name__, exc)))
+                    usage = None
+                q.put((DONE, usage))
+            finally:
+                if release_lane is not None:
+                    release_lane()
 
     threading.Thread(target=run, daemon=True).start()
+
+    def events():
+        return _stream_events(q, sm, req, cid, created, gen_t0, TOKEN, ERROR, DONE)
+
+    return events()
+
+
+def _stream_events(q, sm, req, cid, created, gen_t0, TOKEN, ERROR, DONE):
+    import queue
+    import torch
 
     def chunk(delta: dict, finish_reason=None) -> str:
         payload = {"id": cid, "object": "chat.completion.chunk", "created": created,
@@ -1743,7 +1791,7 @@ def _stream_chat(sm, tok, ids, req: ChatCompletionRequest, cid: str, created: in
         return "data: " + json.dumps(payload) + "\n\n"
 
     yield chunk({"role": "assistant", "content": ""})
-    n_tokens = 0
+    usage = None
     while True:
         try:
             kind, value = q.get(timeout=1.0)
@@ -1751,6 +1799,7 @@ def _stream_chat(sm, tok, ids, req: ChatCompletionRequest, cid: str, created: in
             yield progress_event()
             continue
         if kind == DONE:
+            usage = value
             break
         if kind == ERROR:
             yield "data: " + json.dumps({
@@ -1758,11 +1807,8 @@ def _stream_chat(sm, tok, ids, req: ChatCompletionRequest, cid: str, created: in
             }) + "\n\n"
             yield "data: [DONE]\n\n"
             return
-        n_tokens += 1
         yield chunk({"content": value})
     yield chunk({}, finish_reason="stop")
-    _engine_cache._last_completion_len = n_tokens
-    usage = _stats_usage(sm, ids.shape[1], n_tokens)
     yield "data: " + json.dumps({"id": cid, "object": "chat.completion.chunk.usage",
                                  "usage": usage}) + "\n\n"
     yield "data: [DONE]\n\n"

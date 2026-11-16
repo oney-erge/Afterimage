@@ -12,6 +12,7 @@ ModelRegistry (SQLite) from the real singletons so nothing here touches
 from __future__ import annotations
 
 import pytest
+import threading
 
 pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient
@@ -39,6 +40,66 @@ def _terminal_job(job_registry, model_registry, status, job_id="job-1",
 
 
 class TestJobRegistryDelete:
+    def test_cancelled_writer_does_not_overlap_retry_for_same_model(self, isolated_job_registry):
+        job_registry, _model_registry = isolated_job_registry
+        first_started = threading.Event()
+        release_first = threading.Event()
+        second_started = threading.Event()
+        other_started = threading.Event()
+
+        def first(control):
+            first_started.set()
+            assert release_first.wait(5)
+            control.checkpoint()
+
+        first_job = job_registry.create("acquire", first, model_id="org/model", lane="model-lifecycle")
+        try:
+            assert first_started.wait(5)
+            job_registry.cancel(first_job.id)
+            retry = job_registry.create(
+                "acquire", lambda _control: second_started.set(),
+                model_id="org/model", lane="model-lifecycle",
+            )
+            other = job_registry.create(
+                "acquire", lambda _control: other_started.set(),
+                model_id="org/other", lane="model-lifecycle",
+            )
+            assert other_started.wait(5)
+            assert not second_started.is_set()
+        finally:
+            release_first.set()
+        assert first_job.worker_finished.wait(5)
+        assert retry.worker_finished.wait(5)
+        assert other.worker_finished.wait(5)
+        assert second_started.is_set()
+
+    def test_cancelled_worker_cannot_be_deleted_or_retried_until_cleanup(self, isolated_job_registry, monkeypatch):
+        job_registry, model_registry = isolated_job_registry
+        monkeypatch.setattr(app_module, "registry", job_registry)
+        monkeypatch.setattr(app_module, "model_registry", model_registry)
+        entered = threading.Event()
+        release = threading.Event()
+
+        def work(control):
+            entered.set()
+            assert release.wait(5)
+            control.checkpoint()
+
+        job = job_registry.create("acquire", work, model_id="org/model", lane="model-lifecycle")
+        try:
+            assert entered.wait(5)
+            job_registry.cancel(job.id)
+            assert job.cleanup_pending is True
+            assert job_registry.delete(job.id) is False
+            with pytest.raises(app_module.HTTPException) as error:
+                app_module._queue_acquisition(app_module.AcquireRequest(model_id="org/model"))
+            assert error.value.status_code == 409
+        finally:
+            release.set()
+        assert job.worker_finished.wait(5)
+        assert job.cleanup_pending is False
+        assert job_registry.delete(job.id) is True
+
     def test_deletes_a_terminal_job(self, isolated_job_registry):
         job_registry, model_registry = isolated_job_registry
         job_id = _terminal_job(job_registry, model_registry, "interrupted")

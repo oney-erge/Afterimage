@@ -104,7 +104,7 @@ class ModelRegistry:
                 connection.execute(
                     "UPDATE jobs SET status='interrupted', updated_at=? "
                     "WHERE status IN ('queued','running','pause_requested','pausing',"
-                    "'cancelling')",
+                    "'paused','cancelling')",
                     (time.time(),),
                 )
                 connection.execute(

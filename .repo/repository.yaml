@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "repository": {"id": "oney-erge/Afterimage", "owner": "oney-erge", "maintenance": "unclassified", "interfaces": ["browser-ui", "api", "cli"]},
+  "capabilities": ["local-runtime", "async-jobs", "ml-research"],
+  "components": [{"id": "runtime", "root": "afterimage"}],
+  "environment": {"python": ">=3.11", "source": "pyproject.toml", "real_runtime_requires": ["supported GPU", "supported model"]},
+  "checks": {
+    "job-deletion": {"argv": ["python", "-m", "pytest", "tests/test_job_deletion.py", "-q"], "cwd": ".", "timeout_seconds": 180, "lane": "fast", "effects": "local-test-files"},
+    "operability": {"argv": ["python", "-m", "pytest", "tests/test_server_operability.py", "-q"], "cwd": ".", "timeout_seconds": 180, "lane": "journey", "effects": "local-test-files"}
+  },
+  "journeys": [{"id": "prepare-and-generate", "user_outcome": "Prepare a supported model and generate a result", "checks": ["job-deletion", "operability"], "additional_evidence_needed": ["prepare/restart/generate/cancel recovery", "real GPU and model execution", "accessible progress and waiting reasons"]}],
+  "evidence": {"status": "not-collected-by-repoctl", "note": "Checks are partial; model, GPU and end-to-end results remain separate."},
+  "agent": {"instruction_entry": "AGENTS.md", "command_trust": "external-to-repository"}
+}

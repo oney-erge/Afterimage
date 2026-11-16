@@ -1,6 +1,6 @@
 import json
 
-from scripts.build_results_index import row_for
+from scripts.build_results_index import cited_from, row_for
 
 
 def _write(tmp_path, name, payload):
@@ -38,3 +38,12 @@ def test_row_for_returns_none_for_unparseable_json(tmp_path):
     path = tmp_path / "broken.json"
     path.write_text("{not valid json", encoding="utf-8")
     assert row_for(path) is None
+
+
+def test_citations_match_literal_filename_without_an_external_grep(tmp_path, monkeypatch):
+    monkeypatch.setattr("scripts.build_results_index.REPO_ROOT", tmp_path)
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "real.md").write_text("Uses run.1.json", encoding="utf-8")
+    (docs / "other.md").write_text("Uses runX1Xjson", encoding="utf-8")
+    assert cited_from("run.1.json") == "real"
